@@ -457,32 +457,47 @@ export const runPlaybackSmoke = async (
     }
 
     // 4b) COMMANDES : pause puis reprise, chacune confirmée par l'état moteur
-    //     réel (jamais par la seule résolution de la commande). Les commandes
-    //     sont BORNÉES : un appel natif qui ne rend pas dégèle la séquence et
-    //     l'observateur classe honnêtement (timeout), jamais de silence.
-    deps.log('controls:start');
-    await commandWithBudget(
-      Promise.resolve().then(() => deps.pauseEngine()),
-      deps.statusBudgetMs
-    );
-    const paused = await waitForStatus(deps, 'paused', deps.statusBudgetMs);
-    if (!paused) {
-      controlsVerdict = 'failed-pause';
-      deps.log(`controls:pause timeout status=${deps.getStatus()}`);
-    } else {
-      deps.log('controls:pause ok');
+    //     réel (jamais par la seule résolution de la commande). Chaque étape
+    //     est journalisée et AUCUNE exception ne peut casser la séquence :
+    //     le verdict consolidé (phase2:summary) est toujours émis.
+    const crashName = (error: unknown): string =>
+      error instanceof Error ? error.name : 'unknown';
+    try {
+      deps.log('controls:start');
       await commandWithBudget(
-        Promise.resolve().then(() => deps.resumeEngine()),
+        Promise.resolve().then(() => deps.pauseEngine()),
         deps.statusBudgetMs
       );
-      const resumed = await waitForStatus(deps, 'playing', deps.statusBudgetMs);
-      if (resumed) {
-        controlsVerdict = 'ok';
-        deps.log('controls:resume ok');
+      deps.log('controls:pause-sent');
+      const paused = await waitForStatus(deps, 'paused', deps.statusBudgetMs);
+      if (!paused) {
+        controlsVerdict = 'failed-pause';
+        deps.log(`controls:pause timeout status=${deps.getStatus()}`);
       } else {
-        controlsVerdict = 'failed-resume';
-        deps.log(`controls:resume timeout status=${deps.getStatus()}`);
+        deps.log('controls:pause ok');
+        await commandWithBudget(
+          Promise.resolve().then(() => deps.resumeEngine()),
+          deps.statusBudgetMs
+        );
+        deps.log('controls:resume-sent');
+        const resumed = await waitForStatus(
+          deps,
+          'playing',
+          deps.statusBudgetMs
+        );
+        if (resumed) {
+          controlsVerdict = 'ok';
+          deps.log('controls:resume ok');
+        } else {
+          controlsVerdict = 'failed-resume';
+          deps.log(`controls:resume timeout status=${deps.getStatus()}`);
+        }
       }
+    } catch (error) {
+      // Ne devrait plus arriver (commandes bornées), mais la séquence et le
+      // verdict consolidé ne doivent JAMAIS dépendre d'une exception.
+      controlsVerdict = controlsVerdict ?? 'failed-pause';
+      deps.log(`controls:crash category=${crashName(error)}`);
     }
   }
 
