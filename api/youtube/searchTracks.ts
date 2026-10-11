@@ -78,9 +78,15 @@ export const searchYouTubeTracks = async (
 
   // Signature historique à deux arguments conservée quand aucun signal n'est
   // fourni (verrouillée par les tests) ; le signal ne s'ajoute qu'à la demande.
+  // V32 : `useFallback` — la SOURCE DE CATALOGUE active le repli WEB quand
+  // WEB_REMIX ne renvoie plus rien de lisible (dérive de protocole) ; le
+  // matcher de lecture, lui, reste borné (il itère ses propres formulations).
   const candidates = options.signal
-    ? await searchYouTubeSongs(q, limit, { signal: options.signal })
-    : await searchYouTubeSongs(q, limit);
+    ? await searchYouTubeSongs(q, limit, {
+        signal: options.signal,
+        useFallback: true,
+      })
+    : await searchYouTubeSongs(q, limit, { useFallback: true });
 
   return candidates
     .filter((candidate) => youtubeContentQuality(candidate) > 0.3)

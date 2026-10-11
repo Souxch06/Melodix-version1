@@ -1,5 +1,5 @@
 /**
- * V31 — BANC DE COUVERTURE EN LIGNE (Goal C6).
+ * V32 — BANC DE COUVERTURE EN LIGNE (mesures RÉELLES exigées).
  *
  * ⚠️  Ce fichier N'EST PAS exécuté par la suite par défaut : son extension
  * (.online.test.ts) ne correspond PAS au testMatch unitaire du dépôt — il
@@ -8,26 +8,25 @@
  *
  * Exécution volontaire :
  *   npm run test:online
- *   (npx jest --testMatch avec le motif ".online.test.ts", --runInBand)
  *
- * Principe :
- *  - jeu de requêtes FIXE et public (aucune donnée utilisateur) couvrant :
- *    tube international, titres français accentués/apostrophes, artiste
- *    indépendant, multi-artistes, remix, live, acoustique, instrumental,
- *    morceau ancien, morceau récent, variante d'artiste, faute de frappe
- *    raisonnable, recherche par artiste seul ;
- *  - pour chaque requête : % de sources ayant répondu, nombre de résultats
- *    uniques, résultats « jouables » (id audius:* / youtube:* — lecture
- *    native directe), temps jusqu'au premier résultat, temps total, doublons
- *    inter-sources écartés, erreurs par source ;
- *  - le rapport distingue clairement les mesures RÉELLES (réseau actif) de
- *    l'environnement SANS réseau : dans ce dernier cas (ex. sandbox CI), le
- *    banc le DÉTECTE (sonde), l'affiche et n'échoue PAS — aucune valeur
- *    n'est inventée, jamais.
+ * PROTOCOLE V32 (corrige le faux positif V31 — le banc ne pouvait plus se
+ * contenter d'UNE sonde pour finir vert sans rien mesurer) :
  *
- * Les attentes de vérification (when online) sont volontairement modestes et
- * factuelles : au moins une requête sur deux doit trouver ≥ 1 résultat
- * pertinent, et chaque source saine doit répondre sur au moins une requête.
+ *  1. SONDES RÉSEAU : trois hôtes distincts (Audius, YouTube, Spotify) sont
+ *     sondés ; une réponse HTTP QUELCONQUE (même 401/404) prouve
+ *     DNS + TLS + routage ; seules les erreurs transport/timeout comptent
+ *     comme « réseau absent ».
+ *  2. TOUS les cas du jeu fixe (14) sont EXÉCUTÉS — y compris hors ligne :
+ *     plus aucun court-circuit après une sonde.
+ *  3. Le statut est dérivé par `deriveCoverageBenchStatus` (pure, testée
+ *     hors ligne) parmi QUATRE états sans ambiguïté :
+ *       - real-measures        → assertions factuelles sur les mesures ;
+ *       - network-unavailable  → couverture NON MESURÉE : le test ÉCHOUE
+ *         (échec honnête, pas de vert) avec le rapport affiché ;
+ *       - test-incomplete      → NON MESURÉ : échec ;
+ *       - functional-failure   → panne fonctionnelle constatée : échec.
+ *  4. Aucune valeur n'est JAMAIS inventée : ce qui n'a pas pu être mesuré
+ *     est dit tel quel dans le rapport.
  */
 import { searchCatalogProgressive } from '../progressiveSearch';
 import type {
@@ -35,9 +34,16 @@ import type {
   ProgressiveSearchUpdate,
 } from '../progressiveSearch';
 import type { SearchSourceId } from '../searchRanking';
+import {
+  deriveCoverageBenchStatus,
+  type CoverageCaseOutcome,
+  type CoverageProbeResult,
+} from '../coverageStatus';
 
 /** Délai maximal d'attente par requête (le moteur solde à 9 s). */
 const MAX_WAIT_MS = 12_000;
+/** Délai d'une sonde réseau. */
+const PROBE_TIMEOUT_MS = 6_000;
 
 type QueryCase = {
   id: string;
@@ -103,17 +109,47 @@ const CASES: QueryCase[] = [
   { id: 'title-only', query: 'Formidable', expectAnyWord: ['formidable'] },
 ];
 
-type CaseReport = {
-  id: string;
+/** Sondes : infrastructure PUBLIQUE, hôtes réels utilisés par l'application.
+ * Une réponse HTTP quelconque (même 4xx) PROUVE la connectivité. */
+const PROBE_URLS: { host: string; url: string }[] = [
+  { host: 'audius', url: 'https://api.audius.co/' },
+  { host: 'youtube', url: 'https://music.youtube.com/' },
+  { host: 'spotify', url: 'https://api.spotify.com/v1/search' },
+];
+
+const runProbe = async (probe: {
+  host: string;
+  url: string;
+}): Promise<CoverageProbeResult> => {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(probe.url, {
+      method: 'GET',
+      redirect: 'follow',
+      signal: controller.signal,
+    });
+    return {
+      host: probe.host,
+      ok: true, // Une réponse HTTP EST arrivée : DNS + TLS + routage OK.
+      detail: `http-${response.status}`,
+    };
+  } catch (error) {
+    const timedOut = error instanceof Error && error.name === 'AbortError';
+    return {
+      host: probe.host,
+      ok: false,
+      detail: timedOut ? 'timeout' : 'erreur-réseau',
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
+type CaseReport = CoverageCaseOutcome & {
   query: string;
-  totalResults: number;
-  playable: number;
-  firstResultMs: number | null;
-  totalMs: number;
-  failedSources: string[];
   circuitSources: string[];
-  offline: boolean;
-  relevant: boolean;
 };
 
 const normalize = (value: string): string =>
@@ -126,6 +162,7 @@ const runCase = (queryCase: QueryCase): Promise<CaseReport> =>
   new Promise((resolve) => {
     let last: ProgressiveSearchUpdate | null = null;
     let firstResultMs: number | null = null;
+    let finished = false;
     const startedAt = Date.now();
 
     const handle = searchCatalogProgressive(queryCase.query, (update) => {
@@ -147,16 +184,22 @@ const runCase = (queryCase: QueryCase): Promise<CaseReport> =>
       }
     });
 
-    // Garde-fou : même sans snapshot final, le banc rend la main.
+    // Garde-fou : même sans snapshot final, le banc rend la main (le cas
+    // sera compté NON soldé → statut test-incomplete, jamais un vert).
     const timer: ReturnType<typeof setTimeout> = setTimeout(
       () => finish(),
       MAX_WAIT_MS
     );
 
     const finish = () => {
+      if (finished) {
+        return;
+      }
+      finished = true;
       handle.cancel();
 
       const update = last;
+      const settled = update ? !update.pending : false;
       const totalResults = update
         ? update.results.tracks.length +
           update.results.artists.length +
@@ -193,13 +236,14 @@ const runCase = (queryCase: QueryCase): Promise<CaseReport> =>
       resolve({
         id: queryCase.id,
         query: queryCase.query,
+        settled,
         totalResults,
         playable,
         firstResultMs:
           timings?.firstResultMs ??
           (firstResultMs === null ? null : firstResultMs),
         totalMs: timings?.totalMs ?? Date.now() - startedAt,
-        failedSources: update ? [...update.failedSources] : ['all'],
+        failedSources: update ? [...update.failedSources] : [],
         circuitSources: update ? [...(update.circuitSources ?? [])] : [],
         offline: Boolean(update?.offline),
         relevant,
@@ -207,94 +251,101 @@ const runCase = (queryCase: QueryCase): Promise<CaseReport> =>
     };
   });
 
-describe('Banc de couverture en ligne V31 (opt-in, réseau réel requis)', () => {
+describe('Banc de couverture en ligne V32 (opt-in, réseau réel requis)', () => {
   it(
-    'mesure la couverture réelle sur jeu de requêtes fixe',
+    'mesure la couverture réelle sur jeu de requêtes fixe — ou conclut honnêtement',
     async () => {
-      // Sonde : une requête simple pour détecter l'absence de réseau AVANT
-      // de tirer des conclusions (les sandbox CI n'ont pas d'accès sortant).
-      const probe = await runCase({ id: 'probe', query: 'Beethoven' });
-      const networkUnavailable =
-        probe.offline ||
-        (probe.totalResults === 0 &&
-          probe.failedSources.length > 0 &&
-          probe.failedSources.every((source) =>
-            ['audius', 'youtube', 'backend', 'spotify'].includes(source)
-          ));
-
-      const reports: CaseReport[] = [probe];
-
-      if (!networkUnavailable) {
-        for (const queryCase of CASES) {
-          // Séquentiel : ne pas créer nous-mêmes un 429 sur les nœuds.
-          // eslint-disable-next-line no-await-in-loop
-          reports.push(await runCase(queryCase));
-        }
+      // 1) Sondes réseau (3 hôtes réels, infrastructure publique).
+      // eslint-disable-next-line no-console
+      console.info('[V32 banc] sondes réseau…');
+      const probes: CoverageProbeResult[] = [];
+      for (const probe of PROBE_URLS) {
+        // Séquentiel : ne pas saturer la pile réseau de l'hôte de test.
+        // eslint-disable-next-line no-await-in-loop
+        probes.push(await runProbe(probe));
       }
 
-      const withResults = reports.filter((r) => r.totalResults > 0);
-      const relevant = reports.filter((r) => r.relevant);
-      const offlineCount = reports.filter((r) => r.offline).length;
+      // 2) TOUS les cas du jeu fixe — JAMAIS court-circuités (V32).
+      const reports: CaseReport[] = [];
+      for (const queryCase of CASES) {
+        // Séquentiel : ne pas créer nous-mêmes un 429 sur les nœuds.
+        // eslint-disable-next-line no-await-in-loop
+        reports.push(await runCase(queryCase));
+      }
 
-      const perSourceErrors: Record<string, number> = {};
-      reports.forEach((report) => {
-        [...report.failedSources, ...report.circuitSources].forEach(
-          (source) => {
-            perSourceErrors[source] = (perSourceErrors[source] ?? 0) + 1;
-          }
-        );
+      // 3) Statut dérivé (pure, testée unitairement hors ligne).
+      const assessment = deriveCoverageBenchStatus({
+        probes,
+        cases: reports,
+        expectedCaseCount: CASES.length,
+        expectedProbeCount: PROBE_URLS.length,
       });
 
-      const summary = {
-        environment: networkUnavailable
-          ? 'NETWORK-UNAVAILABLE (mesures impossibles ici — rien n est inventé)'
-          : 'online (mesures réelles)',
-        queriesRun: reports.length,
-        queriesWithResults: withResults.length,
-        queriesRelevant: relevant.length,
-        offlineFastPaths: offlineCount,
-        playableTotal: reports.reduce((sum, r) => sum + r.playable, 0),
-        perSourceErrors,
-        cases: reports.map(
+      const report = {
+        statut: assessment.status,
+        explication: assessment.reasons,
+        reseau: {
+          joignable: assessment.networkReachable,
+          sondes: probes,
+        },
+        cas: {
+          executes: assessment.casesRun,
+          soldes: assessment.casesSettled,
+          avecResultats: assessment.casesWithResults,
+          pertinents: assessment.casesRelevant,
+          jouablesTotal: assessment.playableTotal,
+        },
+        erreursParSource: assessment.perSource,
+        details: reports.map(
           ({
             id,
+            settled,
             totalResults,
             playable,
             firstResultMs,
             totalMs,
-            relevant: rel,
+            relevant,
             offline,
             failedSources,
+            circuitSources,
           }) => ({
             id,
+            settled,
             totalResults,
             playable,
             firstResultMs,
             totalMs,
-            relevant: rel,
+            relevant,
             offline,
             failedSources,
+            circuitSources,
           })
         ),
       };
 
-      // Le rapport est la PREUVE : affiché tel quel dans les logs CI/dev.
+      // Le rapport est la PREUVE : affiché tel quel dans les logs.
       // eslint-disable-next-line no-console
-      console.info(`[V31 banc couverture] ${JSON.stringify(summary, null, 2)}`);
+      console.info(`[V32 banc couverture] ${JSON.stringify(report, null, 2)}`);
 
-      if (networkUnavailable) {
-        // Pas d'accès réseau dans cet environnement : on DOCUMENTE, on
-        // n'échoue pas, et surtout on n'invente aucune mesure.
-        expect(probe.totalResults).toBe(0);
-        return;
+      // 4) Vert UNIQUEMENT sur mesures réelles. Hors ligne / incomplet /
+      // panne fonctionnelle = ÉCHEC honnête du banc (jamais un faux positif).
+      if (assessment.status !== 'real-measures') {
+        throw new Error(
+          `Banc de couverture : statut « ${assessment.status} » — ` +
+            `${assessment.reasons.join(' ')} ` +
+            'Exécuter le banc dans un environnement connecté pour obtenir des mesures réelles.'
+        );
       }
 
-      // Environnement en ligne : attentes factuelles modestes.
-      const ratio = reports.length > 0 ? relevant.length / reports.length : 0;
-      expect(ratio).toBeGreaterThanOrEqual(0.5);
-      expect(perSourceErrors).toBeDefined();
+      // Environnement en ligne : attentes factuelles modestes (déjà
+      // vérifiées par la dérivation, rappelées ici pour lisibilité).
+      expect(assessment.casesRelevant).toBeGreaterThanOrEqual(1);
+      expect(assessment.casesWithResults).toBeGreaterThanOrEqual(
+        Math.ceil(reports.length / 2)
+      );
     },
-    (MAX_WAIT_MS + 2_000) * (CASES.length + 1)
+    (MAX_WAIT_MS + PROBE_TIMEOUT_MS + 2_000) *
+      (CASES.length + PROBE_URLS.length)
   );
 });
 

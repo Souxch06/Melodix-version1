@@ -2,6 +2,10 @@ import Constants from 'expo-constants';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import {
+  classifyDiagnosticError,
+  recordSearchDiagnostic,
+} from '../../services/diagnostics/searchDiagnostics';
+import {
   isExternalAbort,
   linkAbortSignals,
 } from '../../utils/common/abortSignals';
@@ -555,18 +559,51 @@ const requestViaDiscoveryNodes = async <T>(
  * (rejet `AudiusRequestError` kind `aborted`, jamais compté comme panne) ;
  * `options.timeoutMs` règle le timeout par requête nœud.
  */
+/** Libellé d'opération dérivé du CHEMIN SEUL (jamais les paramètres, jamais
+ * un identifiant : seuls les segments stables sont gardés). */
+const opLabelOfPath = (path: string): string => {
+  const segments = path.split('/').filter(Boolean);
+  return segments[0] ?? 'call';
+};
+
 export const audiusGet = async <T>(
   path: string,
   params: Record<string, string> = {},
   options?: AudiusFetchOptions
 ): Promise<T> => {
   const apiKey = getAudiusApiKey();
+  const op = opLabelOfPath(path);
+  const startedAt = Date.now();
 
-  if (apiKey) {
-    return requestViaGateway<T>(path, params, apiKey, options);
+  try {
+    const data = apiKey
+      ? await requestViaGateway<T>(path, params, apiKey, options)
+      : await requestViaDiscoveryNodes<T>(path, params, options);
+
+    // V32 : diagnostic PRIVÉ — classe + durée + nombre de résultats, jamais
+    // la requête ni aucune URL.
+    recordSearchDiagnostic({
+      scope: 'audius',
+      op,
+      cls: 'ok',
+      ms: Date.now() - startedAt,
+      results: Array.isArray(data) ? data.length : 1,
+    });
+
+    return data;
+  } catch (error) {
+    recordSearchDiagnostic({
+      scope: 'audius',
+      op,
+      cls: classifyDiagnosticError(error),
+      ms: Date.now() - startedAt,
+      httpStatus:
+        error && typeof error === 'object' && 'status' in error
+          ? (error as { status?: number }).status
+          : undefined,
+    });
+    throw error;
   }
-
-  return requestViaDiscoveryNodes<T>(path, params, options);
 };
 
 /**

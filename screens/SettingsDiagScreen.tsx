@@ -2,6 +2,7 @@ import * as React from 'react';
 
 import { SettingsScreen } from '@components';
 import { NativeDiagSection } from '../components/Settings/NativeDiagSection';
+import { SearchDiagSection } from '../components/Settings/SearchDiagSection';
 
 /**
  * Écran TEMPORAIRE « Diagnostic technique » (4.4.8-diagnostic, cahier §4).
@@ -18,5 +19,8 @@ import { NativeDiagSection } from '../components/Settings/NativeDiagSection';
 export const SettingsDiagScreen = () => (
   <SettingsScreen testID="settings-diag-screen" title="Diagnostic technique">
     <NativeDiagSection />
+    {/* V32 : dernières étapes de recherche/connexion (classes + durées,
+        jamais de requête ni de jeton) pour diagnostiquer sur appareil. */}
+    <SearchDiagSection />
   </SettingsScreen>
 );

@@ -71,14 +71,18 @@ describe('youtubeTrackToLibraryItem', () => {
 });
 
 describe('searchYouTubeTracks', () => {
-  it('requête YouTube Music avec la limite de couverture V30', async () => {
+  it('requête YouTube Music avec la limite de couverture V30 + repli WEB activé', async () => {
     mockedSongs.mockResolvedValue([
       { videoId: 'v1', title: 'Song', artists: ['Artist'], durationSec: 200 },
     ]);
 
     const results = await searchYouTubeTracks('song');
 
-    expect(mockedSongs).toHaveBeenCalledWith('song', YOUTUBE_SEARCH_LIMIT);
+    // V32 : la SOURCE DE CATALOGUE active le repli WEB (le matcher de
+    // lecture, lui, reste borné — voir youtubeInnertubeV32).
+    expect(mockedSongs).toHaveBeenCalledWith('song', YOUTUBE_SEARCH_LIMIT, {
+      useFallback: true,
+    });
     expect(results).toHaveLength(1);
     expect(results[0].id).toBe('youtube:v1');
   });

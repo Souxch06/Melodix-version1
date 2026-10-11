@@ -5,6 +5,7 @@ import {
   queueIdForTrackId,
 } from '@services';
 
+import { recordSearchDiagnostic } from '../../services/diagnostics/searchDiagnostics';
 import { linkAbortSignals } from '../../utils/common/abortSignals';
 import { getIsOnline } from '../../services/network/networkState';
 
@@ -212,6 +213,9 @@ type Run = {
   sourceElapsedMs: Partial<Record<SearchSourceId, number>>;
   /** V31 : l'appareil était hors ligne au lancement (aucune requête émise). */
   offline: boolean;
+  /** V32 : la ceinture de sécurité est effacée dès que la course est soldée
+   * ou annulée (avant, le minuteur survivait jusqu'à son déclenchement). */
+  hardLimitTimer?: ReturnType<typeof setTimeout>;
 };
 
 const activeRuns = new Map<string, Run>();
@@ -367,8 +371,30 @@ const settleSource = (
   if (!pending && !run.settled) {
     run.settled = true;
 
+    // V32 : la course est soldée → la ceinture de sécurité n'a plus lieu
+    // d'être (le minuteur ne survit plus inutilement à la course).
+    if (run.hardLimitTimer !== undefined) {
+      clearTimeout(run.hardLimitTimer);
+      run.hardLimitTimer = undefined;
+    }
+
     const update = run.lastUpdate;
     const total = update ? countResults(update.results) : 0;
+
+    // V32 : journal de diagnostic — issue de la course complète (durée,
+    // nombre de résultats). Jamais la requête, jamais de détail de piste.
+    // « Vide » ≠ « panne » : zéro résultat AVEC des sources en échec est
+    // classé réseau ; zéro résultat toutes sources saines est un vrai vide.
+    const failedCount = (Object.keys(run.states) as SearchSourceId[]).filter(
+      (key) => run.states[key] === 'error'
+    ).length;
+    recordSearchDiagnostic({
+      scope: 'engine',
+      op: 'run',
+      cls: total > 0 ? 'ok' : failedCount > 0 ? 'network' : 'empty',
+      ms: Math.max(0, Date.now() - run.startedAtMs),
+      results: total,
+    });
 
     // Cache : uniquement des réponses avec résultats — jamais une panne ni un
     // « aucun résultat » (resservir un échec comme un résultat = interdit)…
@@ -596,20 +622,33 @@ const startRun = (run: Run, nowMs: number): void => {
     });
     emit(run);
     run.settled = true;
+    // V32 : une course éteinte par la coupure locale est journalisée comme
+    // telle (jamais confondue avec un vrai vide de catalogue).
+    recordSearchDiagnostic({
+      scope: 'engine',
+      op: 'run',
+      cls: 'offline',
+      ms: 0,
+    });
     if (activeRuns.get(run.cacheKey) === run) {
       activeRuns.delete(run.cacheKey);
     }
     return;
   }
 
-  void spotifySource(run, nowMs)();
+  // V32 : les sources SANS compte partent IMMÉDIATEMENT. Spotify est lancé
+  // par `launch` après la vérification de session — jamais l'inverse : une
+  // lecture de session lente (stockage sécurisé) ne retarde plus le premier
+  // résultat Audius/backend/YouTube.
   void audiusSource(run, nowMs)();
   void backendSource(run, nowMs)();
   void youtubeSource(run, nowMs)();
 
   // Ceinture : même si une source ignorait son budget, la recherche solde —
-  // et V31 coupe RÉELLEMENT les requêtes encore en vol.
-  setTimeout(() => {
+  // et V31 coupe RÉELLEMENT les requêtes encore en vol. V32 : le minuteur
+  // est conservé sur la course et effacé au règlement/annulation.
+  run.hardLimitTimer = setTimeout(() => {
+    run.hardLimitTimer = undefined;
     if (!run.settled && !run.cancelled) {
       run.controller.abort();
       (Object.keys(run.states) as SearchSourceId[]).forEach((source) => {
@@ -619,6 +658,12 @@ const startRun = (run: Run, nowMs: number): void => {
       });
       emit(run);
       run.settled = true;
+      recordSearchDiagnostic({
+        scope: 'engine',
+        op: 'run',
+        cls: 'timeout',
+        ms: Math.max(0, Date.now() - run.startedAtMs),
+      });
       if (activeRuns.get(run.cacheKey) === run) {
         activeRuns.delete(run.cacheKey);
       }
@@ -742,6 +787,14 @@ export const searchCatalogProgressive = (
       activeRuns.set(cacheKey, created);
 
       const launch = async (): Promise<void> => {
+        // V32 — VITESSE : les sources sans compte (Audius, backend, YouTube)
+        // partent SANS attendre la vérification de session Spotify. Avant,
+        // TOUTES les sources attendaient `isSpotifySessionActive()` (lecture
+        // du stockage sécurisé) avant même d'émettre leur première requête :
+        // du temps perdu sur le chemin du PREMIER résultat, pour rien — les
+        // trois sources indépendantes n'ont pas besoin de session.
+        startRun(created, Date.now());
+
         let sessionActive = false;
         try {
           sessionActive = await isSpotifySessionActive();
@@ -750,14 +803,24 @@ export const searchCatalogProgressive = (
         }
 
         if (created.cancelled && created.subscribers.size === 0) {
+          if (created.hardLimitTimer !== undefined) {
+            clearTimeout(created.hardLimitTimer);
+            created.hardLimitTimer = undefined;
+          }
           if (activeRuns.get(cacheKey) === created) {
             activeRuns.delete(cacheKey);
           }
           return;
         }
 
+        // Course déjà soldée (ex. hors ligne, borne dure atteinte) : la
+        // source Spotify n'a plus rien à apporter.
+        if (created.settled || created.cancelled) {
+          return;
+        }
+
         created.spotifySessionActive = sessionActive;
-        startRun(created, Date.now());
+        void spotifySource(created, Date.now())();
       };
 
       void launch();
@@ -779,6 +842,11 @@ export const searchCatalogProgressive = (
       if (target.subscribers.size === 0) {
         target.cancelled = true;
         target.controller.abort();
+        // V32 : la ceinture de sécurité d'une course jetée est effacée.
+        if (target.hardLimitTimer !== undefined) {
+          clearTimeout(target.hardLimitTimer);
+          target.hardLimitTimer = undefined;
+        }
         if (activeRuns.get(target.cacheKey) === target) {
           activeRuns.delete(target.cacheKey);
         }
@@ -793,6 +861,11 @@ export const resetProgressiveSearchEngine = (): void => {
     run.cancelled = true;
     run.controller.abort();
     run.subscribers.clear();
+    // V32 : les ceintures des courses jetées sont effacées avec elles.
+    if (run.hardLimitTimer !== undefined) {
+      clearTimeout(run.hardLimitTimer);
+      run.hardLimitTimer = undefined;
+    }
   }
   activeRuns.clear();
 };

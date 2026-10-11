@@ -84,19 +84,19 @@ describe('innertube V31 — corps et transports', () => {
   it('timeout interne → timeout', async () => {
     jest.useFakeTimers();
     try {
-      setFetch(
-        jest.fn(
-          (_url: RequestInfo | URL, init?: RequestInit) =>
-            new Promise<Response>((_, reject) => {
-              init?.signal?.addEventListener('abort', () => {
-                const error = new Error('Aborted');
-                error.name = 'AbortError';
-                reject(error);
-              });
-            })
-        ) as never
+      const fetchMock = jest.fn(
+        (_url: RequestInfo | URL, init?: RequestInit) =>
+          new Promise<Response>((_, reject) => {
+            init?.signal?.addEventListener('abort', () => {
+              const error = new Error('Aborted');
+              error.name = 'AbortError';
+              reject(error);
+            });
+          })
       );
+      setFetch(fetchMock as never);
 
+      // Matcher (pas de repli) : UNE tentative, l'expiration se propage.
       const promise = searchYouTubeSongs('song');
       const assertion = expect(promise).rejects.toMatchObject({
         kind: 'timeout',
@@ -104,6 +104,8 @@ describe('innertube V31 — corps et transports', () => {
 
       await jest.advanceTimersByTimeAsync(13_000);
       await assertion;
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
     } finally {
       jest.useRealTimers();
     }
