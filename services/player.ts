@@ -256,6 +256,29 @@ export const INITIAL_PLAYER_STATE: PlayerState = {
 
 const RESTART_THRESHOLD_MS = 3000;
 
+/**
+ * V37 — fenêtre de protection d'une commande transport CONFIRMÉE par le
+ * runtime (pauseAsync/playAsync ont répondu avec un statut natif).
+ *
+ * Cause racine démontrée du défaut terrain « le bouton Pause ne fonctionne
+ * pas correctement » : expo-av sonde l'état natif toutes les 500 ms
+ * (`progressUpdateIntervalMillis`) ET rend la réponse native d'une commande
+ * de façon asynchrone — sur un appareil physique, un tick PÉRIMÉ (pris
+ * AVANT la commande) peut arriver juste après la réponse confirmée et
+ * contredire l'état réel : pause confirmée puis tick `isPlaying=true` →
+ * le moteur republiait `playing` (lecture fantôme affichée alors que le son
+ * est réellement en pause), reprise confirmée puis tick `isPlaying=false` →
+ * `paused` affiché pendant que le son joue.
+ *
+ * Pendant cette fenêtre, un tick qui CONTREDIT la réponse native confirmée
+ * est ignoré ; un tick cohérent avec elle (ou postérieur à la fenêtre)
+ * redevient pleinement autoritaire — les interruptions légitimes du système
+ * (perte de focus audio) restent donc reflétées, au plus tard au tick
+ * suivant la fenêtre. La protection est levée à tout changement de piste,
+ * stop ou fin de file.
+ */
+const TRANSPORT_CONFIRM_GRACE_MS = 1_500;
+
 // Fisher-Yates over [0..length), with `firstIndex` pinned at position 0.
 const buildShuffledOrder = (length: number, firstIndex: number): number[] => {
   const rest = Array.from({ length }, (_, idx) => idx).filter(
@@ -370,6 +393,12 @@ class MelodixPlayer {
   private transportQueue: Promise<void> = Promise.resolve();
   private transportIntent: boolean | null = null;
   private transportCommandToken = 0;
+  /** V37 — dernier état transport CONFIRMÉ par la réponse native d'une
+   * commande (null : aucune confirmation fraîche à protéger). Voir
+   * TRANSPORT_CONFIRM_GRACE_MS : les ticks périodiques qui le contredisent
+   * dans la fenêtre sont ignorés (anti-tick-périmé démontré en V37). */
+  private transportConfirmedPlaying: boolean | null = null;
+  private transportConfirmedAtMs = 0;
   /**
    * Source Spotify Web (optionnelle, injectée par PlayerContext). Le moteur
    * ne connaît QUE ce port : jamais le backend, le runtime ni la porte
@@ -697,18 +726,39 @@ class MelodixPlayer {
     // ne constituent pas une pause utilisateur et la transition de fin gère
     // elle-même le prochain morceau.
     if (!status.didJustFinish && !status.isBuffering) {
-      if (status.isPlaying === true) {
-        playbackState.status = 'playing';
-      } else if (
-        status.isPlaying === false &&
-        (this.state.status === 'playing' ||
-          this.state.status === 'loading' ||
-          this.state.status === 'buffering')
-      ) {
-        // `createAsync({ shouldPlay: true })` ne constitue pas une preuve de
-        // lecture. Un statut chargé/non-buffering mais non joué reste PAUSED :
-        // seul expo-av peut faire passer le moteur à PLAYING.
-        playbackState.status = 'paused';
+      // V37 — ANTI-TICK-PÉRIMÉ : dans la fenêtre qui suit une commande
+      // transport CONFIRMÉE par le runtime, un tick périodique qui contredit
+      // la réponse native est ignoré (course pause↔tick démontrée sur
+      // appareil physique). Un tick COHÉRENT avec la confirmation, ou
+      // postérieur à la fenêtre, redevient pleinement autoritaire — les
+      // interruptions système légitimes (focus audio) restent reflétées.
+      const confirmWindowOpen =
+        this.transportConfirmedPlaying !== null &&
+        Date.now() - this.transportConfirmedAtMs < TRANSPORT_CONFIRM_GRACE_MS;
+      const contradictsConfirmation =
+        confirmWindowOpen &&
+        typeof status.isPlaying === 'boolean' &&
+        status.isPlaying !== this.transportConfirmedPlaying;
+
+      if (!contradictsConfirmation) {
+        if (status.isPlaying === true) {
+          playbackState.status = 'playing';
+        } else if (
+          status.isPlaying === false &&
+          (this.state.status === 'playing' ||
+            this.state.status === 'loading' ||
+            this.state.status === 'buffering')
+        ) {
+          // `createAsync({ shouldPlay: true })` ne constitue pas une preuve
+          // de lecture. Un statut chargé/non-buffering mais non joué reste
+          // PAUSED : seul expo-av peut faire passer le moteur à PLAYING.
+          playbackState.status = 'paused';
+        }
+        // La confirmation N'EST PAS consommée ici : elle doit protéger tout
+        // le long de sa fenêtre (plusieurs ticks périmés peuvent suivre la
+        // réponse native). Son expiration est purement temporelle
+        // (TRANSPORT_CONFIRM_GRACE_MS) ; sa levée anticipée est faite aux
+        // changements de contexte transport (piste, stop, fin de file…).
       }
     }
 
@@ -849,6 +899,7 @@ class MelodixPlayer {
       this.spotifyWebActive = active;
       this.spotifyEndedHandledForId = null;
       this.transportIntent = null;
+      this.transportConfirmedPlaying = null;
       const metadataDuration =
         typeof current.durationMillis === 'number' &&
         Number.isFinite(current.durationMillis) &&
@@ -947,6 +998,7 @@ class MelodixPlayer {
         // L'état publié est LA décision : toute intention en vol devient
         // obsolète (le prochain toggle se recalcule sur l'état réel).
         this.transportIntent = null;
+        this.transportConfirmedPlaying = null;
         const nextStatus: PlayerStatus =
           published.status === 'playing'
             ? 'playing'
@@ -1510,6 +1562,7 @@ class MelodixPlayer {
     const requestToken = ++this.playToken; // tout resolve en vol est orphelin
     this.transportCommandToken += 1;
     this.transportIntent = null;
+    this.transportConfirmedPlaying = null;
     this.transportQueue = Promise.resolve();
     this.pendingSeekMillis = 0;
     this.pendingSeekForId = null;
@@ -1673,6 +1726,7 @@ class MelodixPlayer {
     // inverser une commande destinée à ce nouveau morceau.
     this.transportCommandToken += 1;
     this.transportIntent = null;
+    this.transportConfirmedPlaying = null;
     this.transportQueue = Promise.resolve();
     const isStale = () => this.playToken !== token;
 
@@ -2091,6 +2145,10 @@ class MelodixPlayer {
         ? !(this.transportIntent ?? this.state.status === 'playing')
         : desired;
     this.transportIntent = desiredPlaying;
+    // V37 — une nouvelle commande transport rend la confirmation précédente
+    // OBSOLÈTE : l'état natif va changer de notre propre fait ; seule la
+    // réponse de CETTE commande réarmera la protection anti-tick-périmé.
+    this.transportConfirmedPlaying = null;
     const commandToken = ++this.transportCommandToken;
 
     const operation = this.transportQueue.then(async () => {
@@ -2114,6 +2172,19 @@ class MelodixPlayer {
         // exotique ne renvoie aucun statut, le callback périodique décidera ;
         // on conserve entre-temps le dernier état réellement observé.
         if (runtimeStatus && typeof runtimeStatus === 'object') {
+          // V37 — la réponse native CONFIRME l'état transport : dans la
+          // fenêtre de protection, les ticks périodiques qui la contredisent
+          // sont ignorés (anti-tick-périmé, défaut Pause V37). Une réponse
+          // « encore en buffer » (isBuffering=true) ne prouve RIEN sur le
+          // transport : elle n'ouvre pas la protection — la vraie
+          // confirmation viendra du tick runtime ultérieur.
+          if (
+            typeof runtimeStatus.isPlaying === 'boolean' &&
+            runtimeStatus.isBuffering !== true
+          ) {
+            this.transportConfirmedPlaying = runtimeStatus.isPlaying;
+            this.transportConfirmedAtMs = Date.now();
+          }
           this.onPlaybackStatusUpdate(playToken, runtimeStatus);
         }
         if (!desiredPlaying) this.persistSession();
@@ -2659,6 +2730,7 @@ class MelodixPlayer {
     const requestToken = ++this.playToken; // tout resolve en vol devient orphelin
     this.transportCommandToken += 1;
     this.transportIntent = null;
+    this.transportConfirmedPlaying = null;
     this.transportQueue = Promise.resolve();
     this.pendingSeekMillis = 0;
     this.pendingSeekForId = null;
@@ -2702,6 +2774,7 @@ class MelodixPlayer {
     this.pendingSeekForId = null;
     this.transportCommandToken += 1;
     this.transportIntent = null;
+    this.transportConfirmedPlaying = null;
     this.transportQueue = Promise.resolve();
     this.lastPersistedAt = 0;
     this.lastPlaybackStartedForToken = -1;

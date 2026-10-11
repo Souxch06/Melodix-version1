@@ -1,7 +1,14 @@
 # ============================================================================
 # V33 — BANC DE COUVERTURE EN LIGNE (mesures RÉELLES sur réseau réel)
 #
-# Workflow INDÉPENDANT du build APK, déclenché MANUELLEMENT :
+# Workflow INDÉPENDANT du build APK.
+#
+# V37 : en PLUS du déclenchement manuel, le banc se lance automatiquement sur
+# les pushes de la branche de travail arena (mesures avant/après des
+# améliorations catalogue) — l'environnement de développement n'ayant ni
+# accès réseau sortant vers les services mesurés, ni le droit de déclencher
+# workflow_dispatch (403), le push est le seul levier de mesure réelle.
+# Déclenchement manuel toujours disponible :
 #   Actions → « Banc réseau Melodix » → Run workflow
 #
 # Rôle : exécuter `npm run test:online` sur un runner GitHub (accès sortant

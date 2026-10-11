@@ -117,6 +117,51 @@ class MelodixMediaModule : Module() {
     private const val REQUEST_CODE_POST_NOTIFICATIONS = 0x4D58 // "MX"
   }
 
+  /**
+   * V37 — état du verrou de visibilité de la notification (aucune donnée
+   * sensible : versions/booléens/importance). Cause démontrée du défaut
+   * terrain « la notification n'apparaît pas » : sur Android 13+, sans
+   * POST_NOTIFICATIONS accordée, la notification du foreground service est
+   * masquée du tiroir (visible uniquement dans le gestionnaire de tâches
+   * FGS). `channelImportance=0` (NONE) ou `notificationsActivees=false`
+   * signalent un blocage dans les réglages système de l'appareil.
+   */
+  private fun notificationGateStatus(context: Context): String {
+    val sdk = Build.VERSION.SDK_INT
+    val manager =
+      context.getSystemService(NotificationManager::class.java)
+        ?: return "notificationGate=managerAbsent"
+    val enabled =
+      try {
+        androidx.core.app.NotificationManagerCompat.from(context)
+          .areNotificationsEnabled()
+      } catch (t: Throwable) {
+        null
+      }
+    val permissionGranted =
+      if (sdk >= 33) {
+        ContextCompat.checkSelfPermission(
+          context,
+          Manifest.permission.POST_NOTIFICATIONS
+        ) == PackageManager.PERMISSION_GRANTED
+      } else {
+        true // la permission n'existe pas avant Android 13
+      }
+    val channelImportance =
+      if (sdk >= 26) {
+        manager.getNotificationChannel(
+          MelodixMediaNotificationProvider.CHANNEL_ID
+        )?.importance
+      } else {
+        null
+      }
+    val activeCount =
+      if (sdk >= 23) manager.activeNotifications?.size ?: 0 else -1
+    return "notificationGate=sdk$sdk permissionAccordee=$permissionGranted " +
+      "notificationsActivees=$enabled channelImportance=$channelImportance " +
+      "notificationsActives=$activeCount"
+  }
+
   override fun definition() = ModuleDefinition {
     Name("MelodixMedia")
 
@@ -229,10 +274,20 @@ class MelodixMediaModule : Module() {
     /**
      * Statut instantané de la couche MediaSession (booléens internes du
      * contrôleur — aucune donnée sensible), pour l'écran Réglages.
+     *
+     * V37 : le statut du VERROU DE VISIBILITÉ de la notification est joint —
+     * sur Android 13+, une notification foreground est MASQUÉE du tiroir tant
+     * que POST_NOTIFICATIONS n'est pas accordée (le service tourne, mais la
+     * notification n'est visible que dans le gestionnaire de tâches FGS).
+     * Un diagnostic appareil en UN SEUL écran : état service + verrou.
      */
     Function("readDiagStatus") {
       try {
-        return@Function MelodixMediaController.diagStatus()
+        val context = appContext.reactContext?.applicationContext
+        val gate =
+          if (context != null) notificationGateStatus(context)
+          else "notificationGate=contexteAbsent"
+        return@Function "${MelodixMediaController.diagStatus()} | $gate"
       } catch (t: Throwable) {
         android.util.Log.e("MXDIAG", "readDiagStatus ignoré", t)
         return@Function "indisponible"
