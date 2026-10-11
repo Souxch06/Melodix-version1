@@ -28,17 +28,9 @@ on:
         description: 'Identifiant libre de campagne (ex. v33-run2)'
         required: false
         default: ''
-  # TEMPORAIRE (amorçage) : GitHub n'enregistre un nouveau workflow sur une
-  # branche non-défaut qu'après sa PREMIÈRE exécution ; un workflow purement
-  # manuel ne peut donc jamais s'amorcer seul. Ce déclencheur push — limité
-  # à la branche de session — sert UNIQUEMENT à cette première exécution et
-  # est retiré juste après (le workflow redevient strictement manuel).
-  push:
-    branches:
-      - arena/5ef0ee6a-melodix
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   mesures-reseau:
@@ -90,3 +82,32 @@ jobs:
           name: online-benchmark-${{ github.sha }}-${{ github.run_id }}
           path: artifacts/online-benchmark/
           if-no-files-found: warn
+
+      - name: Publier le rapport en commentaire du commit testé (même en cas d'échec)
+        # Miroire lisible via l'API GitHub (le rapport texte est déjà expurgé :
+        # ni requêtes, ni jetons, ni URL, ni identifiant personnel).
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TXT=$(ls artifacts/online-benchmark/benchmark-*.txt 2>/dev/null | head -n1 || true)
+          if [ -z "$TXT" ]; then
+            echo "Aucun rapport texte produit : commentaire non publié."
+            exit 0
+          fi
+          {
+            echo "## Banc réseau Melodix — rapport de mesures réelles"
+            echo ""
+            echo "- Commit testé : \`${GITHUB_SHA}\`"
+            echo "- Campagne : ${MELODIX_BENCH_CAMPAIGN:-(sans identifiant)}"
+            echo "- Exécution : https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            echo ""
+            echo '```'
+            head -c 60000 "$TXT"
+            echo '```'
+          } > /tmp/bench-report.md
+          jq -Rs '{body: .}' /tmp/bench-report.md > /tmp/bench-comment.json
+          gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/comments" \
+            --input /tmp/bench-comment.json > /dev/null
+          echo "Rapport publié en commentaire du commit ${GITHUB_SHA}."
