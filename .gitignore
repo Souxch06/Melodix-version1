@@ -1,6 +1,8 @@
 node_modules/
 .expo/
 dist/
+# Rapports de mesures du banc en ligne (V33) — générés, jamais versionnés.
+artifacts/
 npm-debug.*
 *.jks
 *.p8

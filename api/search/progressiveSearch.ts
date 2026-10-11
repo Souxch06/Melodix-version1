@@ -141,6 +141,10 @@ export type ProgressiveSearchUpdate = {
   offline?: boolean;
   /** V31 : timings du snapshot final uniquement (absent sinon). */
   timings?: ProgressiveSearchTimings;
+  /** V33 : nombre de résultats RÉELLEMENT APPORTÉS par chaque source
+   * (avant fusion/dédoublonnage), snapshot final uniquement. Sert au banc
+   * de mesures en ligne : « qui a répondu quoi » sans requête en clair. */
+  perSourceCounts?: Partial<Record<SearchSourceId, number>>;
 };
 
 type SourceContributions = {
@@ -149,6 +153,12 @@ type SourceContributions = {
   albums: LibraryItemModel[];
   playlists: LibraryItemModel[];
 };
+
+const countContributions = (contributions: SourceContributions): number =>
+  contributions.tracks.length +
+  contributions.artists.length +
+  contributions.albums.length +
+  contributions.playlists.length;
 
 const emptyContributions = (): SourceContributions => ({
   tracks: [],
@@ -321,6 +331,15 @@ const buildUpdate = (run: Run): ProgressiveSearchUpdate => {
           ? Math.max(0, firstResultAtMs - run.startedAtMs)
           : null,
       perSourceMs: { ...run.sourceElapsedMs },
+    };
+
+    // V33 : contribution RÉELLE de chaque source (avant fusion) — le banc en
+    // ligne distingue ainsi « source qui a répondu » de « source en échec ».
+    update.perSourceCounts = {
+      spotify: countContributions(run.contributions.spotify),
+      backend: countContributions(run.contributions.backend),
+      audius: countContributions(run.contributions.audius),
+      youtube: countContributions(run.contributions.youtube),
     };
   }
 

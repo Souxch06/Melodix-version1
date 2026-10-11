@@ -1,0 +1,84 @@
+# ============================================================================
+# V33 — BANC DE COUVERTURE EN LIGNE (mesures RÉELLES sur réseau réel)
+#
+# Workflow INDÉPENDANT du build APK, déclenché MANUELLEMENT :
+#   Actions → « Banc réseau Melodix » → Run workflow
+#
+# Rôle : exécuter `npm run test:online` sur un runner GitHub (accès sortant
+# réel) et publier le rapport de mesures (JSON + TEXTE) comme artefact,
+# MÊME si le banc échoue (if: always()) — un échec de mesure est une
+# information, pas quelque chose à cacher.
+#
+# Garanties :
+#   - le CODE DE SORTIE réel du banc est conservé : le job échoue quand le
+#     banc conclut autre chose que « real-measures » (aucun faux succès) ;
+#   - aucun secret requis : ni compte Spotify Premium, ni jeton privé — les
+#     sondes n'utilisent que des points d'accès PUBLICS ;
+#   - le workflow APK Android n'est PAS modifié par ce fichier ;
+#   - durée bornée (timeout-minutes), AUCUNE boucle de retry ;
+#   - le commit testé est identifié précisément (github.sha + rapport).
+# ============================================================================
+
+name: Banc réseau Melodix (manuel)
+
+on:
+  workflow_dispatch:
+    inputs:
+      campagne:
+        description: 'Identifiant libre de campagne (ex. v33-run2)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  mesures-reseau:
+    name: Mesures réseau réelles (Audius / YouTube / Spotify)
+    runs-on: ubuntu-latest
+    # Borne raisonnable : le banc séquentiel (3 sondes + 14 cas + contrôles
+    # de flux bornés) prend quelques minutes ; 20 min couvrent largement les
+    # réseaux lents sans laisser un job bloqué indéfiniment.
+    timeout-minutes: 20
+    env:
+      # Identifiant de campagne transmis au rapport (jamais une donnée
+      # sensible : libellé libre saisi par l'opérateur).
+      MELODIX_BENCH_CAMPAIGN: ${{ inputs.campagne }}
+    steps:
+      - name: Récupérer le code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # workflow_dispatch : github.sha EST le commit effectivement testé.
+          ref: ${{ github.sha }}
+
+      - name: Installer Node.js 20
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Installer les dépendances (lockfile)
+        # Reproductible : npm ci depuis package-lock.json, mêmes drapeaux que
+        # le workflow APK.
+        run: npm ci --legacy-peer-deps
+
+      - name: Exécuter le banc en ligne
+        # Le code de sortie réel du banc EST le code de sortie de l'étape :
+        # - real-measures              → étape verte, mesures publiées ;
+        # - network-unavailable /
+        #   test-incomplete /
+        #   functional-failure         → étape ROUGE (mesure impossible ou
+        #                                 panne constatée) — rapport publié
+        #                                 quand même par l'étape suivante.
+        # Pas de retry automatique : une seconde campagne se lance à la
+        # main, en connaissance de cause.
+        run: npm run test:online
+
+      - name: Publier le rapport de mesures (même en cas d'échec)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          # Le nom identifie précisément le commit testé et la campagne.
+          name: online-benchmark-${{ github.sha }}-${{ github.run_id }}
+          path: artifacts/online-benchmark/
+          if-no-files-found: warn
