@@ -602,11 +602,49 @@ case "$PB_VERDICT" in
     fail "playback-smoke : verdict inattendu ($PB_VERDICT) : $PLAYBACK_TRACE"
     ;;
 esac
+# V35 — PHASE 2 (verdict started uniquement) : changement de piste +
+# commandes pause/reprise vérifiés APRÈS la lecture confirmée. Mesures sur
+# l'état moteur réel (émulateur -noaudio) ; tout échec est rapporté classé.
+PB_PHASE2=""
+if [ "$PB_VERDICT" = "verdict:started" ]; then
+  _p2tries=0
+  while [ "$_p2tries" -lt 12 ]; do
+    sleep 5
+    _p2tries=$((_p2tries + 1))
+    PLAYBACK_TRACE=$(adb logcat -d 2>/dev/null | grep -F '[PlaybackSmoke]' || true)
+    if printf '%s\n' "$PLAYBACK_TRACE" | grep -Eq 'controls:(resume ok|resume timeout|pause timeout)'; then
+      break
+    fi
+  done
+  PB_TC=$(printf '%s\n' "$PLAYBACK_TRACE" | grep -Eo 'track-change:[a-z-]+' | tail -1 || true)
+  PB_PAUSE=$(printf '%s\n' "$PLAYBACK_TRACE" | grep -Eo 'controls:pause (ok|timeout)' | tail -1 || true)
+  PB_RESUME=$(printf '%s\n' "$PLAYBACK_TRACE" | grep -Eo 'controls:resume (ok|timeout)' | tail -1 || true)
+  case "$PB_TC" in
+    track-change:started)
+      echo "::notice title=Changement de piste (émulateur)::changement de piste RÉEL vérifié — lecture confirmée par le moteur sur une deuxième piste issue de la recherche réelle (état moteur, pas de sortie sonore)"
+      ;;
+    track-change:skipped)
+      echo "::notice title=Changement de piste (émulateur)::sauté — une seule piste jouable dans la recherche réelle (mesure impossible, jamais inventée ; verdict principal inchangé)"
+      ;;
+    track-change:error|track-change:unavailable|track-change:timeout)
+      echo "::warning title=Changement de piste (émulateur)::tentative RÉELLE engagée ($PB_TC) — échec classé, mesure honnête"
+      ;;
+    *)
+      echo "::warning title=Changement de piste (émulateur)::non observé dans le budget (trace: ${PB_TC:-absente})"
+      ;;
+  esac
+  if [ "$PB_PAUSE" = "controls:pause ok" ] && [ "$PB_RESUME" = "controls:resume ok" ]; then
+    echo "::notice title=Commandes lecteur (émulateur)::pause puis reprise CONFIRMÉES par l'état moteur réel après lecture démarrée (état moteur, pas de sortie sonore)"
+  else
+    echo "::warning title=Commandes lecteur (émulateur)::pause/reprise non confirmées dans le budget (pause=${PB_PAUSE:-absente} reprise=${PB_RESUME:-absente}) — mesure honnête sur émulateur -noaudio"
+  fi
+  PB_PHASE2=" · changement de piste ${PB_TC:-non observé} · pause ${PB_PAUSE:-non observée} · reprise ${PB_RESUME:-non observée}"
+fi
 PLAYBACK_PID=$(adb shell pidof -s "$PACKAGE" 2>/dev/null | tr -d '\r' || true)
 [ -n "$PLAYBACK_PID" ] || fail "processus détruit après playback-smoke"
 echo "::notice title=Playback smoke (cold start)::séquence recherche réelle → sélection piste jouable → tentative de lecture par le moteur expo-av exécutée sans crash (pid=$PLAYBACK_PID) — verdict : $PB_VERDICT"
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
-  echo "- Playback smoke : recherche réelle + tentative de lecture réelle par le moteur expo-av — verdict $PB_VERDICT (émulateur -noaudio : état moteur, pas de sortie sonore)" >> "$GITHUB_STEP_SUMMARY"
+  echo "- Playback smoke : recherche réelle + tentative de lecture réelle par le moteur expo-av — verdict $PB_VERDICT$PB_PHASE2 (émulateur -noaudio : état moteur, pas de sortie sonore)" >> "$GITHUB_STEP_SUMMARY"
 fi
 
 # ── VÉRIFICATION FINALE FAUX PLAYING (V17) — TOUT LE RUN ──

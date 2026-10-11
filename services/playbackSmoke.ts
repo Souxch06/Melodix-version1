@@ -47,6 +47,24 @@ export type PlaybackSmokeVerdict =
   | 'no-playable-track'
   | 'search-incomplete';
 
+/** V35 — verdict de la phase « commandes » (pause puis reprise après une
+ * lecture confirmée) : mesure l'état moteur, jamais le son. */
+export type PlaybackSmokeControlsVerdict =
+  | 'ok'
+  | 'failed-pause'
+  | 'failed-resume'
+  | 'skipped';
+
+/** V35 — verdict du changement de piste : même sémantique que le verdict
+ * principal, ou `skipped-single-track` quand la recherche n'a fourni qu'une
+ * seule piste jouable (rien à changer — mesure impossible, jamais inventée). */
+export type PlaybackSmokeTrackChangeVerdict =
+  | 'started'
+  | 'error'
+  | 'unavailable'
+  | 'timeout'
+  | 'skipped-single-track';
+
 export type PlaybackSmokeReport = {
   /** Requête de recherche fixe du smoke (JAMAIS journalisée). */
   searchSettled: boolean;
@@ -58,6 +76,10 @@ export type PlaybackSmokeReport = {
   verdict: PlaybackSmokeVerdict;
   /** Dernier statut moteur observé (fidèle, même en timeout). */
   finalStatus: PlayerStatus | null;
+  /** V35 : pause/reprise après lecture confirmée (null si non exécuté). */
+  controlsVerdict: PlaybackSmokeControlsVerdict | null;
+  /** V35 : changement de piste vérifié (null si non exécuté). */
+  trackChangeVerdict: PlaybackSmokeTrackChangeVerdict | null;
   elapsedMs: number;
 };
 
@@ -70,6 +92,9 @@ export type PlaybackSmokeDeps = {
     onUpdate: (update: ProgressiveSearchUpdate) => void
   ) => ProgressiveSearchHandle;
   play: (track: PlayerTrack) => Promise<void>;
+  /** V35 : commandes transport vérifiées après lecture confirmée. */
+  pauseEngine: () => Promise<void>;
+  resumeEngine: () => Promise<void>;
   subscribe: (listener: (state: PlayerState) => void) => () => void;
   getStatus: () => PlayerStatus;
   stop: () => Promise<void>;
@@ -77,6 +102,8 @@ export type PlaybackSmokeDeps = {
   playTimeoutMs: number;
   /** Durée pendant laquelle `playing` doit tenir pour valider la lecture. */
   confirmMs: number;
+  /** Budget d'attente d'un statut cible (pause/reprise). */
+  statusBudgetMs: number;
   pollMs: number;
 };
 
@@ -92,12 +119,15 @@ export const defaultPlaybackSmokeDeps = (): PlaybackSmokeDeps => ({
   },
   search: (query, onUpdate) => searchCatalogProgressive(query, onUpdate),
   play: (track) => melodixPlayer.playTrack(track),
+  pauseEngine: () => melodixPlayer.pause(),
+  resumeEngine: () => melodixPlayer.play(),
   subscribe: (listener) => melodixPlayer.subscribe(listener),
   getStatus: () => melodixPlayer.getState().status,
   stop: () => melodixPlayer.stop(),
   searchTimeoutMs: 20_000,
   playTimeoutMs: 30_000,
   confirmMs: 2_000,
+  statusBudgetMs: 8_000,
   pollMs: 250,
 });
 
@@ -133,6 +163,72 @@ const selectPlayableTrack = (
   // auto : Audius d'abord (flux direct vérifiable sans clé), YouTube ensuite.
   return audiusFirst ?? youtubeFirst;
 };
+
+/** V35 : deuxième piste jouable DISTINCTE de la première (changement de
+ * piste). Même préférence de source que la sélection initiale. */
+const selectSecondPlayableTrack = (
+  tracks: LibraryItemModel[],
+  source: PlaybackSmokeSource,
+  excludeId: string
+): LibraryItemModel | null => {
+  const playable = tracks.filter(
+    (track) =>
+      track.id !== excludeId &&
+      (track.id.startsWith('audius:') || track.id.startsWith('youtube:'))
+  );
+  const audiusFirst =
+    playable.find((track) => track.id.startsWith('audius:')) ?? null;
+  const youtubeFirst =
+    playable.find((track) => track.id.startsWith('youtube:')) ?? null;
+
+  // Préférence à la source demandée ; à défaut, l'autre source jouable reste
+  // une tentative RÉELLE de changement de piste (la source est journalisée).
+  if (source === 'audius') {
+    return audiusFirst ?? youtubeFirst;
+  }
+  if (source === 'youtube') {
+    return youtubeFirst ?? audiusFirst;
+  }
+  return audiusFirst ?? youtubeFirst;
+};
+
+/** V35 : attend qu'un statut cible apparaisse (subscribe + poll), dans un
+ * budget borné. Rend `true` uniquement si le statut est réellement observé —
+ * jamais de succès déduit de la seule commande. */
+const waitForStatus = (
+  deps: PlaybackSmokeDeps,
+  target: PlayerStatus,
+  budgetMs: number
+): Promise<boolean> =>
+  new Promise((resolve) => {
+    const startedAt = Date.now();
+    let settled = false;
+
+    const finish = (reached: boolean) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      unsubscribe();
+      clearInterval(pollTimer);
+      resolve(reached);
+    };
+
+    const observe = (status: PlayerStatus) => {
+      if (status === target) {
+        finish(true);
+      }
+    };
+
+    const unsubscribe = deps.subscribe((state) => observe(state.status));
+
+    const pollTimer = setInterval(() => {
+      observe(deps.getStatus());
+      if (!settled && Date.now() - startedAt >= budgetMs) {
+        finish(false);
+      }
+    }, deps.pollMs);
+  });
 
 /** Attend un état moteur terminal avec confirmation de tenue de `playing`.
  * Rend la main sur : playing confirmé, erreur/indisponibilité, ou budget
@@ -249,6 +345,8 @@ export const runPlaybackSmoke = async (
       selectedSource: null,
       verdict: 'search-incomplete',
       finalStatus: null,
+      controlsVerdict: null,
+      trackChangeVerdict: null,
       elapsedMs: Date.now() - startedAt,
     };
   }
@@ -270,6 +368,8 @@ export const runPlaybackSmoke = async (
       selectedSource: null,
       verdict: 'no-playable-track',
       finalStatus: null,
+      controlsVerdict: null,
+      trackChangeVerdict: null,
       elapsedMs: Date.now() - startedAt,
     };
   }
@@ -298,18 +398,83 @@ export const runPlaybackSmoke = async (
 
   const outcome = await outcomePromise;
 
-  // 4) VERDICT + retour au calme (jamais de lecture qui tourne en fin de
-  //    smoke).
+  deps.log(
+    `verdict:${outcome.verdict}` +
+      (outcome.finalStatus ? ` status=${outcome.finalStatus}` : '')
+  );
+
+  // 4) V35 — COMMANDES + CHANGEMENT DE PISTE : exécutés UNIQUEMENT si une
+  //    lecture a réellement démarré (verdict `started`). Sur tout autre
+  //    verdict, ces phases sont `skipped`/null — jamais de faux vert sur une
+  //    lecture qui n'a pas eu lieu.
+  let controlsVerdict: PlaybackSmokeControlsVerdict | null = null;
+  let trackChangeVerdict: PlaybackSmokeTrackChangeVerdict | null = null;
+
+  if (outcome.verdict === 'started') {
+    // 4a) CHANGEMENT DE PISTE : une deuxième piste jouable distincte existe-t-
+    //     elle ? Si oui, lecture réelle de celle-ci puis confirmation tenue.
+    const second = selectSecondPlayableTrack(tracks, source, selected.id);
+    if (!second) {
+      trackChangeVerdict = 'skipped-single-track';
+      deps.log('track-change:skipped raison=une-seule-piste-jouable');
+    } else {
+      const secondSource: 'audius' | 'youtube' = second.id.startsWith('audius:')
+        ? 'audius'
+        : 'youtube';
+      deps.log(`track-change:attempt source=${secondSource}`);
+      const secondTrack: PlayerTrack = {
+        id: queueIdForTrackId(second.id),
+        title: second.title,
+        artists: artistsFromSubtitle(second.subtitle),
+        imageURL: second.imageURL ?? '',
+        source: sourceForTrackId(second.id),
+      };
+      const changeOutcomePromise = waitForPlaybackOutcome(deps);
+      try {
+        await deps.play(secondTrack);
+      } catch {
+        // Le moteur classe ses échecs dans son état ; l'observateur tranche.
+      }
+      const changeOutcome = await changeOutcomePromise;
+      trackChangeVerdict = changeOutcome.verdict;
+      deps.log(`track-change:${changeOutcome.verdict}`);
+    }
+
+    // 4b) COMMANDES : pause puis reprise, chacune confirmée par l'état moteur
+    //     réel (jamais par la seule résolution de la commande).
+    try {
+      await deps.pauseEngine();
+    } catch {
+      // La mesure continue : c'est l'état observé qui décide.
+    }
+    const paused = await waitForStatus(deps, 'paused', deps.statusBudgetMs);
+    if (!paused) {
+      controlsVerdict = 'failed-pause';
+      deps.log(`controls:pause timeout status=${deps.getStatus()}`);
+    } else {
+      deps.log('controls:pause ok');
+      try {
+        await deps.resumeEngine();
+      } catch {
+        // Idem : l'état observé décide.
+      }
+      const resumed = await waitForStatus(deps, 'playing', deps.statusBudgetMs);
+      if (resumed) {
+        controlsVerdict = 'ok';
+        deps.log('controls:resume ok');
+      } else {
+        controlsVerdict = 'failed-resume';
+        deps.log(`controls:resume timeout status=${deps.getStatus()}`);
+      }
+    }
+  }
+
+  // 5) Retour au calme (jamais de lecture qui tourne en fin de smoke).
   try {
     await deps.stop();
   } catch {
     // Arrêt best-effort : ne masque jamais le verdict.
   }
-
-  deps.log(
-    `verdict:${outcome.verdict}` +
-      (outcome.finalStatus ? ` status=${outcome.finalStatus}` : '')
-  );
 
   return {
     searchSettled: true,
@@ -319,6 +484,8 @@ export const runPlaybackSmoke = async (
     selectedSource,
     verdict: outcome.verdict,
     finalStatus: outcome.finalStatus,
+    controlsVerdict,
+    trackChangeVerdict,
     elapsedMs: Date.now() - startedAt,
   };
 };
