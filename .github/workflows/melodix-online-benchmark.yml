@@ -28,6 +28,14 @@ on:
         description: 'Identifiant libre de campagne (ex. v33-run2)'
         required: false
         default: ''
+  # TEMPORAIRE (amorçage) : GitHub n'enregistre un nouveau workflow sur une
+  # branche non-défaut qu'après sa PREMIÈRE exécution ; un workflow purement
+  # manuel ne peut donc jamais s'amorcer seul. Ce déclencheur push — limité
+  # à la branche de session — sert UNIQUEMENT à cette première exécution et
+  # est retiré juste après (le workflow redevient strictement manuel).
+  push:
+    branches:
+      - arena/5ef0ee6a-melodix
 
 permissions:
   contents: read
