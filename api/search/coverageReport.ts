@@ -42,6 +42,62 @@ export type OnlineStreamCheck =
   | 'network-error'
   | 'not-tested';
 
+/** V34 — classe d'issue de la CASCADE lecteur innertube (par tentative
+ * finale) : soit le flux est résolu (`ok`), soit la cause est nommée —
+ * restriction YouTube (`no-streaming-data` + playability), absence de format
+ * audio (`no-audio-format`), formats sans URL directe (`no-usable-url`,
+ * signatureCipher seuls), ou échec de transport classé. */
+export type YouTubeResolutionClass =
+  | 'ok'
+  | 'no-streaming-data'
+  | 'no-audio-format'
+  | 'no-usable-url'
+  | 'http-401'
+  | 'http-403'
+  | 'http-429'
+  | 'http-5xx'
+  | 'http-other'
+  | 'invalid'
+  | 'network'
+  | 'timeout';
+
+/** V34 — diagnostic détaillé (et EXPURGÉ) de la vérification d'un flux
+ * YouTube : jamais d'URL, jamais de videoId, jamais de message brut. */
+export type YouTubeStreamDiagnostic = {
+  resolution: YouTubeResolutionClass;
+  /** ENUM playabilityStatus (LOGIN_REQUIRED, UNPLAYABLE, OK…) ou null. */
+  playability: string | null;
+  /** Client innertube de l'issue finale. */
+  client: string | null;
+  /** Nombre de clients de la cascade réellement tentés. */
+  attempts: number;
+  /** Formats audio vus lors de la tentative finale. */
+  audioFormats: number;
+  formatsWithUrl: number;
+  formatsCipherOnly: number;
+  /** Vérification HTTP du flux RÉSOLU (présente uniquement si `ok`). */
+  streamHttp?: {
+    cls: string;
+    httpStatus?: number;
+    redirected: boolean;
+    contentTypeKind: string;
+    contentLength: number | null;
+  };
+};
+
+/** V34 — agrégat des diagnostics YouTube du banc (racines de causes). */
+export type YouTubeDiagnosticsSummary = {
+  /** Cas ayant effectivement soumis une piste YouTube à vérification. */
+  checked: number;
+  resolutionClasses: Record<string, number>;
+  playabilities: Record<string, number>;
+  finalClients: Record<string, number>;
+  /** Issues HTTP des flux RÉSOLUS (jamais présent si aucun flux résolu). */
+  streamHttpClasses: Record<string, number>;
+  formatsWithUrlTotal: number;
+  formatsCipherOnlyTotal: number;
+};
+
 export type OnlineCaseReport = {
   id: string;
   /** Catégorie du cas (tube international, fr accentué, remix…) — la requête
@@ -58,6 +114,9 @@ export type OnlineCaseReport = {
   playableIds: number;
   /** Contrôle technique réel du flux sur un échantillon borné. */
   streamVerified: { audius: OnlineStreamCheck; youtube: OnlineStreamCheck };
+  /** V34 — cause détaillée de l'issue du flux YouTube (si piste testée) :
+   * distingue restriction YouTube / formats non résolus / refus HTTP. */
+  youtubeStreamDetail?: YouTubeStreamDiagnostic;
   /** Niveau 5 : moteur audio indisponible sous Node — toujours NON MESURÉ. */
   playbackStarted: 'NON MESURÉ';
   firstResultMs: number | null;
@@ -68,7 +127,7 @@ export type OnlineCaseReport = {
 };
 
 export type OnlineBenchmarkReport = {
-  version: 1;
+  version: 2;
   generator: 'melodix-online-benchmark';
   /** Commit testé (identifie précisément la campagne). */
   commit?: string;
@@ -84,6 +143,12 @@ export type OnlineBenchmarkReport = {
     reachable: boolean;
     probes: OnlineProbeReport[];
   };
+  /** V34 — état de la source backend Melodix : configurée ou non (une source
+   * non configurée n'émet AUCUNE requête — son « 0 résultat » est volontaire,
+   * pas une panne masquée). */
+  backend: {
+    configured: boolean;
+  };
   cases: OnlineCaseReport[];
   totals: {
     casesRun: number;
@@ -98,6 +163,8 @@ export type OnlineBenchmarkReport = {
     perSourceResults: Record<string, number>;
     perSourceErrors: Record<string, number>;
   };
+  /** V34 — diagnostic agrégé des flux YouTube (racines de causes). */
+  youtubeDiagnostics: YouTubeDiagnosticsSummary;
   latencies: {
     firstResultMs: LatencyStats;
     totalMs: LatencyStats;
@@ -158,6 +225,53 @@ export const latencyStatsOf = (values: (number | null)[]): LatencyStats => {
   };
 };
 
+const bump = (record: Record<string, number>, key: string): void => {
+  record[key] = (record[key] ?? 0) + 1;
+};
+
+/** V34 — agrège les diagnostics YouTube par cas en un résumé de causes
+ * (fonction pure, sans requête). Les cas sans piste YouTube testée ne
+ * comptent nulle part — jamais de valeur inventée. */
+export const summarizeYouTubeDiagnostics = (
+  cases: OnlineCaseReport[]
+): YouTubeDiagnosticsSummary => {
+  const summary: YouTubeDiagnosticsSummary = {
+    checked: 0,
+    resolutionClasses: {},
+    playabilities: {},
+    finalClients: {},
+    streamHttpClasses: {},
+    formatsWithUrlTotal: 0,
+    formatsCipherOnlyTotal: 0,
+  };
+
+  for (const kase of cases) {
+    const detail = kase.youtubeStreamDetail;
+    if (!detail) {
+      continue;
+    }
+    summary.checked += 1;
+    bump(summary.resolutionClasses, detail.resolution);
+    if (detail.playability) {
+      bump(summary.playabilities, detail.playability);
+    }
+    if (detail.client) {
+      bump(summary.finalClients, detail.client);
+    }
+    summary.formatsWithUrlTotal += detail.formatsWithUrl;
+    summary.formatsCipherOnlyTotal += detail.formatsCipherOnly;
+    if (detail.streamHttp) {
+      const status =
+        typeof detail.streamHttp.httpStatus === 'number'
+          ? `:${detail.streamHttp.httpStatus}`
+          : '';
+      bump(summary.streamHttpClasses, `${detail.streamHttp.cls}${status}`);
+    }
+  }
+
+  return summary;
+};
+
 export type OnlineBenchmarkReportInput = {
   commit?: string;
   runId?: string;
@@ -168,6 +282,8 @@ export type OnlineBenchmarkReportInput = {
   reasons: string[];
   networkReachable: boolean;
   probes: OnlineProbeReport[];
+  /** V34 — la source backend Melodix est-elle configurée (URL présente) ? */
+  backendConfigured: boolean;
   cases: OnlineCaseReport[];
 };
 
@@ -210,7 +326,7 @@ export const buildOnlineBenchmarkReport = (
   }
 
   return {
-    version: 1,
+    version: 2,
     generator: 'melodix-online-benchmark',
     ...(input.commit ? { commit: input.commit } : {}),
     ...(input.runId ? { runId: input.runId } : {}),
@@ -223,7 +339,11 @@ export const buildOnlineBenchmarkReport = (
       reachable: input.networkReachable,
       probes: [...input.probes],
     },
+    backend: {
+      configured: input.backendConfigured,
+    },
     cases: [...input.cases],
+    youtubeDiagnostics: summarizeYouTubeDiagnostics(input.cases),
     totals: {
       casesRun: input.cases.length,
       casesSettled: input.cases.filter((kase) => kase.settled).length,
@@ -270,6 +390,31 @@ export const describeProbeClass = (probe: OnlineProbeReport): string => {
   return probe.cls === 'timeout' ? 'timeout' : 'erreur réseau';
 };
 
+/** Libellé court (et expurgé) du diagnostic YouTube d'un cas. */
+const describeYouTubeDetail = (detail: YouTubeStreamDiagnostic): string => {
+  if (detail.resolution === 'ok') {
+    const http = detail.streamHttp
+      ? `http=${detail.streamHttp.cls}${
+          typeof detail.streamHttp.httpStatus === 'number'
+            ? `(${detail.streamHttp.httpStatus})`
+            : ''
+        }`
+      : 'http=non-testé';
+    return `flux-résolu(${http})`;
+  }
+  const playability = detail.playability ? `,${detail.playability}` : '';
+  const formats = `,formats-audio=${detail.audioFormats}(url=${detail.formatsWithUrl},cipher=${detail.formatsCipherOnly})`;
+  return `${detail.resolution}${playability}${formats}`;
+};
+
+const formatCounts = (record: Record<string, number>): string => {
+  const entries = Object.entries(record);
+  if (entries.length === 0) {
+    return '(aucun)';
+  }
+  return entries.map(([key, count]) => `${key} ×${count}`).join(' · ');
+};
+
 /** Rendu TEXTE du rapport — mêmes données que le JSON, aucune de plus. */
 export const renderOnlineBenchmarkText = (
   report: OnlineBenchmarkReport
@@ -290,6 +435,12 @@ export const renderOnlineBenchmarkText = (
         `  - ${probe.service.padEnd(8)} ${probe.reachable ? 'OK ' : 'KO '} ` +
         `${describeProbeClass(probe)} en ${probe.ms} ms`
     ),
+    '',
+    'BACKEND MELODIX (source catalogue privée)',
+    `  Configuré : ${report.backend.configured ? 'OUI' : 'NON'}` +
+      (report.backend.configured
+        ? ''
+        : ' — source volontairement inactive (aucune requête émise ; le « 0 résultat » est un saut, pas une panne masquée)'),
     '',
     'CAS DE RECHERCHE (niveaux 2-3 : résultats reçus / pertinents)',
   ];
@@ -319,13 +470,28 @@ export const renderOnlineBenchmarkText = (
     lines.push(
       `      flux audio vérifiés : audius=${kase.streamVerified.audius} · ` +
         `youtube=${kase.streamVerified.youtube} · ` +
-        `lecture démarrée : ${kase.playbackStarted}`
+        `lecture démarrée : ${kase.playbackStarted}` +
+        (kase.youtubeStreamDetail
+          ? `\n      diagnostic YouTube : ${describeYouTubeDetail(kase.youtubeStreamDetail)}`
+          : '')
     );
   }
 
   const t = report.totals;
   const first = report.latencies.firstResultMs;
   const total = report.latencies.totalMs;
+  const yt = report.youtubeDiagnostics;
+
+  lines.push(
+    '',
+    'DIAGNOSTIC FLUX YOUTUBE (V34 — 1 piste testée par cas, cause classifiée)',
+    `  Pistes YouTube soumises à vérification : ${yt.checked}`,
+    `  Résolution cascade lecteur : ${formatCounts(yt.resolutionClasses)}`,
+    `  Playability observés       : ${formatCounts(yt.playabilities)}`,
+    `  Clients finaux             : ${formatCounts(yt.finalClients)}`,
+    `  Formats audio vus          : url-directes=${yt.formatsWithUrlTotal} · cipher-seuls=${yt.formatsCipherOnlyTotal}`,
+    `  HTTP des flux résolus      : ${formatCounts(yt.streamHttpClasses)}`
+  );
 
   lines.push(
     '',

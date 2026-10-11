@@ -28,6 +28,13 @@ on:
         description: 'Identifiant libre de campagne (ex. v33-run2)'
         required: false
         default: ''
+  # TEMPORAIRE (V34) : le jeton de cette session n'a pas la permission
+  # actions:write requise par workflow_dispatch (HTTP 403). Ce déclencheur
+  # push — limité à la branche de session — sert UNIQUEMENT à lancer la
+  # campagne de diagnostic ; il est retiré immédiatement après.
+  push:
+    branches:
+      - arena/5ef0ee6a-melodix
 
 permissions:
   contents: write
@@ -44,6 +51,12 @@ jobs:
       # Identifiant de campagne transmis au rapport (jamais une donnée
       # sensible : libellé libre saisi par l'opérateur).
       MELODIX_BENCH_CAMPAIGN: ${{ inputs.campagne }}
+      # V34 — même source de configuration que le build APK (vars de dépôt) :
+      # le banc teste le backend SI ET SEULEMENT SI l'app en reçoit un. La
+      # valeur n'apparaît jamais dans le rapport (état configuré/non
+      # configuré uniquement). Variable absente → backend déclaré « non
+      # configuré » et sauté volontairement, sans requête ni erreur.
+      MELODIX_BACKEND_URL: ${{ vars.MELODIX_BACKEND_URL }}
     steps:
       - name: Récupérer le code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

@@ -688,22 +688,236 @@ export const searchYouTubeSongs = async (
 
 // --- lecteur ------------------------------------------------------------------
 
+// --- V34 : classification EXPLOITABLE des réponses lecteur ---------------------
+
+/** Classe d'issue d'une réponse lecteur — jamais un message brut.
+ * - `ok` : un flux audio avec URL directe exploitable a été trouvé ;
+ * - `no-streaming-data` : réponse 200 SANS `streamingData` — restriction de
+ *   lecture côté YouTube (playabilityStatus : LOGIN_REQUIRED, UNPLAYABLE…) ;
+ * - `no-audio-format` : `streamingData` présent mais AUCUN format audio ;
+ * - `no-usable-url` : formats audio présents mais sans `url` directe
+ *   (uniquement `signatureCipher`/`cipher` — signatures à déchiffrer, non
+ *   exploitable ici). */
+export type PlayerResponseClass =
+  | 'ok'
+  | 'no-streaming-data'
+  | 'no-audio-format'
+  | 'no-usable-url';
+
+export type PlayerResponseClassification = {
+  /** URL de flux audio exploitable, sinon null. */
+  url: string | null;
+  cls: PlayerResponseClass;
+  /** Statut `playabilityStatus.status` (ENUM YouTube : OK, LOGIN_REQUIRED,
+   * UNPLAYABLE…) — normalisé [A-Z_], JAMAIS le champ `reason`. */
+  playability: string | null;
+  /** Nombre de formats `audio/*` présents dans `streamingData`. */
+  audioFormats: number;
+  /** Formats audio portant une `url` directe. */
+  formatsWithUrl: number;
+  /** Formats audio SANS `url` directe (`signatureCipher`/`cipher` seuls). */
+  formatsCipherOnly: number;
+  /** Expiration annoncée du flux (secondes), si le serveur la fournit. */
+  expiresInSeconds: number | null;
+};
+
+/** Normalisation sûre du statut playability : ENUM uniquement, jamais de
+ * texte libre (le champ `reason` de YouTube n'est volontairement pas lu). */
+const sanitizePlayability = (json: unknown): string | null => {
+  const status = asRecord(asRecord(json)?.playabilityStatus)?.status;
+  if (typeof status !== 'string') {
+    return null;
+  }
+  const cleaned = status
+    .toUpperCase()
+    .replace(/[^A-Z_]/g, '')
+    .slice(0, 32);
+  return cleaned.length > 0 ? cleaned : null;
+};
+
+/** Analyse PURE d'une réponse lecteur innertube : sélection du meilleur
+ * flux audio + cause classifiée de son absence. Aucune requête ici. */
+export const classifyPlayerResponse = (
+  json: unknown
+): PlayerResponseClassification => {
+  const root = asRecord(json);
+  const playability = sanitizePlayability(json);
+  const streaming = asRecord(root?.streamingData);
+
+  if (!streaming) {
+    // UNPLAYABLE / LOGIN_REQUIRED / évolution protocole : pas de flux.
+    return {
+      url: null,
+      cls: 'no-streaming-data',
+      playability,
+      audioFormats: 0,
+      formatsWithUrl: 0,
+      formatsCipherOnly: 0,
+      expiresInSeconds: null,
+    };
+  }
+
+  const expiresRaw = streaming.expiresInSeconds;
+  const expiresInSeconds =
+    typeof expiresRaw === 'number' && Number.isFinite(expiresRaw)
+      ? expiresRaw
+      : null;
+
+  const formats = [
+    ...asArray(streaming.adaptiveFormats),
+    ...asArray(streaming.formats),
+  ] as InnertubeFormat[];
+
+  let audioFormats = 0;
+  let formatsWithUrl = 0;
+  let formatsCipherOnly = 0;
+  let best: { url: string; bitrate: number; pref: number } | null = null;
+
+  for (const format of formats) {
+    if (
+      typeof format?.mimeType !== 'string' ||
+      !format.mimeType.startsWith('audio/')
+    ) {
+      continue;
+    }
+    audioFormats += 1;
+
+    if (typeof format.url !== 'string' || format.url.length === 0) {
+      // Format audio SANS url directe : signatureCipher/cipher seulement.
+      formatsCipherOnly += 1;
+      continue;
+    }
+    formatsWithUrl += 1;
+
+    const pref = format.mimeType.startsWith('audio/mp4') ? 2 : 1;
+    const bitrate = typeof format.bitrate === 'number' ? format.bitrate : 0;
+
+    if (
+      !best ||
+      pref > best.pref ||
+      (pref === best.pref && bitrate > best.bitrate)
+    ) {
+      best = { url: format.url, bitrate, pref };
+    }
+  }
+
+  if (audioFormats === 0) {
+    return {
+      url: null,
+      cls: 'no-audio-format',
+      playability,
+      audioFormats: 0,
+      formatsWithUrl: 0,
+      formatsCipherOnly: 0,
+      expiresInSeconds,
+    };
+  }
+
+  if (!best) {
+    return {
+      url: null,
+      cls: 'no-usable-url',
+      playability,
+      audioFormats,
+      formatsWithUrl,
+      formatsCipherOnly,
+      expiresInSeconds,
+    };
+  }
+
+  return {
+    url: best.url,
+    cls: 'ok',
+    playability,
+    audioFormats,
+    formatsWithUrl,
+    formatsCipherOnly,
+    expiresInSeconds,
+  };
+};
+
+// --- V34 : résolution détaillée (diagnostic) de la chaîne lecteur -------------
+
+/** Issue classifiée d'une TENTATIVE de la chaîne lecteur. */
+export type PlayerAttemptClass =
+  | PlayerResponseClass
+  | 'http-401'
+  | 'http-403'
+  | 'http-429'
+  | 'http-5xx'
+  | 'http-other'
+  | 'invalid'
+  | 'network'
+  | 'timeout';
+
+export type PlayerAttemptReport = {
+  client: string;
+  cls: PlayerAttemptClass;
+  playability: string | null;
+  audioFormats: number;
+  formatsWithUrl: number;
+  formatsCipherOnly: number;
+  ms: number;
+};
+
+export type YouTubeStreamResolution = {
+  /** URL de flux retenue, sinon null (contrat historique). */
+  url: string | null;
+  /** Classe de l'issue FINALE (pourquoi l'URL manque, le cas échéant).
+   * Une annulation demandée (« aborted ») est propagée comme exception —
+   * elle n'apparaît donc jamais ici. */
+  finalCls: PlayerAttemptClass;
+  /** Client ayant produit l'issue finale. */
+  client: string | null;
+  playability: string | null;
+  expiresInSeconds: number | null;
+  /** Toutes les tentatives, dans l'ordre de la chaîne. */
+  attempts: PlayerAttemptReport[];
+};
+
+/** Classe innertube → classe d'issue lisible (erreur de transport). */
+const innertubeErrorToAttemptClass = (
+  error: InnertubeError
+): PlayerAttemptClass =>
+  error.kind === 'rate-limited'
+    ? 'http-429'
+    : error.kind === 'unauthorized'
+      ? 'http-401'
+      : error.kind === 'forbidden'
+        ? 'http-403'
+        : error.kind === 'server'
+          ? 'http-5xx'
+          : error.kind === 'timeout'
+            ? 'timeout'
+            : error.kind === 'invalid'
+              ? 'invalid'
+              : error.kind === 'network'
+                ? 'network'
+                : 'http-other';
+
 /**
- * V32 — URL de flux audio direct (expirante ~6 h) pour un videoId.
- *
- * CHAÎNE de clients lecteur : ANDROID_MUSIC → IOS_MUSIC → lecteur intégré
- * public. Un client qui refuse (LOGIN_REQUIRED/UNPLAYABLE : réponse 200
- * SANS `streamingData`) ou qui tombe (erreur réseau) passe simplement la
- * main au suivant ; chaque tentative est journalisée (diagnostic, jamais
- * d'URL ni de contenu). `null` signifie : la chaîne entière a été essayée,
- * aucun flux exploitable — le lecteur marque la piste indisponible et
- * avance, sans jamais la présenter comme lisible.
+ * V34 — résolution détaillée de la chaîne lecteur : MÊMES requêtes et MÊME
+ * ordre que `getYouTubeAudioStreamUrl` (aucune requête supplémentaire), mais
+ * chaque tentative est classifiée (playability, formats audio, urls directes
+ * vs signatureCipher, statut HTTP). Réservé au diagnostic (banc en ligne,
+ * journal) — jamais d'URL ni de contenu dans les structures retournées hors
+ * `url` lui-même.
  */
-export const getYouTubeAudioStreamUrl = async (
+export const getYouTubeAudioStreamUrlDetailed = async (
   videoId: string,
   options: { signal?: AbortSignal } = {}
-): Promise<string | null> => {
+): Promise<YouTubeStreamResolution> => {
   const fetchOptions = options.signal ? { signal: options.signal } : {};
+  const attempts: PlayerAttemptReport[] = [];
+
+  let final: YouTubeStreamResolution = {
+    url: null,
+    finalCls: 'no-streaming-data',
+    client: null,
+    playability: null,
+    expiresInSeconds: null,
+    attempts,
+  };
 
   for (const client of PLAYER_CLIENT_CHAIN) {
     const startedAt = Date.now();
@@ -728,8 +942,18 @@ export const getYouTubeAudioStreamUrl = async (
         fetchOptions
       );
 
-      const url = pickAudioStreamUrl(json);
-      if (url) {
+      const classified = classifyPlayerResponse(json);
+      attempts.push({
+        client: client.clientName,
+        cls: classified.cls,
+        playability: classified.playability,
+        audioFormats: classified.audioFormats,
+        formatsWithUrl: classified.formatsWithUrl,
+        formatsCipherOnly: classified.formatsCipherOnly,
+        ms: Date.now() - startedAt,
+      });
+
+      if (classified.url) {
         recordSearchDiagnostic({
           scope: 'youtube',
           op: 'player',
@@ -737,7 +961,15 @@ export const getYouTubeAudioStreamUrl = async (
           ms: Date.now() - startedAt,
           client: client.clientName,
         });
-        return url;
+        final = {
+          url: classified.url,
+          finalCls: 'ok',
+          client: client.clientName,
+          playability: classified.playability,
+          expiresInSeconds: classified.expiresInSeconds,
+          attempts,
+        };
+        return final;
       }
 
       // Réponse 200 sans flux lisible : ce client ne sert pas cette vidéo
@@ -749,6 +981,14 @@ export const getYouTubeAudioStreamUrl = async (
         ms: Date.now() - startedAt,
         client: client.clientName,
       });
+      final = {
+        url: null,
+        finalCls: classified.cls,
+        client: client.clientName,
+        playability: classified.playability,
+        expiresInSeconds: classified.expiresInSeconds,
+        attempts,
+      };
     } catch (error) {
       // Annulation demandée (nouvelle piste, démontage) : arrêt immédiat,
       // jamais compté comme panne.
@@ -763,11 +1003,52 @@ export const getYouTubeAudioStreamUrl = async (
         client: client.clientName,
         httpStatus: error instanceof InnertubeError ? error.status : undefined,
       });
+      const cls: PlayerAttemptClass =
+        error instanceof InnertubeError
+          ? innertubeErrorToAttemptClass(error)
+          : 'network';
+      attempts.push({
+        client: client.clientName,
+        cls,
+        playability: null,
+        audioFormats: 0,
+        formatsWithUrl: 0,
+        formatsCipherOnly: 0,
+        ms: Date.now() - startedAt,
+      });
+      final = {
+        url: null,
+        finalCls: cls,
+        client: client.clientName,
+        playability: null,
+        expiresInSeconds: null,
+        attempts,
+      };
     }
   }
 
-  return null;
+  return final;
 };
+
+/**
+ * V32 — URL de flux audio direct (expirante ~6 h) pour un videoId.
+ *
+ * CHAÎNE de clients lecteur : ANDROID_MUSIC → IOS_MUSIC → lecteur intégré
+ * public. Un client qui refuse (LOGIN_REQUIRED/UNPLAYABLE : réponse 200
+ * SANS `streamingData`) ou qui tombe (erreur réseau) passe simplement la
+ * main au suivant ; chaque tentative est journalisée (diagnostic, jamais
+ * d'URL ni de contenu). `null` signifie : la chaîne entière a été essayée,
+ * aucun flux exploitable — le lecteur marque la piste indisponible et
+ * avance, sans jamais la présenter comme lisible.
+ *
+ * V34 : contrat inchangé — implémentation déléguée à la résolution
+ * détaillée (mêmes requêtes, même ordre, mêmes diagnostics).
+ */
+export const getYouTubeAudioStreamUrl = async (
+  videoId: string,
+  options: { signal?: AbortSignal } = {}
+): Promise<string | null> =>
+  (await getYouTubeAudioStreamUrlDetailed(videoId, options)).url;
 
 type InnertubeFormat = {
   url?: string;
@@ -775,43 +1056,8 @@ type InnertubeFormat = {
   bitrate?: number;
 };
 
-/** Meilleur flux AUDIO (audio/mp4 préféré, highest bitrate en ex æquo). */
-export const pickAudioStreamUrl = (json: unknown): string | null => {
-  const root = asRecord(json);
-  const streaming = asRecord(root?.streamingData);
-
-  if (!streaming) {
-    // UNPLAYABLE / LOGIN_REQUIRED / évolution protocole → fallback propre.
-    return null;
-  }
-
-  const formats = [
-    ...asArray(streaming.adaptiveFormats),
-    ...asArray(streaming.formats),
-  ] as InnertubeFormat[];
-
-  let best: { url: string; bitrate: number; pref: number } | null = null;
-
-  for (const format of formats) {
-    if (
-      typeof format?.url !== 'string' ||
-      typeof format?.mimeType !== 'string' ||
-      !format.mimeType.startsWith('audio/')
-    ) {
-      continue;
-    }
-
-    const pref = format.mimeType.startsWith('audio/mp4') ? 2 : 1;
-    const bitrate = typeof format.bitrate === 'number' ? format.bitrate : 0;
-
-    if (
-      !best ||
-      pref > best.pref ||
-      (pref === best.pref && bitrate > best.bitrate)
-    ) {
-      best = { url: format.url, bitrate, pref };
-    }
-  }
-
-  return best?.url ?? null;
-};
+/** Meilleur flux AUDIO (audio/mp4 préféré, highest bitrate en ex æquo).
+ * V34 : contrat inchangé — délégation au classifieur pur
+ * `classifyPlayerResponse` (qui documente AUSSI la cause de l'absence). */
+export const pickAudioStreamUrl = (json: unknown): string | null =>
+  classifyPlayerResponse(json).url;

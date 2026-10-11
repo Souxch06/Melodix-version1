@@ -62,9 +62,17 @@ import {
   type OnlineCaseReport,
   type OnlineProbeReport,
   type OnlineStreamCheck,
+  type YouTubeStreamDiagnostic,
 } from '../coverageReport';
+import ExpoConstants from 'expo-constants';
+
 import { getAudiusStreamUrl } from '../../audius';
-import { getYouTubeAudioStreamUrl } from '../../../services/audio/youtubeInnertube';
+import { getYouTubeAudioStreamUrlDetailed } from '../../../services/audio/youtubeInnertube';
+import { isBackendConfigured } from '../../../services/backend/client';
+import {
+  checkStreamUrlDetailed,
+  streamCheckToLegacyEnum,
+} from './onlineStreamCheck';
 import {
   closeRealFetchForOnlineBench,
   installRealFetchForOnlineBench,
@@ -222,53 +230,79 @@ const runProbe = async (probe: {
 /** Contrôle TECHNIQUE réel d'un flux : requête HTTP bornée (Range: 0-0).
  * « available » exige une réponse 2xx/206 du serveur de contenu — jamais
  * déduit d'un id ou d'une URL construite. */
-const checkStreamUrl = async (url: string): Promise<OnlineStreamCheck> => {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), STREAM_CHECK_TIMEOUT_MS);
-
-  try {
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: { Range: 'bytes=0-0' },
-      redirect: 'follow',
-      signal: controller.signal,
-    });
-    await response.body?.cancel().catch(() => undefined);
-    return response.ok || response.status === 206 ? 'available' : 'unavailable';
-  } catch (error) {
-    return error instanceof Error && error.name === 'AbortError'
-      ? 'timeout'
-      : 'network-error';
-  } finally {
-    clearTimeout(timer);
-  }
-};
-
-/** Vérifie un flux Audius : id de piste → nœud → réponse HTTP réelle. */
+/** Vérifie un flux Audius : id de piste → nœud → réponse HTTP réelle.
+ * V34 : contrôle détaillé (statut, famille de contenu) réduit à l'enum V33. */
 const verifyAudiusStream = async (
   trackId: string
 ): Promise<OnlineStreamCheck> => {
   try {
     const url = await getAudiusStreamUrl(trackId);
-    return await checkStreamUrl(url);
+    const check = await checkStreamUrlDetailed(url, {
+      timeoutMs: STREAM_CHECK_TIMEOUT_MS,
+    });
+    return streamCheckToLegacyEnum(check);
   } catch {
     return 'network-error';
   }
 };
 
+/** Issue V34 de la vérification d'un flux YouTube : enum V33 (inchangée) +
+ * diagnostic détaillé classifié (cause de l'absence de flux, refus HTTP…). */
+type YouTubeStreamVerification = {
+  legacy: OnlineStreamCheck;
+  detail: YouTubeStreamDiagnostic;
+};
+
 /** Vérifie un flux YouTube : la CASCADE lecteur (innertube) résout un flux ;
- * sans flux résolu, le morceau est indisponible — pas de promesse sur id. */
+ * sans flux résolu, le morceau est indisponible — pas de promesse sur id.
+ * V34 : la cause de l'échec est classifiée (restriction YouTube, formats non
+ * résolus, refus HTTP du serveur de contenu) — jamais d'URL journalisée. */
 const verifyYouTubeStream = async (
   videoId: string
-): Promise<OnlineStreamCheck> => {
+): Promise<YouTubeStreamVerification> => {
   try {
-    const url = await getYouTubeAudioStreamUrl(videoId);
-    if (!url) {
-      return 'unavailable';
+    const resolution = await getYouTubeAudioStreamUrlDetailed(videoId);
+    const lastAttempt = resolution.attempts[resolution.attempts.length - 1];
+    const detail: YouTubeStreamDiagnostic = {
+      resolution: resolution.finalCls,
+      playability: resolution.playability,
+      client: resolution.client,
+      attempts: resolution.attempts.length,
+      audioFormats: lastAttempt?.audioFormats ?? 0,
+      formatsWithUrl: lastAttempt?.formatsWithUrl ?? 0,
+      formatsCipherOnly: lastAttempt?.formatsCipherOnly ?? 0,
+    };
+
+    if (!resolution.url) {
+      return { legacy: 'unavailable', detail };
     }
-    return await checkStreamUrl(url);
+
+    const check = await checkStreamUrlDetailed(resolution.url, {
+      timeoutMs: STREAM_CHECK_TIMEOUT_MS,
+    });
+    detail.streamHttp = {
+      cls: check.cls,
+      ...(typeof check.httpStatus === 'number'
+        ? { httpStatus: check.httpStatus }
+        : {}),
+      redirected: check.redirected,
+      contentTypeKind: check.contentTypeKind,
+      contentLength: check.contentLength,
+    };
+    return { legacy: streamCheckToLegacyEnum(check), detail };
   } catch {
-    return 'network-error';
+    return {
+      legacy: 'network-error',
+      detail: {
+        resolution: 'network',
+        playability: null,
+        client: null,
+        attempts: 0,
+        audioFormats: 0,
+        formatsWithUrl: 0,
+        formatsCipherOnly: 0,
+      },
+    };
   }
 };
 
@@ -370,9 +404,11 @@ const runCase = (queryCase: QueryCase): Promise<CaseRunResult> =>
       const audiusCheck: OnlineStreamCheck = firstAudius
         ? await verifyAudiusStream(firstAudius.id.slice('audius:'.length))
         : 'not-tested';
-      const youtubeCheck: OnlineStreamCheck = firstYouTube
+      const youtubeVerification: YouTubeStreamVerification | null = firstYouTube
         ? await verifyYouTubeStream(firstYouTube.id.slice('youtube:'.length))
-        : 'not-tested';
+        : null;
+      const youtubeCheck: OnlineStreamCheck =
+        youtubeVerification?.legacy ?? 'not-tested';
 
       const timings: ProgressiveSearchTimings | undefined = update?.timings;
       const totalMs = timings?.totalMs ?? Date.now() - startedAt;
@@ -406,6 +442,9 @@ const runCase = (queryCase: QueryCase): Promise<CaseRunResult> =>
           relevantResults: relevantItems.length,
           playableIds,
           streamVerified: { audius: audiusCheck, youtube: youtubeCheck },
+          ...(youtubeVerification
+            ? { youtubeStreamDetail: youtubeVerification.detail }
+            : {}),
           playbackStarted: 'NON MESURÉ',
           firstResultMs: measuredFirstResultMs,
           totalMs,
@@ -449,6 +488,21 @@ describe('Banc de couverture en ligne V33 (opt-in, réseau réel requis)', () =>
     // (preuve de mécanisme dans onlineTestFetch.unit.test.ts). Sans elle, le
     // banc ne peut pas mesurer et le refuse explicitement.
     fetchSource = await installRealFetchForOnlineBench();
+
+    // V34 : CONFIGURATION DU BACKEND — l'APK reçoit MELODIX_BACKEND_URL du
+    // workflow (vars de dépôt) ; le banc émule la MÊME source via le mock
+    // expo-constants. Variable absente ou vide → le backend reste non
+    // configuré et le banc le déclare tel quel (saut volontaire, pas de
+    // panne masquée, jamais d'URL inventée).
+    const backendUrlFromEnv = (process.env.MELODIX_BACKEND_URL ?? '').trim();
+    if (backendUrlFromEnv) {
+      const constants = ExpoConstants as unknown as {
+        __setExpoConfigExtra?: (extra: Record<string, unknown>) => void;
+      };
+      constants.__setExpoConfigExtra?.({
+        melodixBackendUrl: backendUrlFromEnv,
+      });
+    }
   });
 
   afterAll(async () => {
@@ -495,6 +549,9 @@ describe('Banc de couverture en ligne V33 (opt-in, réseau réel requis)', () =>
       });
 
       // 4) Rapport complet (JSON + TEXTE) — écrit AVANT toute conclusion.
+      //    V34 : l'état de configuration du backend est MESURÉ (et publié) :
+      //    une source non configurée n'émet aucune requête — son « 0 » est un
+      //    saut volontaire, pas une panne masquée.
       const report = buildOnlineBenchmarkReport({
         commit: process.env.GITHUB_SHA,
         runId: process.env.GITHUB_RUN_ID,
@@ -505,6 +562,7 @@ describe('Banc de couverture en ligne V33 (opt-in, réseau réel requis)', () =>
         reasons: assessment.reasons,
         networkReachable: assessment.networkReachable,
         probes,
+        backendConfigured: isBackendConfigured(),
         cases: caseResults.map((result) => result.report),
       });
 

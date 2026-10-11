@@ -1,7 +1,8 @@
 /**
- * V33 — constructeur PUR du rapport de mesures en ligne : statistiques de
- * latence sur valeurs RÉELLES uniquement, totaux par source, niveaux de
- * preuve, et confidentialité du rendu texte.
+ * V33/V34 — constructeur PUR du rapport de mesures en ligne : statistiques
+ * de latence sur valeurs RÉELLES uniquement, totaux par source, niveaux de
+ * preuve, état du backend, agrégat des diagnostics YouTube (V34), et
+ * confidentialité du rendu texte.
  */
 import {
   buildOnlineBenchmarkReport,
@@ -9,8 +10,10 @@ import {
   medianOf,
   percentileOf,
   renderOnlineBenchmarkText,
+  summarizeYouTubeDiagnostics,
   type OnlineCaseReport,
   type OnlineProbeReport,
+  type YouTubeStreamDiagnostic,
 } from '../coverageReport';
 
 const probe = (patch: Partial<OnlineProbeReport> = {}): OnlineProbeReport => ({
@@ -37,6 +40,19 @@ const kase = (patch: Partial<OnlineCaseReport> = {}): OnlineCaseReport => ({
   failedSources: [],
   circuitSources: [],
   offline: false,
+  ...patch,
+});
+
+const youtubeDetail = (
+  patch: Partial<YouTubeStreamDiagnostic> = {}
+): YouTubeStreamDiagnostic => ({
+  resolution: 'no-streaming-data',
+  playability: 'LOGIN_REQUIRED',
+  client: 'TVHTML5_SIMPLY_EMBEDDED_PLAYER',
+  attempts: 3,
+  audioFormats: 0,
+  formatsWithUrl: 0,
+  formatsCipherOnly: 0,
   ...patch,
 });
 
@@ -101,9 +117,11 @@ describe('buildOnlineBenchmarkReport', () => {
       reasons: ['mesures réelles'],
       networkReachable: true,
       probes: [probe(), probe({ service: 'youtube', httpStatus: 403 })],
+      backendConfigured: false,
       cases,
     });
 
+    expect(report.version).toBe(2);
     expect(report.totals.casesRun).toBe(2);
     expect(report.totals.casesWithResults).toBe(2);
     expect(report.totals.casesRelevant).toBe(1);
@@ -119,6 +137,7 @@ describe('buildOnlineBenchmarkReport', () => {
     expect(report.commit).toBe('abc1234');
     expect(report.campaign).toBe('campagne-test');
     expect(report.fetchSource).toBe('undici');
+    expect(report.backend.configured).toBe(false);
   });
 
   it('niveau « lecture démarrée » : toujours NON MESURÉ sous Node', () => {
@@ -129,16 +148,90 @@ describe('buildOnlineBenchmarkReport', () => {
       reasons: ['hors ligne'],
       networkReachable: false,
       probes: [probe({ reachable: false, cls: 'network-error' })],
+      backendConfigured: true,
       cases: [kase({ totalResults: 0, relevantResults: 0, playableIds: 0 })],
     });
 
     expect(report.levels.playbackStarted).toMatch(/NON MESURÉ/);
     expect(report.cases[0].playbackStarted).toBe('NON MESURÉ');
+    expect(report.backend.configured).toBe(true);
   });
 });
 
-describe('renderOnlineBenchmarkText — confidentialité', () => {
-  it('le rendu ne contient ni requête, ni URL, ni jeton', () => {
+describe('V34 — agrégat des diagnostics YouTube', () => {
+  it('aucune piste testée → compteurs vides, rien d inventé', () => {
+    const summary = summarizeYouTubeDiagnostics([
+      kase(),
+      kase({ id: 'remix' }),
+    ]);
+
+    expect(summary.checked).toBe(0);
+    expect(summary.resolutionClasses).toEqual({});
+    expect(summary.playabilities).toEqual({});
+    expect(summary.finalClients).toEqual({});
+    expect(summary.streamHttpClasses).toEqual({});
+    expect(summary.formatsWithUrlTotal).toBe(0);
+    expect(summary.formatsCipherOnlyTotal).toBe(0);
+  });
+
+  it('classes de résolution, playability et clients comptés par occurrence', () => {
+    const cases = [
+      kase({ youtubeStreamDetail: youtubeDetail() }),
+      kase({ id: 'remix', youtubeStreamDetail: youtubeDetail() }),
+      kase({
+        id: 'live',
+        youtubeStreamDetail: youtubeDetail({
+          resolution: 'no-usable-url',
+          playability: 'OK',
+          client: 'ANDROID_MUSIC',
+          audioFormats: 7,
+          formatsWithUrl: 0,
+          formatsCipherOnly: 7,
+        }),
+      }),
+      kase({
+        id: 'old',
+        youtubeStreamDetail: youtubeDetail({
+          resolution: 'ok',
+          playability: 'OK',
+          client: 'ANDROID_MUSIC',
+          audioFormats: 5,
+          formatsWithUrl: 5,
+          streamHttp: {
+            cls: 'http-refused',
+            httpStatus: 403,
+            redirected: false,
+            contentTypeKind: 'html',
+            contentLength: 1234,
+          },
+        }),
+      }),
+    ];
+
+    const summary = summarizeYouTubeDiagnostics(cases);
+
+    expect(summary.checked).toBe(4);
+    expect(summary.resolutionClasses).toEqual({
+      'no-streaming-data': 2,
+      'no-usable-url': 1,
+      ok: 1,
+    });
+    expect(summary.playabilities).toEqual({
+      LOGIN_REQUIRED: 2,
+      OK: 2,
+    });
+    expect(summary.finalClients).toEqual({
+      TVHTML5_SIMPLY_EMBEDDED_PLAYER: 2,
+      ANDROID_MUSIC: 2,
+    });
+    expect(summary.streamHttpClasses).toEqual({ 'http-refused:403': 1 });
+    expect(summary.formatsWithUrlTotal).toBe(5);
+    expect(summary.formatsCipherOnlyTotal).toBe(7);
+  });
+});
+
+describe('renderOnlineBenchmarkText', () => {
+  it('confidentialité : ni requête, ni URL, ni jeton', () => {
     const report = buildOnlineBenchmarkReport({
       commit: 'abc1234',
       nodeVersion: 'v20.0.0',
@@ -147,6 +240,7 @@ describe('renderOnlineBenchmarkText — confidentialité', () => {
       reasons: ['Réseau confirmé, mesures réelles.'],
       networkReachable: true,
       probes: [probe({ service: 'spotify', httpStatus: 401 })],
+      backendConfigured: false,
       cases: [kase()],
     });
 
@@ -162,5 +256,77 @@ describe('renderOnlineBenchmarkText — confidentialité', () => {
     expect(text).toContain('HTTP 401');
     expect(text).toContain('refus FONCTIONNEL');
     expect(text).toContain('NON MESURÉ');
+  });
+
+  it('backend non configuré : dit explicitement (pas de panne masquée)', () => {
+    const report = buildOnlineBenchmarkReport({
+      nodeVersion: 'v20.0.0',
+      fetchSource: 'undici',
+      status: 'real-measures',
+      reasons: ['ok'],
+      networkReachable: true,
+      probes: [probe()],
+      backendConfigured: false,
+      cases: [kase()],
+    });
+
+    const text = renderOnlineBenchmarkText(report);
+
+    expect(text).toContain('BACKEND MELODIX');
+    expect(text).toContain('Configuré : NON');
+    expect(text).toContain('volontairement inactive');
+  });
+
+  it('diagnostics YouTube : causes agrégées et par cas, sans URL', () => {
+    const report = buildOnlineBenchmarkReport({
+      nodeVersion: 'v20.0.0',
+      fetchSource: 'undici',
+      status: 'real-measures',
+      reasons: ['ok'],
+      networkReachable: true,
+      probes: [probe()],
+      backendConfigured: false,
+      cases: [
+        kase({
+          streamVerified: { audius: 'not-tested', youtube: 'unavailable' },
+          youtubeStreamDetail: youtubeDetail(),
+        }),
+        kase({
+          id: 'old',
+          streamVerified: { audius: 'not-tested', youtube: 'unavailable' },
+          youtubeStreamDetail: youtubeDetail({
+            resolution: 'ok',
+            playability: 'OK',
+            client: 'ANDROID_MUSIC',
+            formatsWithUrl: 5,
+            audioFormats: 5,
+            streamHttp: {
+              cls: 'http-refused',
+              httpStatus: 403,
+              redirected: false,
+              contentTypeKind: 'html',
+              contentLength: 1234,
+            },
+          }),
+        }),
+      ],
+    });
+
+    const text = renderOnlineBenchmarkText(report);
+
+    expect(text).toContain('DIAGNOSTIC FLUX YOUTUBE');
+    expect(text).toContain('no-streaming-data ×1');
+    expect(text).toContain('LOGIN_REQUIRED ×1');
+    expect(text).toContain('ANDROID_MUSIC ×1');
+    expect(text).toContain('http-refused(403)');
+    expect(text).toContain('url-directes=5');
+    // Par cas : la cause est visible.
+    expect(text).toContain(
+      'no-streaming-data,LOGIN_REQUIRED,formats-audio=0(url=0,cipher=0)'
+    );
+    expect(text).toContain('flux-résolu(http=http-refused(403))');
+    // Confidentialité : jamais d'URL ni de vidéo-id dans le rendu.
+    expect(text).not.toContain('https://');
+    expect(text).not.toContain('watch?v=');
   });
 });
