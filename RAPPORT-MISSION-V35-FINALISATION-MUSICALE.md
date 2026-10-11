@@ -17,7 +17,7 @@
 
 Méthode : audit du code (moteur `services/player.ts` 2714 lignes, `context/PlayerContext.tsx`, `MiniPlayer`, `FullPlayer`, mutations de file, cascade de résolution Audius → YouTube, pont MediaSession), puis **preuves par tests adverses**. Aucun défaut du moteur n'a été démontré par cet audit — le moteur a été durci par les missions v7/v9/V32/V33 et les nouveaux tests adverses le confirment (section 3). Conformément à la règle finale de la mission, ce qui est correct a été CONSERVÉ et PROUVÉ, pas réécrit.
 
-Le seul défaut réel trouvé et corrigé cette mission est dans la **fixture de smoke** (pas dans le lecteur) : sur l'émulateur, une commande transport native qui ne rend pas pouvait geler la séquence de vérification sans produire de verdict (voir §3.4 — mesure CI à l'appui).
+Le seul défaut réel trouvé et corrigé cette mission est dans la **fixture de smoke** (pas dans le lecteur), découvert et prouvé PAR la mesure sur émulateur : les observateurs de la fixture (`waitForStatus`/`waitForPlaybackOutcome`) appelaient leur nettoyage via des liaisons `const` NON encore initialisées quand le moteur soldait l'état pendant l'appel IMMÉDIAT de l'abonné (`services/player.ts` `subscribe` appelle l'abonné sur-le-champ — comportement conçu et par ailleurs correct). Sur l'émulateur, la pause étant réfléchie instantanément, cela produisait un `TypeError` silencieux qui amputait la phase « commandes » de la vérification. Corrigé (nettoyage sûr quel que soit le moment du solde), verrouillé par 2 tests de régression avec une doublure fidèle à la sémantique réelle du `subscribe`, puis RE-MESURÉ vert sur émulateur (§3.4).
 
 Points audités et jugés conformes (preuves dans les tests existants + nouveaux) :
 
@@ -47,14 +47,13 @@ Points audités et jugés conformes (preuves dans les tests existants + nouveaux
 
 Extension de la fixture V34 : après une lecture confirmée, la fixture vérifie désormais (a) un **changement de piste réel** vers une deuxième piste jouable de la recherche et (b) les **commandes pause/reprise**, chacune confirmée par l'état moteur observé (jamais par la seule résolution de la commande). Fallback honnête `skipped-single-track` quand une seule piste jouable existe.
 
-- **Tests unitaires : 16/16** (`services/__tests__/playbackSmoke.unit.test.ts`), dont : changement de piste confirmé, piste unique sautée sans invention, pause jamais confirmée → `failed-pause` (reprise non tentée), reprise jamais confirmée → `failed-resume`, échec de la piste 2 sans corrompre le verdict principal, phases 2 `null` quand la lecture n'a jamais démarré, **commande pause suspendue → séquence bornée et classée** (test ajouté après la mesure CI ci-dessous).
-- **Mesure CI (run 38139115491, commit `e09c331`) :** `verdict:started` (lecture confirmée et maintenue) ; **`track-change:started` — changement de piste réel vérifié** (le moteur a confirmé `playing` sur une deuxième piste issue de la recherche réelle) ; pause/reprise **non observées dans le budget** — diagnostic : une commande native qui ne rend pas gelait la séquence sans breadcrumb.
-- **Correction (commit `5c97988`) :** commandes transport **bornées** dans la fixture (le gel natif dégèle la séquence et l'observateur classe `failed-pause`/`failed-resume` au lieu du silence) + crash de fixture journalisé en logcat (`[PlaybackSmoke] crash category=…`). Re-mesure sur émulateur : voir §5.
+- **Tests unitaires : 18/18** (`services/__tests__/playbackSmoke.unit.test.ts`), dont : changement de piste confirmé, piste unique sautée sans invention, pause jamais confirmée → `failed-pause` (reprise non tentée), reprise jamais confirmée → `failed-resume`, échec de la piste 2 sans corrompre le verdict principal, phases 2 `null` quand la lecture n'a jamais démarré, commande suspendue → séquence bornée et classée, et les **2 régressions du solde synchrone** (pause réfléchie instantanément ; état déjà terminal à la souscription). La doublure de test appelle désormais l'abonné immédiatement, comme le vrai moteur.
+- **Campagne de mesure sur émulateur (4 runs) :** (1) `e09c331` — `verdict:started` + **`track-change:started`**, pause/reprise absentes ; (2-3) instrumentation : trace complète montrant `controls:start → controls:pause-sent → crash category=TypeError` ; (4) **run 38146300310, commit `1561071` — TOUT VERT : `verdict:started`, changement de piste réel vérifié, `pause puis reprise CONFIRMÉES par l'état moteur réel`**. Le défaut de la fixture est clos par la preuve, dans les deux sens (reproduction puis verification).
 
 ### 3.5 Portes de qualité complètes
 
 - TypeScript (`tsc --noEmit`) : OK.
-- Jest complet : **2434 réussis, 0 échec, 14 ignorés** (189 suites) — dont l'intégralité des suites existantes (non-régression).
+- Jest complet : **2436 réussis, 0 échec, 14 ignorés** (189 suites) — dont l'intégralité des suites existantes (non-régression).
 - ESLint : 0 erreur (1 avertissement préexistant). Prettier : OK. `git diff --check` : OK.
 - Build APK Android + smoke émulateur : verts sur chaque commit poussé (runs 38139115491 `e09c331`, et run final — voir §6).
 
@@ -66,17 +65,18 @@ Le code réseau de recherche/résolution n'a PAS été modifié par V35 ; les me
 
 **Validées** (tests simulés + intégration + smoke émulateur) : lecture/pause/reprise ; changement de piste ; file, suivant/précédent, repeat, shuffle ; erreurs de flux et pistes indisponibles classées sans bloquer la file ; synchronisation mini/plein écran/contexte ; honnêteté « jamais playing sans confirmation moteur » ; favoris/historique (suites vertes, historique au playing confirmé) ; recherche → sélection piste jouable → lecture réelle démarrée et changement de piste réel sur émulateur ; parité FR/EN ; arrière-plan/MediaSession (wiring + smoke V33/V34).
 
-**Partiellement validées** : commandes pause/reprise après lecture — la logique est prouvée hors-ligne (16 tests) ; la mesure sur émulateur a montré un gel natif de la commande, corrigé par bornage ; la mesure requalifiée arrive au §5.
+**Validées sur émulateur (niveau 3)** : commandes pause/reprise après lecture démarrée — confirmées par l'état moteur réel au run final 38146300310 (après correction du défaut de fixture §2).
 
 **Non vérifiables en CI (exigent un appareil physique)** : son réellement entendu (émulateur `-noaudio`) ; flux YouTube depuis une IP résidentielle (le runner est contrôlé par l'anti-bot — aucun contournement par compte/cookie/jeton, conformément aux consignes) ; login Spotify réel et lecture Spotify (aucun compte utilisable en CI) ; comportement écran verrouillé longue durée.
 
 ## 5. État des livraisons
 
-- **PR #9** : ouverte, tête `arena/5ef0ee6a-melodix` ; `main` intact (`fceab85…`) ; aucun merge.
-- **Commit final :** `<COMMIT_FINAL>` (à la fin de cette mission).
-- **APK** : `<APK_LIEN>` — issue du workflow APK Android **vert correspondant au commit final** ; versionName `<VERSION>`, taille `<TAILLE>`, sha256 `<SHA256>`.
-- **Rapports** : V30–V34 conservés (rapports V34 corrigés), V35 = ce rapport ; historique non effacé.
-- **Vérification smoke du commit final** : verdict lecture `<VERDICT_LECTURE>` ; changement de piste `<VERDICT_CHANGEMENT>` ; pause/reprise `<VERDICT_COMMANDES>`.
+- **PR #9** : ouverte, tête `arena/5ef0ee6a-melodix` ; `main` intact (`fceab85950b069edcb65ed718a8ffd419a1bc785`) ; aucun merge.
+- **Commit final applicatif :** `15610714863d475ea42d89106dc47fc12040852d` (`1561071`) ; commit de livraison du présent rapport : docs seul, code applicatif identique.
+- **APK** : `Melodix-v4.5.0-test.30-1561071.apk` — issue du workflow APK Android **vert correspondant au commit applicatif final** (run 38146300310, conclusion `success`) ; versionName `4.5.0-test.30` (versionCode 45030), taille 47 090 245 octets (archive, ~89 Mo installé), sha256 `13bc7d1a914cb4abe3ed272db97d7ce5dc4844a21ec15ff2a03dcf9e9b995997`.
+  Artifact : https://github.com/Souxch06/Melodix/actions/runs/38146300310/artifacts/11704859239
+- **Rapports** : V30–V34 conservés (rapport V34 corrigé), V35 = ce rapport ; historique non effacé.
+- **Vérification smoke du commit final (run 38146300310)** : verdict lecture `started` (moteur confirmé `playing` maintenu) ; changement de piste `started` (lecture confirmée sur une 2ᵉ piste de la recherche réelle) ; pause/reprise `ok` (confirmées par l'état moteur réel).
 
 ## 6. Ce qui exige encore un appareil physique
 
