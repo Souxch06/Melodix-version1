@@ -26,7 +26,7 @@
 #   - le commit testé est identifié précisément (github.sha + rapport).
 # ============================================================================
 
-name: Banc réseau Melodix (manuel)
+name: Banc réseau Melodix
 
 on:
   workflow_dispatch:
@@ -35,13 +35,19 @@ on:
         description: 'Identifiant libre de campagne (ex. v33-run2)'
         required: false
         default: ''
+  # V37 : mesures avant/après sur la branche de travail — le push est le
+  # seul levier disponible depuis l'environnement de développement (pas de
+  # sortie réseau vers les services mesurés, workflow_dispatch refusé 403).
+  push:
+    branches:
+      - 'arena/*'
 
 permissions:
   contents: write
 
 jobs:
   mesures-reseau:
-    name: Mesures réseau réelles (Audius / YouTube / Spotify)
+    name: Mesures réseau réelles (Audius / YouTube / Spotify / iTunes)
     runs-on: ubuntu-latest
     # Borne raisonnable : le banc séquentiel (3 sondes + 14 cas + contrôles
     # de flux bornés) prend quelques minutes ; 20 min couvrent largement les
