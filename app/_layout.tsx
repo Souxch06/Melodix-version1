@@ -16,6 +16,7 @@ import {
   SpotifyAuthProvider,
   UserDataProvider,
 } from '@context';
+import { PlaybackSmokeFixture } from '../components/PlaybackSmoke/PlaybackSmokeFixture';
 import { SpotifyWebHostView } from '../components/Player/SpotifyWebHostView';
 import { ensureProductionSpotifyWebActivation } from '@services';
 
@@ -97,6 +98,10 @@ export default function RootLayout() {
            * écran). Ne monte NEANT tant que la porte d'activation ET le
            * réglage utilisateur ne sont pas tous les deux actifs. */}
           <SpotifyWebHostView />
+          {/* V34 — fixture smoke « piste trouvée → tentative réelle de
+              lecture » : inerte hors builds de test CI (flag fixture) ;
+              consommateur exclusif de melodix://playback-smoke. */}
+          <PlaybackSmokeFixture />
         </UserDataProvider>
       </PreferencesProvider>
     </SafeAreaProvider>

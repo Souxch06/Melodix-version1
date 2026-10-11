@@ -557,6 +557,58 @@ if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
   echo "- Deep-link OAuth : warm (app vivante) ; cold A (callback SANS tx → cold-start-no-verifier) ; cold B (callback AVEC tx persistée → verifier restauré → token_exchange:start, séquence ordonnée) ; login Spotify réel NON testable en CI (pas de compte)" >> "$GITHUB_STEP_SUMMARY"
 fi
 
+# ── V34 — TENTATIVE RÉELLE DE LECTURE (fixture playback-smoke) ──
+# Deep-link melodix://playback-smoke en COLD START : la fixture (active dans
+# ce build de test via EXPO_PUBLIC_SPOTIFY_OAUTH_SMOKE=1) exécute une
+# recherche RÉELLE puis une VRAIE tentative de lecture par le moteur expo-av
+# sur l'émulateur. Verdict classé en logcat [PlaybackSmoke] — JAMAIS de faux
+# vert : « started » exige que le moteur confirme playing ET s'y maintienne.
+# Distinction honnête : l'émulateur tourne en -noaudio ; le verdict porte sur
+# l'état RÉEL du moteur audio (chargement + démarrage confirmés), pas sur une
+# sortie sonore. Un échec de flux (ex. refus du serveur de contenu depuis
+# l'IP du runner) est rapporté classé, pas masqué.
+adb shell am force-stop "$PACKAGE" || fail "force-stop avant playback-smoke impossible"
+adb logcat -c || fail "impossible de vider logcat avant playback-smoke"
+PLAYBACK_DL=$(adb shell "am start -W -a android.intent.action.VIEW -d 'melodix://playback-smoke?src=auto' -p $PACKAGE" 2>&1) || \
+  fail "deep-link playback-smoke non lançable : $PLAYBACK_DL"
+printf '%s\n' "$PLAYBACK_DL" | grep -Fq 'Status: ok' || \
+  fail "ActivityManager n'a pas confirmé le deep-link playback-smoke"
+PLAYBACK_TRACE=""
+_pbtries=0
+while [ "$_pbtries" -lt 18 ]; do
+  sleep 5
+  _pbtries=$((_pbtries + 1))
+  PLAYBACK_TRACE=$(adb logcat -d 2>/dev/null | grep -F '[PlaybackSmoke]' || true)
+  printf '%s\n' "$PLAYBACK_TRACE" | grep -Fq 'verdict:' && break
+done
+printf '%s\n' "$PLAYBACK_TRACE" | grep -Fq 'route:received' || \
+  fail "fixture playback-smoke non déclenchée (aucune route:received après ~90 s) — hook non monté ou flag fixture absent du build"
+printf '%s\n' "$PLAYBACK_TRACE" | grep -Fq 'search:settled' || \
+  fail "playback-smoke : la recherche réelle n'a pas soldé dans le budget : $PLAYBACK_TRACE"
+PB_VERDICT=$(printf '%s\n' "$PLAYBACK_TRACE" | grep -Eo 'verdict:[a-z-]+' | head -1)
+[ -n "$PB_VERDICT" ] || fail "playback-smoke : aucun verdict dans le budget : $PLAYBACK_TRACE"
+PB_STATUS=$(printf '%s\n' "$PLAYBACK_TRACE" | grep -Eo 'status=[a-z]+' | tail -1 || true)
+case "$PB_VERDICT" in
+  verdict:started)
+    echo "::notice title=Lecture réelle (émulateur Android)::tentative de lecture RÉELLE aboutie — recherche réelle soldée, piste jouable sélectionnée, moteur expo-av a confirmé playing et s'y est maintenu (sortie audio coupée sur l'émulateur : verdict sur l'état moteur, pas sur le son)"
+    ;;
+  verdict:error|verdict:unavailable|verdict:timeout)
+    echo "::warning title=Lecture réelle (émulateur Android)::tentative RÉELLE engagée ($PB_VERDICT ${PB_STATUS:-}) — échec classé, mesure honnête ; à croiser avec le diagnostic flux du banc réseau (restriction possible des IP du runner)"
+    ;;
+  verdict:no-playable-track)
+    echo "::warning title=Lecture réelle (émulateur Android)::recherche réelle soldée SANS piste jouable sur l'émulateur — aucune tentative de lecture engagée"
+    ;;
+  *)
+    fail "playback-smoke : verdict inattendu ($PB_VERDICT) : $PLAYBACK_TRACE"
+    ;;
+esac
+PLAYBACK_PID=$(adb shell pidof -s "$PACKAGE" 2>/dev/null | tr -d '\r' || true)
+[ -n "$PLAYBACK_PID" ] || fail "processus détruit après playback-smoke"
+echo "::notice title=Playback smoke (cold start)::séquence recherche réelle → sélection piste jouable → tentative de lecture par le moteur expo-av exécutée sans crash (pid=$PLAYBACK_PID) — verdict : $PB_VERDICT"
+if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+  echo "- Playback smoke : recherche réelle + tentative de lecture réelle par le moteur expo-av — verdict $PB_VERDICT (émulateur -noaudio : état moteur, pas de sortie sonore)" >> "$GITHUB_STEP_SUMMARY"
+fi
+
 # ── VÉRIFICATION FINALE FAUX PLAYING (V17) — TOUT LE RUN ──
 # Snapshot initial (début de run) + logcat courant : sans compte Spotify
 # (CI), aucune tentative de lecture n'est engagée et la ligne

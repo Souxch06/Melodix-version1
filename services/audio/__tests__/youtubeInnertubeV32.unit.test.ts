@@ -310,7 +310,7 @@ describe('V32 — lecture : chaîne de clients lecteur', () => {
     setFetch(fetchMock as never);
 
     await expect(getYouTubeAudioStreamUrl('VID4')).resolves.toBeNull();
-    expect(fetchMock).toHaveBeenCalledTimes(3); // toute la chaîne tentée
+    expect(fetchMock).toHaveBeenCalledTimes(4); // toute la chaîne tentée
   });
 });
 
@@ -425,11 +425,12 @@ describe('V32 — diagnostic : chaque tentative classée, sans requête ni URL',
     await getYouTubeAudioStreamUrl('VIDEO_ID_SECRET_42');
 
     const events = getSearchDiagnostics();
-    expect(events.length).toBe(3);
+    expect(events.length).toBe(4);
     expect(events.map((event) => event.client)).toEqual([
       'TVHTML5',
       'TVHTML5_SIMPLY',
       'ANDROID',
+      'WEB_EMBEDDED_PLAYER',
     ]);
 
     const report = formatSearchDiagnosticsReport();

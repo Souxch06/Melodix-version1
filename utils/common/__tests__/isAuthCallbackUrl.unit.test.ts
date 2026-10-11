@@ -1,4 +1,8 @@
-import { isAuthCallbackUrl, isOAuthSmokeSeedUrl } from '../isAuthCallbackUrl';
+import {
+  isAuthCallbackUrl,
+  isOAuthSmokeSeedUrl,
+  isPlaybackSmokeUrl,
+} from '../isAuthCallbackUrl';
 import { redirectSystemPath } from '../../../app/+native-intent';
 
 describe('isAuthCallbackUrl', () => {
@@ -74,6 +78,38 @@ describe('redirectSystemPath — smoke-seed', () => {
     expect(
       redirectSystemPath({
         path: 'melodix://oauth-smoke-seed?state=smoke-state',
+        initial: true,
+      })
+    ).toBeNull();
+  });
+});
+
+describe('isPlaybackSmokeUrl — V34 fixture lecture réelle', () => {
+  it('reconnaît le lien de test playback-smoke (avec ou sans src)', () => {
+    expect(isPlaybackSmokeUrl('melodix://playback-smoke?src=audius')).toBe(
+      true
+    );
+    expect(isPlaybackSmokeUrl('melodix://playback-smoke')).toBe(true);
+    expect(
+      isPlaybackSmokeUrl('exp://192.168.1.20:8081/--/playback-smoke?src=auto')
+    ).toBe(true);
+  });
+
+  it('ne confond pas avec les autres routes', () => {
+    expect(isPlaybackSmokeUrl('melodix://callback?code=abc')).toBe(false);
+    expect(isPlaybackSmokeUrl('melodix://oauth-smoke-seed?state=s')).toBe(
+      false
+    );
+    expect(isPlaybackSmokeUrl('melodix://playback-smoke-evil/x')).toBe(false);
+    expect(isPlaybackSmokeUrl(null)).toBe(false);
+  });
+});
+
+describe('redirectSystemPath — playback-smoke', () => {
+  it('masque le lien playback-smoke au router (consommé par le hook)', () => {
+    expect(
+      redirectSystemPath({
+        path: 'melodix://playback-smoke?src=audius',
         initial: true,
       })
     ).toBeNull();

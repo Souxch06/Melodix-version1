@@ -1,6 +1,7 @@
 import {
   isAuthCallbackUrl,
   isOAuthSmokeSeedUrl,
+  isPlaybackSmokeUrl,
 } from '../utils/common/isAuthCallbackUrl';
 
 /**
@@ -15,6 +16,11 @@ import {
  * builds only) is also ignored by the router: the login hook is its sole
  * consumer (it seeds a deterministic PKCE transaction in SecureStore for
  * the Android cold-start smoke).
+ *
+ * The playback smoke test link (melodix://playback-smoke?src=…, test builds
+ * only) is ignored too: the playback-smoke hook is its sole consumer (real
+ * search → real playback attempt for the Android smoke — see
+ * services/playbackSmoke). Without the CI fixture flag the route is dead.
  */
 export function redirectSystemPath({
   path,
@@ -22,5 +28,9 @@ export function redirectSystemPath({
   path: string;
   initial: boolean;
 }): string | null {
-  return isAuthCallbackUrl(path) || isOAuthSmokeSeedUrl(path) ? null : path;
+  return isAuthCallbackUrl(path) ||
+    isOAuthSmokeSeedUrl(path) ||
+    isPlaybackSmokeUrl(path)
+    ? null
+    : path;
 }

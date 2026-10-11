@@ -250,19 +250,20 @@ describe('getYouTubeAudioStreamUrlDetailed — diagnostic de la cascade', () => 
     expect(resolution.url).toBeNull();
     expect(resolution.finalCls).toBe('no-streaming-data');
     expect(resolution.playability).toBe('LOGIN_REQUIRED');
-    expect(resolution.client).toBe('ANDROID');
-    expect(resolution.attempts).toHaveLength(3);
+    expect(resolution.client).toBe('WEB_EMBEDDED_PLAYER');
+    expect(resolution.attempts).toHaveLength(4);
     expect(resolution.attempts.map((attempt) => attempt.client)).toEqual([
       'TVHTML5',
       'TVHTML5_SIMPLY',
       'ANDROID',
+      'WEB_EMBEDDED_PLAYER',
     ]);
     expect(
       resolution.attempts.every(
         (attempt) => attempt.cls === 'no-streaming-data'
       )
     ).toBe(true);
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 
   it('formats cipher-seuls sur toute la chaîne : no-usable-url avec compteurs', async () => {
@@ -282,7 +283,7 @@ describe('getYouTubeAudioStreamUrlDetailed — diagnostic de la cascade', () => 
 
     expect(resolution.url).toBeNull();
     expect(resolution.finalCls).toBe('no-usable-url');
-    expect(resolution.attempts).toHaveLength(3);
+    expect(resolution.attempts).toHaveLength(4);
     expect(resolution.attempts[0].audioFormats).toBe(1);
     expect(resolution.attempts[0].formatsCipherOnly).toBe(1);
     expect(resolution.attempts[0].formatsWithUrl).toBe(0);
@@ -315,7 +316,7 @@ describe('getYouTubeAudioStreamUrlDetailed — diagnostic de la cascade', () => 
 
     expect(resolution.url).toBeNull();
     expect(resolution.finalCls).toBe('network');
-    expect(resolution.attempts).toHaveLength(3);
+    expect(resolution.attempts).toHaveLength(4);
   });
 
   it('annulation demandée : propagée comme exception, jamais un résultat', async () => {
@@ -363,7 +364,7 @@ describe('getYouTubeAudioStreamUrlDetailed — diagnostic de la cascade', () => 
     expect(body.racyCheckOk).toBe(true);
   });
 
-  it('chaîne 2026 : TVHTML5 → TVHTML5_SIMPLY → ANDROID, jamais de client retiré', async () => {
+  it('chaîne 2026 : TVHTML5 → TVHTML5_SIMPLY → ANDROID → WEB_EMBEDDED, jamais de client retiré', async () => {
     const fetchMock = jest.fn(async () =>
       jsonResponse({ playabilityStatus: { status: 'ERROR' } })
     );
@@ -375,6 +376,7 @@ describe('getYouTubeAudioStreamUrlDetailed — diagnostic de la cascade', () => 
       'TVHTML5',
       'TVHTML5_SIMPLY',
       'ANDROID',
+      'WEB_EMBEDDED_PLAYER',
     ]);
     const serialized = JSON.stringify(resolution.attempts);
     expect(serialized).not.toContain('ANDROID_MUSIC');
@@ -388,6 +390,18 @@ describe('getYouTubeAudioStreamUrlDetailed — diagnostic de la cascade', () => 
     expect(
       (lastInit[1].headers as Record<string, string>)['User-Agent']
     ).toContain('com.google.android.youtube/21.26.364');
+    // Le profil intégré (dernier recours) porte thirdParty.embedUrl — valeur
+    // PUBLIQUE, jamais une donnée utilisateur.
+    const embeddedInit = fetchMock.mock.calls[3] as unknown as [
+      string,
+      RequestInit,
+    ];
+    const embeddedBody = JSON.parse(String(embeddedInit[1].body)) as {
+      context: { client: { clientName: string } };
+      thirdParty?: { embedUrl?: string };
+    };
+    expect(embeddedBody.context.client.clientName).toBe('WEB_EMBEDDED_PLAYER');
+    expect(typeof embeddedBody.thirdParty?.embedUrl).toBe('string');
   });
 
   it('contrat V32 conservé : getYouTubeAudioStreamUrl = .url de la résolution', async () => {
@@ -408,7 +422,7 @@ describe('getYouTubeAudioStreamUrlDetailed — diagnostic de la cascade', () => 
     await getYouTubeAudioStreamUrlDetailed('VIDEO_ID_SECRET_V34');
 
     const events = getSearchDiagnostics();
-    expect(events).toHaveLength(3);
+    expect(events).toHaveLength(4);
     expect(events.every((event) => event.op === 'player')).toBe(true);
     expect(events.every((event) => event.cls === 'empty')).toBe(true);
     const serialized = JSON.stringify(events);

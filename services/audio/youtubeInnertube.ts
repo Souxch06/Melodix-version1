@@ -93,6 +93,10 @@ type PlayerClient = {
   readonly androidSdkVersion?: number;
   readonly osName?: string;
   readonly osVersion?: string;
+  /** Profil « lecteur intégré » : la requête porte `thirdParty.embedUrl`
+   * (URL publique tierce — aucune donnée utilisateur). Historiquement le
+   * contournement du contrôle anti-bot sur IP d'infrastructure. */
+  readonly thirdPartyEmbed?: boolean;
   readonly hl: string;
   readonly gl: string;
 };
@@ -124,6 +128,19 @@ const ANDROID: PlayerClient = {
   gl: 'US',
 };
 
+/** Lecteur intégré public (V34, campagne 9862e00 : les trois profils
+ * précédents répondent LOGIN_REQUIRED depuis les IP d'infrastructure —
+ * contrôle anti-bot de YouTube ; ce profil « embed » est le contournement
+ * public documenté, essayé EN DERNIER : il ne coûte une requête que si les
+ * trois premiers n'ont rien servi). */
+const WEB_EMBEDDED: PlayerClient = {
+  clientName: 'WEB_EMBEDDED_PLAYER',
+  clientVersion: '2.20260708.00.00',
+  thirdPartyEmbed: true,
+  hl: 'en',
+  gl: 'US',
+};
+
 /** Chaîne de secours LECTURE : chaque client tente à son tour ; le premier
  * qui expose un flux audio utilisable gagne. Un refus/absence de flux sur
  * UN client n'est pas une panne — seul l'épuisement de la chaîne l'est. */
@@ -131,6 +148,7 @@ const PLAYER_CLIENT_CHAIN: readonly PlayerClient[] = [
   TV_COBALT,
   TV_SIMPLY,
   ANDROID,
+  WEB_EMBEDDED,
 ];
 
 const SEARCH_URL =
@@ -972,6 +990,12 @@ export const getYouTubeAudioStreamUrlDetailed = async (
           // d'accès (une vidéo réellement restreinte reste refusée).
           contentCheckOk: true,
           racyCheckOk: true,
+          // Profil « lecteur intégré » : URL publique tierce (aucune donnée
+          // utilisateur) exigée par ce contexte — contournement documenté du
+          // contrôle anti-bot sur IP d'infrastructure.
+          ...(client.thirdPartyEmbed
+            ? { thirdParty: { embedUrl: 'https://www.reddit.com/' } }
+            : {}),
         },
         {
           ...fetchOptions,
