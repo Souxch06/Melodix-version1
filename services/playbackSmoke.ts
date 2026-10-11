@@ -461,14 +461,20 @@ export const runPlaybackSmoke = async (
     //     sont BORNÉES : un appel natif qui ne rend pas dégèle la séquence et
     //     l'observateur classe honnêtement (timeout), jamais de silence.
     deps.log('controls:start');
-    await commandWithBudget(deps.pauseEngine(), deps.statusBudgetMs);
+    await commandWithBudget(
+      Promise.resolve().then(() => deps.pauseEngine()),
+      deps.statusBudgetMs
+    );
     const paused = await waitForStatus(deps, 'paused', deps.statusBudgetMs);
     if (!paused) {
       controlsVerdict = 'failed-pause';
       deps.log(`controls:pause timeout status=${deps.getStatus()}`);
     } else {
       deps.log('controls:pause ok');
-      await commandWithBudget(deps.resumeEngine(), deps.statusBudgetMs);
+      await commandWithBudget(
+        Promise.resolve().then(() => deps.resumeEngine()),
+        deps.statusBudgetMs
+      );
       const resumed = await waitForStatus(deps, 'playing', deps.statusBudgetMs);
       if (resumed) {
         controlsVerdict = 'ok';

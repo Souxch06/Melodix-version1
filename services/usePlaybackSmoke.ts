@@ -37,10 +37,19 @@ export const usePlaybackSmoke = (): void => {
       runningRef.current = true;
       void runPlaybackSmoke(playbackSmokeSourceFromUrl(url))
         .catch((error: unknown) => {
-          // Honnêteté : une exception de la fixture doit se voir en logcat
-          // (catégorie seule — jamais de détail sensible), jamais disparaître.
+          // Honnêteté : une exception de la fixture doit se voir en logcat,
+          // jamais disparaître. Le détail est ASSAINI : aucune URL (un message
+          // d'erreur natif peut citer le flux), jamais de jeton/cookie.
           const name = error instanceof Error ? error.name : 'unknown';
-          console.warn(`[PlaybackSmoke] crash category=${name}`);
+          const detail =
+            error instanceof Error
+              ? String(error.message)
+                  .replace(/https?:\/\/\S+/g, '<url>')
+                  .slice(0, 120)
+              : '';
+          console.warn(
+            `[PlaybackSmoke] crash category=${name} detail=${detail}`
+          );
         })
         .finally(() => {
           runningRef.current = false;
