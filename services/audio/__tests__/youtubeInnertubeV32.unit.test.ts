@@ -273,7 +273,7 @@ describe('V32 — lecture : chaîne de clients lecteur', () => {
   it('premier client sans flux (LOGIN_REQUIRED) : le suivant sert le flux', async () => {
     const fetchMock = jest.fn(async (_url: unknown, init?: RequestInit) => {
       const client = readContextClientName(init) ?? '';
-      if (client === 'ANDROID_MUSIC') {
+      if (client === 'TVHTML5') {
         return jsonResponse({
           playabilityStatus: { status: 'LOGIN_REQUIRED' },
         });
@@ -291,7 +291,7 @@ describe('V32 — lecture : chaîne de clients lecteur', () => {
   it('premier client en panne réseau : la chaîne continue', async () => {
     const fetchMock = jest.fn(async (_url: unknown, init?: RequestInit) => {
       const client = readContextClientName(init) ?? '';
-      if (client === 'ANDROID_MUSIC') {
+      if (client === 'TVHTML5') {
         throw new TypeError('Network request failed');
       }
       return jsonResponse(streamBody());
@@ -427,9 +427,9 @@ describe('V32 — diagnostic : chaque tentative classée, sans requête ni URL',
     const events = getSearchDiagnostics();
     expect(events.length).toBe(3);
     expect(events.map((event) => event.client)).toEqual([
-      'ANDROID_MUSIC',
-      'IOS_MUSIC',
-      'TVHTML5_SIMPLY_EMBEDDED_PLAYER',
+      'TVHTML5',
+      'TVHTML5_SIMPLY',
+      'ANDROID',
     ]);
 
     const report = formatSearchDiagnosticsReport();

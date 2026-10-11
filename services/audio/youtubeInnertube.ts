@@ -68,37 +68,70 @@ const WEB = {
   gl: 'US',
 } as const;
 
-const ANDROID_MUSIC = {
-  clientName: 'ANDROID_MUSIC',
-  clientVersion: '7.27.52',
-  androidSdkVersion: 31,
-  hl: 'en',
-  gl: 'US',
-} as const;
+/** V34 — clients LECTEUR mis à jour (2026-10).
+ *
+ * CAUSE RACINE PROUVÉE par le banc en ligne (campagne c3c02c5, run
+ * 38129940876) : l'ancienne chaîne (ANDROID_MUSIC 7.27.52 / IOS_MUSIC 7.27.0
+ * / TVHTML5_SIMPLY_EMBEDDED_PLAYER 2.0, profils de 2024) était REFUSÉE par
+ * YouTube — `playabilityStatus: ERROR` sur les 14 pistes testées, pour les
+ * trois clients, sans aucun `streamingData`. Ces identifiants ne font plus
+ * partie des profils acceptés par `/youtubei/v1/player`.
+ *
+ * Profils de remplacement : définitions publiques employées par yt-dlp
+ * 2026.8.19 (référence communautaire maintenue quotidiennement) pour les
+ * clients lecteur sans authentification. Le User-Agent est transmis dans le
+ * contexte client (cohérence exigée par YouTube pour ces profils).
+ * Le protocole n'est pas « garanti » par Google : si un profil dérive, le
+ * banc en ligne le mesurera (classes no-streaming-data/no-usable-url) et la
+ * chaîne se réajuste ici — point UNIQUE d'ajustement. */
+type PlayerClient = {
+  readonly clientName: string;
+  readonly clientVersion: string;
+  /** User-Agent à transmettre dans le contexte client (cohérence du profil
+   * exigée par YouTube pour les profils TV/Android). Facultatif. */
+  readonly userAgent?: string;
+  readonly androidSdkVersion?: number;
+  readonly osName?: string;
+  readonly osVersion?: string;
+  readonly hl: string;
+  readonly gl: string;
+};
 
-const IOS_MUSIC = {
-  clientName: 'IOS_MUSIC',
-  clientVersion: '7.27.0',
-  deviceMake: 'Apple',
-  deviceModel: 'iPhone14,5',
-  osName: 'iPhone',
-  osVersion: '17.5.1.21F90',
+const TV_COBALT: PlayerClient = {
+  clientName: 'TVHTML5',
+  clientVersion: '7.20260707.07.00',
+  userAgent:
+    'Mozilla/5.0 (ChromiumStylePlatform) Cobalt/25.lts.30.1034943-gold (unlike Gecko), Unknown_TV_Unknown_0/Unknown (Unknown, Unknown)',
   hl: 'en',
   gl: 'US',
-} as const;
+};
 
-/** Lecteur intégré public (historiquement le moins sujet aux refus). */
-const TV_EMBEDDED = {
-  clientName: 'TVHTML5_SIMPLY_EMBEDDED_PLAYER',
-  clientVersion: '2.0',
+const TV_SIMPLY: PlayerClient = {
+  clientName: 'TVHTML5_SIMPLY',
+  clientVersion: '1.0',
   hl: 'en',
   gl: 'US',
-} as const;
+};
+
+const ANDROID: PlayerClient = {
+  clientName: 'ANDROID',
+  clientVersion: '21.26.364',
+  androidSdkVersion: 30,
+  userAgent: 'com.google.android.youtube/21.26.364 (Linux; U; Android 11) gzip',
+  osName: 'Android',
+  osVersion: '11',
+  hl: 'en',
+  gl: 'US',
+};
 
 /** Chaîne de secours LECTURE : chaque client tente à son tour ; le premier
  * qui expose un flux audio utilisable gagne. Un refus/absence de flux sur
  * UN client n'est pas une panne — seul l'épuisement de la chaîne l'est. */
-const PLAYER_CLIENT_CHAIN = [ANDROID_MUSIC, IOS_MUSIC, TV_EMBEDDED];
+const PLAYER_CLIENT_CHAIN: readonly PlayerClient[] = [
+  TV_COBALT,
+  TV_SIMPLY,
+  ANDROID,
+];
 
 const SEARCH_URL =
   'https://music.youtube.com/youtubei/v1/search?prettyPrint=false';
@@ -281,7 +314,12 @@ export class InnertubeError extends Error {
 const fetchJson = async (
   url: string,
   payload: unknown,
-  options: { timeoutMs?: number; signal?: AbortSignal } = {}
+  options: {
+    timeoutMs?: number;
+    signal?: AbortSignal;
+    /** En-têtes supplémentaires (ex. User-Agent cohérent du profil client). */
+    headers?: Record<string, string>;
+  } = {}
 ): Promise<unknown> => {
   const externalSignal = options.signal ?? null;
   const controller = new AbortController();
@@ -294,7 +332,7 @@ const fetchJson = async (
   try {
     const response = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...options.headers },
       body: JSON.stringify(payload),
       signal: controller.signal,
     });
@@ -921,7 +959,6 @@ export const getYouTubeAudioStreamUrlDetailed = async (
 
   for (const client of PLAYER_CLIENT_CHAIN) {
     const startedAt = Date.now();
-    const isTvEmbedded = client.clientName === 'TVHTML5_SIMPLY_EMBEDDED_PLAYER';
 
     try {
       const json = await fetchJson(
@@ -929,17 +966,19 @@ export const getYouTubeAudioStreamUrlDetailed = async (
         {
           context: { client },
           videoId,
-          ...(isTvEmbedded
-            ? {
-                thirdParty: {
-                  embedUrl: `https://www.youtube.com/watch?v=${encodeURIComponent(
-                    videoId
-                  )}`,
-                },
-              }
-            : {}),
+          // Tolérance restrictions : ces drapeaux (présents dans les requêtes
+          // des clients officiels) évitent un refus `ERROR` sur les vidéos
+          // signalées « contenu sensible » — ils n'outrepassent aucun contrôle
+          // d'accès (une vidéo réellement restreinte reste refusée).
+          contentCheckOk: true,
+          racyCheckOk: true,
         },
-        fetchOptions
+        {
+          ...fetchOptions,
+          ...(client.userAgent
+            ? { headers: { 'User-Agent': client.userAgent } }
+            : {}),
+        }
       );
 
       const classified = classifyPlayerResponse(json);

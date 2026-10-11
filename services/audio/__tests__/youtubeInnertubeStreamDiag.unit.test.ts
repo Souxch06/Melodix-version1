@@ -232,7 +232,7 @@ describe('getYouTubeAudioStreamUrlDetailed — diagnostic de la cascade', () => 
 
     expect(resolution.url).toBe('https://cdn/flux.m4a');
     expect(resolution.finalCls).toBe('ok');
-    expect(resolution.client).toBe('ANDROID_MUSIC');
+    expect(resolution.client).toBe('TVHTML5');
     expect(resolution.playability).toBe('OK');
     expect(resolution.expiresInSeconds).toBe(21_000);
     expect(resolution.attempts).toHaveLength(1);
@@ -250,12 +250,12 @@ describe('getYouTubeAudioStreamUrlDetailed — diagnostic de la cascade', () => 
     expect(resolution.url).toBeNull();
     expect(resolution.finalCls).toBe('no-streaming-data');
     expect(resolution.playability).toBe('LOGIN_REQUIRED');
-    expect(resolution.client).toBe('TVHTML5_SIMPLY_EMBEDDED_PLAYER');
+    expect(resolution.client).toBe('ANDROID');
     expect(resolution.attempts).toHaveLength(3);
     expect(resolution.attempts.map((attempt) => attempt.client)).toEqual([
-      'ANDROID_MUSIC',
-      'IOS_MUSIC',
-      'TVHTML5_SIMPLY_EMBEDDED_PLAYER',
+      'TVHTML5',
+      'TVHTML5_SIMPLY',
+      'ANDROID',
     ]);
     expect(
       resolution.attempts.every(
@@ -291,7 +291,7 @@ describe('getYouTubeAudioStreamUrlDetailed — diagnostic de la cascade', () => 
   it('erreur HTTP 429 sur le premier client : classée, chaîne continue', async () => {
     const fetchMock = jest.fn(async (_url: unknown, init?: RequestInit) => {
       const client = readContextClientName(init) ?? '';
-      if (client === 'ANDROID_MUSIC') {
+      if (client === 'TVHTML5') {
         return jsonResponse({ error: 'rate' }, 429);
       }
       return jsonResponse(streamBody());
@@ -333,6 +333,61 @@ describe('getYouTubeAudioStreamUrlDetailed — diagnostic de la cascade', () => 
     await expect(
       getYouTubeAudioStreamUrlDetailed('VID6', { signal: controller.signal })
     ).rejects.toMatchObject({ kind: 'aborted' });
+  });
+
+  it('requête lecteur 2026 : User-Agent cohérent du profil + drapeaux de tolérance', async () => {
+    const fetchMock = jest.fn(async () => jsonResponse(streamBody()));
+    setFetch(fetchMock as never);
+
+    await getYouTubeAudioStreamUrlDetailed('VID8');
+
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [
+      string,
+      RequestInit,
+    ];
+    expect(String(url)).toContain('youtubei/v1/player');
+
+    const headers = (init.headers ?? {}) as Record<string, string>;
+    // Le profil TVHTML5 exige SON User-Agent (cohérence client/requête).
+    expect(headers['User-Agent']).toContain('Cobalt');
+
+    const body = JSON.parse(String(init.body)) as {
+      videoId: string;
+      contentCheckOk?: boolean;
+      racyCheckOk?: boolean;
+      context: { client: { clientName: string; clientVersion: string } };
+    };
+    expect(body.context.client.clientName).toBe('TVHTML5');
+    expect(body.context.client.clientVersion).toBe('7.20260707.07.00');
+    expect(body.contentCheckOk).toBe(true);
+    expect(body.racyCheckOk).toBe(true);
+  });
+
+  it('chaîne 2026 : TVHTML5 → TVHTML5_SIMPLY → ANDROID, jamais de client retiré', async () => {
+    const fetchMock = jest.fn(async () =>
+      jsonResponse({ playabilityStatus: { status: 'ERROR' } })
+    );
+    setFetch(fetchMock as never);
+
+    const resolution = await getYouTubeAudioStreamUrlDetailed('VID9');
+
+    expect(resolution.attempts.map((attempt) => attempt.client)).toEqual([
+      'TVHTML5',
+      'TVHTML5_SIMPLY',
+      'ANDROID',
+    ]);
+    const serialized = JSON.stringify(resolution.attempts);
+    expect(serialized).not.toContain('ANDROID_MUSIC');
+    expect(serialized).not.toContain('IOS_MUSIC');
+    expect(serialized).not.toContain('TVHTML5_SIMPLY_EMBEDDED_PLAYER');
+    // Le profil ANDROID transmet son propre User-Agent.
+    const lastInit = fetchMock.mock.calls[2] as unknown as [
+      string,
+      RequestInit,
+    ];
+    expect(
+      (lastInit[1].headers as Record<string, string>)['User-Agent']
+    ).toContain('com.google.android.youtube/21.26.364');
   });
 
   it('contrat V32 conservé : getYouTubeAudioStreamUrl = .url de la résolution', async () => {
