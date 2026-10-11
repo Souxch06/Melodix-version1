@@ -308,13 +308,16 @@ export const audiusTrackSource = (id: string): TrackSource => ({
 });
 
 /**
- * Id logique de file d'attente pour un TrackModel.id : `audius:*` et
- * `youtube:*` restent tels quels (fournisseurs NATIFS — flux direct sans
- * matching, V30 : la recherche catalogue YouTube alimente le lecteur), tout
- * le reste est une métadonnée catalogue à matcher (`spotify:`).
+ * Id logique de file d'attente pour un TrackModel.id : `audius:*`,
+ * `youtube:*` et `itunes:*` (V37) restent tels quels (fournisseurs NATIFS —
+ * flux direct sans matching : la recherche catalogue YouTube alimente le
+ * lecteur depuis V30, la recherche iTunes depuis V37), tout le reste est
+ * une métadonnée catalogue à matcher (`spotify:`).
  */
 export const queueIdForTrackId = (trackId: string): string =>
-  trackId.startsWith('audius:') || trackId.startsWith('youtube:')
+  trackId.startsWith('audius:') ||
+  trackId.startsWith('youtube:') ||
+  trackId.startsWith('itunes:')
     ? trackId
     : `spotify:${trackId}`;
 
@@ -325,6 +328,13 @@ export const youtubeTrackSource = (id: string): TrackSource => ({
   id,
 });
 
+/** V37 — piste iTunes native : lecture DIRECTE de l'extrait 30 s fourni
+ * par Apple (jamais de matching, jamais de substitution). */
+export const itunesTrackSource = (id: string): TrackSource => ({
+  provider: 'itunes',
+  id,
+});
+
 /** Source de lecture associée (même règle que queueIdForTrackId). */
 export const sourceForTrackId = (trackId: string): TrackSource => {
   if (trackId.startsWith('audius:')) {
@@ -332,6 +342,9 @@ export const sourceForTrackId = (trackId: string): TrackSource => {
   }
   if (trackId.startsWith('youtube:')) {
     return youtubeTrackSource(trackId.slice('youtube:'.length));
+  }
+  if (trackId.startsWith('itunes:')) {
+    return itunesTrackSource(trackId.slice('itunes:'.length));
   }
   return spotifyTrackSource(trackId);
 };

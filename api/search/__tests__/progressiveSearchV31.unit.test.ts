@@ -9,6 +9,7 @@ import { AudiusRequestError } from '../../audius/client';
 import { audiusTrackToLibraryItem, searchAudiusTracks } from '../../audius';
 import { backendSearchCatalog } from '../../backend';
 import { searchSpotifyCatalogQuick } from '../../spotify/search';
+import { searchItunesTracks } from '../../itunes';
 import { searchYouTubeTracks } from '../../youtube';
 import {
   resetNetworkStateForTests,
@@ -47,6 +48,10 @@ jest.mock('../../youtube', () => ({
   searchYouTubeTracks: jest.fn(),
 }));
 
+jest.mock('../../itunes', () => ({
+  searchItunesTracks: jest.fn(),
+}));
+
 const mockedSessionActive = isSpotifySessionActive as jest.MockedFunction<
   typeof isSpotifySessionActive
 >;
@@ -67,6 +72,9 @@ const mockedSpotifyQuick = searchSpotifyCatalogQuick as jest.MockedFunction<
 >;
 const mockedYouTubeSearch = searchYouTubeTracks as jest.MockedFunction<
   typeof searchYouTubeTracks
+>;
+const mockedItunesSearch = searchItunesTracks as jest.MockedFunction<
+  typeof searchItunesTracks
 >;
 
 const track = (id: string): LibraryItemModel => ({
@@ -116,6 +124,7 @@ beforeEach(() => {
   mockedBackendSearch.mockImplementation(() => after(100, emptyCatalog()));
   mockedSpotifyQuick.mockImplementation(() => after(100, emptyCatalog()));
   mockedYouTubeSearch.mockImplementation(() => after(100, []));
+  mockedItunesSearch.mockImplementation(() => after(100, []));
 });
 
 afterEach(() => {
@@ -244,6 +253,11 @@ describe('V31 — disjoncteurs par source', () => {
     mockedYouTubeSearch.mockImplementation(() =>
       Promise.reject(new Error('down'))
     );
+    // V37 — iTunes est une source active à part entière : sa panne compte
+    // dans le « toutes sources disjonctées ».
+    mockedItunesSearch.mockImplementation(() =>
+      Promise.reject(new Error('down'))
+    );
 
     for (let i = 0; i < 3; i += 1) {
       const { onUpdate } = collectUpdates();
@@ -259,7 +273,7 @@ describe('V31 — disjoncteurs par source', () => {
     expect(final.pending).toBe(false);
     expect(final.failed).toBe(true);
     expect(final.circuitSources).toEqual(
-      expect.arrayContaining(['audius', 'backend', 'youtube'])
+      expect.arrayContaining(['audius', 'backend', 'youtube', 'itunes'])
     );
   });
 });

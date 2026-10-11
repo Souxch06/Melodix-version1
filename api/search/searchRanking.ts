@@ -18,12 +18,16 @@ import type { LibraryItemModel, SearchResultsModel } from '@models';
 
 /** Priorité des sources pour le dédoublonnage : la copie la plus riche en
  * métadonnées (durée, ISRC, album, explicit) gagne — elle alimente le mieux
- * le matcher audio. */
+ * le matcher audio. V37 : `itunes` (extraits 30 s) ferme la marche — un
+ * même titre déjà servi en version complète par une source plus prioritaire
+ * n'est pas dupliqué par son extrait ; un titre absent partout ailleurs
+ * entre via iTunes. */
 export const SEARCH_SOURCE_PRIORITY = [
   'spotify',
   'backend',
   'audius',
   'youtube',
+  'itunes',
 ] as const;
 
 export type SearchSourceId = (typeof SEARCH_SOURCE_PRIORITY)[number];

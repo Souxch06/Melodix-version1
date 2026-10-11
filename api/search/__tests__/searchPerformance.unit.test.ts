@@ -27,6 +27,7 @@ import {
   searchSpotifyCatalog,
   searchSpotifyCatalogQuick,
 } from '../../spotify/search';
+import { searchItunesTracks } from '../../itunes';
 import { searchYouTubeTracks } from '../../youtube';
 import { searchCatalog } from '../searchCatalog';
 import {
@@ -71,6 +72,10 @@ jest.mock('../../youtube', () => ({
   searchYouTubeTracks: jest.fn(),
 }));
 
+jest.mock('../../itunes', () => ({
+  searchItunesTracks: jest.fn(),
+}));
+
 const mockedSessionActive = isSpotifySessionActive as jest.MockedFunction<
   typeof isSpotifySessionActive
 >;
@@ -92,12 +97,16 @@ const mockedSpotifyQuick = searchSpotifyCatalogQuick as jest.MockedFunction<
 const mockedYouTube = searchYouTubeTracks as jest.MockedFunction<
   typeof searchYouTubeTracks
 >;
+const mockedItunes = searchItunesTracks as jest.MockedFunction<
+  typeof searchItunesTracks
+>;
 
 // Latences injectées (ms virtuels).
 const SPOTIFY_403_AFTER_RETRIES_MS = 4_500;
 const AUDIUS_CACHED_NODE_MS = 900;
 const AUDIUS_COLD_FAILOVER_MS = 12_900;
 const YOUTUBE_MS = 2_500;
+const ITUNES_MS = 800;
 
 const track = (id: string, title: string): LibraryItemModel => ({
   id,
@@ -132,6 +141,8 @@ const setupScenario = (audiusLatencyMs: number) => {
   mockedYouTube.mockImplementation(() =>
     after(YOUTUBE_MS, [track('youtube:v1', 'Song B')])
   );
+  // V37 — iTunes répond vite et vide : il ne doit ni ralentir ni gonfler.
+  mockedItunes.mockImplementation(() => after(ITUNES_MS, []));
 };
 
 beforeEach(() => {

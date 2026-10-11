@@ -1,5 +1,6 @@
 import type { AudioProvider } from './types';
 import { createAudiusAudioProvider } from './audiusAudioProvider';
+import { createItunesAudioProvider } from './itunesAudioProvider';
 import { createYouTubeAudioProvider } from './youtubeAudioProvider';
 
 /**
@@ -12,12 +13,18 @@ import { createYouTubeAudioProvider } from './youtubeAudioProvider';
  * quand une métadonnée Spotify n'est pas encore reliée à un provider.
  * Les lectures natives `{provider:'audius'|'youtube', id}` restent sur
  * leur provider déclaré, exactement comme avant.
+ *
+ * V37 — `itunes` est ENREGISTRÉ mais volontairement HORS de la cascade :
+ * il ne lit que ses pistes natives `itunes:<trackId>` (extrait 30 s fourni
+ * par Apple), jamais en substitution d'une métadonnée sans correspondance.
+ * La cascade Audius → YouTube reste strictement inchangée.
  */
 const ORDER = ['audius', 'youtube'] as const;
 
 const providers: Record<string, AudioProvider> = {
   audius: createAudiusAudioProvider(),
   youtube: createYouTubeAudioProvider(),
+  itunes: createItunesAudioProvider(),
 };
 
 export const DEFAULT_AUDIO_PROVIDER_ID = 'audius';

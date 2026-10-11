@@ -89,6 +89,15 @@ export {
   YOUTUBE_SEARCH_LIMIT,
 } from './youtube';
 
+// iTunes Search API (source de catalogue V37 — extraits 30 s jouables,
+// publique et sans clé ; lecture directe via le provider `itunes`)
+export {
+  ITUNES_SEARCH_LIMIT,
+  getItunesPreviewUrl,
+  itunesTrackToLibraryItem,
+  searchItunesTracks,
+} from './itunes';
+
 export { SEE_ALL_KINDS, SEE_ALL_SOURCES, isSeeAllKind } from './seeAll';
 export type {
   SeeAllFetchContext,
