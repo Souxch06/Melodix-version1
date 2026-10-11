@@ -192,6 +192,21 @@ const selectSecondPlayableTrack = (
   return audiusFirst ?? youtubeFirst;
 };
 
+/** V35 : borne une commande transport. Sur l'émulateur (-noaudio) comme sur
+ * appareil, un appel natif qui ne rend pas (focus audio, pilote occupé) ne
+ * doit JAMAIS geler la séquence : au-delà du budget la main passe à
+ * l'observateur d'état, qui classera honnêtement (timeout), sans silence. */
+const commandWithBudget = (
+  command: Promise<void>,
+  budgetMs: number
+): Promise<void> =>
+  Promise.race([
+    command.catch(() => undefined),
+    new Promise<void>((resolve) => {
+      setTimeout(resolve, budgetMs);
+    }),
+  ]).then(() => undefined);
+
 /** V35 : attend qu'un statut cible apparaisse (subscribe + poll), dans un
  * budget borné. Rend `true` uniquement si le statut est réellement observé —
  * jamais de succès déduit de la seule commande. */
@@ -441,23 +456,17 @@ export const runPlaybackSmoke = async (
     }
 
     // 4b) COMMANDES : pause puis reprise, chacune confirmée par l'état moteur
-    //     réel (jamais par la seule résolution de la commande).
-    try {
-      await deps.pauseEngine();
-    } catch {
-      // La mesure continue : c'est l'état observé qui décide.
-    }
+    //     réel (jamais par la seule résolution de la commande). Les commandes
+    //     sont BORNÉES : un appel natif qui ne rend pas dégèle la séquence et
+    //     l'observateur classe honnêtement (timeout), jamais de silence.
+    await commandWithBudget(deps.pauseEngine(), deps.statusBudgetMs);
     const paused = await waitForStatus(deps, 'paused', deps.statusBudgetMs);
     if (!paused) {
       controlsVerdict = 'failed-pause';
       deps.log(`controls:pause timeout status=${deps.getStatus()}`);
     } else {
       deps.log('controls:pause ok');
-      try {
-        await deps.resumeEngine();
-      } catch {
-        // Idem : l'état observé décide.
-      }
+      await commandWithBudget(deps.resumeEngine(), deps.statusBudgetMs);
       const resumed = await waitForStatus(deps, 'playing', deps.statusBudgetMs);
       if (resumed) {
         controlsVerdict = 'ok';

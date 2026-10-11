@@ -35,9 +35,16 @@ export const usePlaybackSmoke = (): void => {
         return;
       }
       runningRef.current = true;
-      void runPlaybackSmoke(playbackSmokeSourceFromUrl(url)).finally(() => {
-        runningRef.current = false;
-      });
+      void runPlaybackSmoke(playbackSmokeSourceFromUrl(url))
+        .catch((error: unknown) => {
+          // Honnêteté : une exception de la fixture doit se voir en logcat
+          // (catégorie seule — jamais de détail sensible), jamais disparaître.
+          const name = error instanceof Error ? error.name : 'unknown';
+          console.warn(`[PlaybackSmoke] crash category=${name}`);
+        })
+        .finally(() => {
+          runningRef.current = false;
+        });
     };
 
     // Lien ayant lancé l'app (cold start du smoke).

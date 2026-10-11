@@ -447,6 +447,33 @@ describe('V35 — phase 2 : changement de piste et commandes après lecture', ()
     expect(logs.join(' ')).toContain('track-change:error');
   });
 
+  it('commande pause qui ne rend JAMAIS : séquence bornée, verdict classé', async () => {
+    const player = fakePlayer();
+    const { deps } = makeDeps(
+      player,
+      {
+        settleAfterMs: 10,
+        tracks: [track('audius:a1', 'Seule')],
+      },
+      {
+        // Appel natif suspendu (émulateur -noaudio, pilote occupé…) : la
+        // fixture ne doit PAS geler — elle classe failed-pause et termine.
+        pauseEngine: () => new Promise<void>(() => undefined),
+      }
+    );
+
+    const smokePromise = runPlaybackSmoke('auto', deps);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    player.emit('playing');
+
+    const report = await smokePromise;
+
+    expect(report.verdict).toBe('started');
+    expect(report.controlsVerdict).toBe('failed-pause');
+    expect(player.resumeCalls).toBe(0);
+    expect(player.stopCalls).toBe(1); // retour au calme exécuté
+  });
+
   it('lecture jamais démarrée : phases 2 null (jamais de faux vert)', async () => {
     const player = fakePlayer();
     const { deps } = makeDeps(player, {
