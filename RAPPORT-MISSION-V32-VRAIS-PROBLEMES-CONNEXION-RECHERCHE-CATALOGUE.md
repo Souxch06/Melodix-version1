@@ -11,14 +11,14 @@
 
 ## 1. État GitHub vérifié AVANT de toucher au code
 
-| Fait vérifié | Valeur |
-| --- | --- |
-| `main` | `fceab85`, intact (aucune écriture dessus) |
-| `arena/5ef0ee6a-melodix` (cette branche) | HEAD `dc911cc` = V31 complet, poussé, PR #9 ouverte (non fusionnée, comme exigé) |
-| V30 réellement posé | commits `7fa0d8d`, `37544cc`, `dd7902f` (dans l'historique de la branche) |
-| V31 réellement posé | commits `66a81cc`, `694877c`, `dc911cc` ; CI `38094025851` SUCCÈS (APK installée + testée sur émulateur Android 14, deep link routé) |
-| Anomalie d'environnement constatée | le checkout local était revenu au commit de base `4cd7553` ENTRE les sessions, les fichiers V31 restant sur disque. Comparaison MD5 exhaustive : disque ≡ `dc911cc`, aucun fichier parasite. Re-synchronisation SANS PERTE par `git reset dc911cc` (le pointeur de branche a été recalé sur l'état déjà poussé — aucun contenu modifié) |
-| PRs | #9 (V31) ouverte ; #6/#5 ouvertes et anciennes, non touchées ; #8/#7 déjà fusionnées avant V30 |
+| Fait vérifié                             | Valeur                                                                                                                                                                                                                                                                                                                                  |
+| ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `main`                                   | `fceab85`, intact (aucune écriture dessus)                                                                                                                                                                                                                                                                                              |
+| `arena/5ef0ee6a-melodix` (cette branche) | HEAD `dc911cc` = V31 complet, poussé, PR #9 ouverte (non fusionnée, comme exigé)                                                                                                                                                                                                                                                        |
+| V30 réellement posé                      | commits `7fa0d8d`, `37544cc`, `dd7902f` (dans l'historique de la branche)                                                                                                                                                                                                                                                               |
+| V31 réellement posé                      | commits `66a81cc`, `694877c`, `dc911cc` ; CI `38094025851` SUCCÈS (APK installée + testée sur émulateur Android 14, deep link routé)                                                                                                                                                                                                    |
+| Anomalie d'environnement constatée       | le checkout local était revenu au commit de base `4cd7553` ENTRE les sessions, les fichiers V31 restant sur disque. Comparaison MD5 exhaustive : disque ≡ `dc911cc`, aucun fichier parasite. Re-synchronisation SANS PERTE par `git reset dc911cc` (le pointeur de branche a été recalé sur l'état déjà poussé — aucun contenu modifié) |
+| PRs                                      | #9 (V31) ouverte ; #6/#5 ouvertes et anciennes, non touchées ; #8/#7 déjà fusionnées avant V30                                                                                                                                                                                                                                          |
 
 ---
 
@@ -81,12 +81,12 @@ Séparation des causes possibles (session Melodix / OAuth Spotify / réseau / Au
 
 Quatre statuts sans ambiguïté, dérivés par fonction pure testée hors ligne :
 
-| Statut | Signification |
-| --- | --- |
-| `real-measures` | réseau confirmé + 14/14 cas soldés → nombres réels |
-| `network-unavailable` | sondes toutes échouées → couverture NON MESURÉE |
-| `test-incomplete` | cas manquants/non soldés → NON MESURÉ |
-| `functional-failure` | réseau OK mais rien ne sort → panne fonctionnelle |
+| Statut                | Signification                                      |
+| --------------------- | -------------------------------------------------- |
+| `real-measures`       | réseau confirmé + 14/14 cas soldés → nombres réels |
+| `network-unavailable` | sondes toutes échouées → couverture NON MESURÉE    |
+| `test-incomplete`     | cas manquants/non soldés → NON MESURÉ              |
+| `functional-failure`  | réseau OK mais rien ne sort → panne fonctionnelle  |
 
 - Le banc ne court-circuite PLUS : les 3 sondes réseau (Audius/YouTube/Spotify — une réponse HTTP quelconque, même 401/404, prouve la connectivité) puis les 14 cas du jeu fixe sont TOUJOURS tous exécutés.
 - **Hors ligne ≠ vert** : statut ≠ `real-measures` → le test ÉCHOUE avec le rapport affiché (vérifié dans cette sandbox : 14/14 cas exécutés et soldés, sondes 0/3, statut `network-unavailable`, échec honnête).
@@ -99,16 +99,16 @@ Quatre statuts sans ambiguïté, dérivés par fonction pure testée hors ligne 
 
 ## 4. Validations réellement exécutées (dans cet environnement SANS réseau sortant)
 
-| Validation | Résultat |
-| --- | --- |
-| Jest — suite complète (`npx jest`) | **2335 passés, 0 échec**, 14 suites conditionnelles sautées (identiques à avant V32) — soit **+59 tests** vs V31 (2276) |
-| Nouveaux tests V32 | diagnostics 16 · dérivation statut banc 9 · moteur V32 11 · innertube V32 15 (+1 adapté) · lecture V32 5 · UI diagnostic 5 |
-| Backend (`server/`, `node --test`) | **45/45** |
-| Banc en ligne dans cette sandbox (sans réseau) | **échec honnête** statut `network-unavailable` — 14/14 cas exécutés et soldés, 0 valeur inventée |
-| `tsc --noEmit` | 0 erreur |
-| ESLint (fichiers modifiés) | 0 erreur (1 warning préexistant dans un fichier non touché) |
-| Prettier (`api/ services/ components/ screens/`) | conforme |
-| APK | NON vérifiable localement : produit par le CI GitHub Actions (émulateur) au push |
+| Validation                                       | Résultat                                                                                                                   |
+| ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
+| Jest — suite complète (`npx jest`)               | **2335 passés, 0 échec**, 14 suites conditionnelles sautées (identiques à avant V32) — soit **+59 tests** vs V31 (2276)    |
+| Nouveaux tests V32                               | diagnostics 16 · dérivation statut banc 9 · moteur V32 11 · innertube V32 15 (+1 adapté) · lecture V32 5 · UI diagnostic 5 |
+| Backend (`server/`, `node --test`)               | **45/45**                                                                                                                  |
+| Banc en ligne dans cette sandbox (sans réseau)   | **échec honnête** statut `network-unavailable` — 14/14 cas exécutés et soldés, 0 valeur inventée                           |
+| `tsc --noEmit`                                   | 0 erreur                                                                                                                   |
+| ESLint (fichiers modifiés)                       | 0 erreur (1 warning préexistant dans un fichier non touché)                                                                |
+| Prettier (`api/ services/ components/ screens/`) | conforme                                                                                                                   |
+| APK                                              | NON vérifiable localement : produit par le CI GitHub Actions (émulateur) au push                                           |
 
 Aucune suite existante n'a été supprimée ; deux tests verrouillant des comportements sciemment changés ont été réécrits pour verrouiller le NOUVEAU contrat (timeout innertube sans repli par défaut ; signature d'appel catalogue avec repli activé).
 
@@ -120,10 +120,10 @@ Aucune suite existante n'a été supprimée ; deux tests verrouillant des compor
 
 Scénario SIMULÉ (horloge factice Jest, aucun réseau réel) — latence de lecture de session 400 ms, Audius répond en 900 ms :
 
-| | Premier résultat perçu |
-| --- | --- |
+|                                                                | Premier résultat perçu  |
+| -------------------------------------------------------------- | ----------------------- |
 | Avant V32 (toutes sources derrière `isSpotifySessionActive()`) | 400 + 900 = **1300 ms** |
-| Après V32 (sources sans compte immédiates) | **900 ms** |
+| Après V32 (sources sans compte immédiates)                     | **900 ms**              |
 
 C'est une relation arithmétique du moteur (vérifiée par le test « les sources sans compte partent SANS attendre la vérification de session »), pas une mesure terrain : le gain réel = latence effective de `isSpotifySessionActive()` sur l'appareil — **NON MESURÉ ici**.
 
@@ -143,7 +143,7 @@ Le banc affiche alors : temps jusqu'au premier résultat et temps total par cas,
 
 - Commit unique sur `arena/5ef0ee6a-melodix` (poussé) :
   `feat(v32): vrais correctifs — diagnostic privé classé, innertube
-  multi-clients, moteur sans attente session, banc 4 statuts` — code + ce
+multi-clients, moteur sans attente session, banc 4 statuts` — code + ce
   rapport ; hash exact visible via `git log` / GitHub (fourni dans le message
   de livraison).
 - PR : **#9** mise à jour avec ces commits (non fusionnée).
