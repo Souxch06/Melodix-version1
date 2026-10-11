@@ -28,13 +28,6 @@ on:
         description: 'Identifiant libre de campagne (ex. v33-run2)'
         required: false
         default: ''
-  # TEMPORAIRE (V34) : le jeton de cette session n'a pas la permission
-  # actions:write requise par workflow_dispatch (HTTP 403). Ce déclencheur
-  # push — limité à la branche de session — sert UNIQUEMENT à lancer la
-  # campagne de diagnostic ; il est retiré immédiatement après.
-  push:
-    branches:
-      - arena/5ef0ee6a-melodix
 
 permissions:
   contents: write
