@@ -10,7 +10,6 @@
  *    erreur bénigne (404) NON comptée et remise à zéro, annulation JAMAIS.
  */
 import { AudiusRequestError } from '../../audius/client';
-import { ItunesRequestError } from '../../itunes/client';
 import { BackendError } from '../../../services/backend/client';
 import { InnertubeError } from '../../../services/audio/youtubeInnertube';
 
@@ -40,19 +39,6 @@ describe('ouverture après échecs consécutifs', () => {
 
     expect(isSourceCircuitOpen('audius', NOW)).toBe(true);
     // Les autres sources restent fermées (indépendance).
-    expect(isSourceCircuitOpen('backend', NOW)).toBe(false);
-    expect(isSourceCircuitOpen('youtube', NOW)).toBe(false);
-    expect(isSourceCircuitOpen('itunes', NOW)).toBe(false);
-  });
-
-  it('iTunes (V37) : disjoncteur propre, indépendant des autres sources', () => {
-    for (let i = 0; i < SOURCE_CIRCUIT_MAX_FAILURES; i += 1) {
-      recordSourceFailure('itunes', NOW);
-    }
-
-    expect(isSourceCircuitOpen('itunes', NOW)).toBe(true);
-    // La panne iTunes ne disjoncte JAMAIS les autres sources.
-    expect(isSourceCircuitOpen('audius', NOW)).toBe(false);
     expect(isSourceCircuitOpen('backend', NOW)).toBe(false);
     expect(isSourceCircuitOpen('youtube', NOW)).toBe(false);
   });
@@ -111,9 +97,6 @@ describe('classification des erreurs', () => {
     expect(classifySourceError(new BackendError('aborted', 'x'))).toBe(
       'aborted'
     );
-    expect(classifySourceError(new ItunesRequestError('aborted', 'x'))).toBe(
-      'aborted'
-    );
   });
 
   it('Audius : réseau/timeout/429/5xx = panne ; 404 = bénin', () => {
@@ -168,24 +151,6 @@ describe('classification des erreurs', () => {
     expect(
       classifySourceError(new BackendError('http', 'x', undefined, 400))
     ).toBe('benign');
-  });
-
-  it('iTunes (V37) : réseau/timeout/débit = panne ; 4xx autoritaire = bénin', () => {
-    expect(classifySourceError(new ItunesRequestError('network', 'x'))).toBe(
-      'failure'
-    );
-    expect(classifySourceError(new ItunesRequestError('timeout', 'x'))).toBe(
-      'failure'
-    );
-    expect(
-      classifySourceError(new ItunesRequestError('rate-limited', 'x', 429))
-    ).toBe('failure');
-    expect(classifySourceError(new ItunesRequestError('http', 'x', 500))).toBe(
-      'failure'
-    );
-    expect(classifySourceError(new ItunesRequestError('http', 'x', 400))).toBe(
-      'benign'
-    );
   });
 });
 

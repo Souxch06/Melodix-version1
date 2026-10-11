@@ -575,16 +575,16 @@ const videoRendererToCandidate = (
  * parseur à chaque nœud. Les sections/onglets varient selon les versions du
  * client : on ne fige AUCUN chemin d'accès.
  */
-/** Parcours générique d'un NŒUD DE DÉPART (première page ou page de
- * continuation) : aucune hypothèse sur le chemin d'accès — les sections
- * varient selon les versions du client. */
-const collectFromNode = (
-  startNode: JsonValue,
+const collectCandidates = (
+  json: unknown,
   limit: number,
-  parse: (item: unknown) => YouTubeSongCandidate | null,
-  seen: Set<string>,
-  collected: YouTubeSongCandidate[]
-): void => {
+  parse: (item: unknown) => YouTubeSongCandidate | null
+): YouTubeSongCandidate[] => {
+  const root = asRecord(json);
+  const contents = (root?.contents ?? null) as JsonValue;
+  const collected: YouTubeSongCandidate[] = [];
+  const seen = new Set<string>();
+
   const visit = (node: JsonValue): void => {
     if (collected.length >= limit) {
       return;
@@ -611,169 +611,9 @@ const collectFromNode = (
     }
   };
 
-  visit(startNode);
-};
-
-const collectCandidates = (
-  json: unknown,
-  limit: number,
-  parse: (item: unknown) => YouTubeSongCandidate | null
-): YouTubeSongCandidate[] => {
-  const root = asRecord(json);
-  const contents = (root?.contents ?? null) as JsonValue;
-  const collected: YouTubeSongCandidate[] = [];
-  const seen = new Set<string>();
-
-  collectFromNode(contents, limit, parse, seen, collected);
+  visit(contents);
 
   return collected;
-};
-
-/** V37 — PAGES DE CONTINUATION : même collecte, nœud de départ
- * `continuationContents` (la réponse d'une requête `continuation` ne porte
- * PAS `contents`). Dédoublonnage contre les ids déjà vus. */
-const collectContinuationCandidates = (
-  json: unknown,
-  limit: number,
-  parse: (item: unknown) => YouTubeSongCandidate | null,
-  seenIds: string[]
-): YouTubeSongCandidate[] => {
-  const root = asRecord(json);
-  const contents = (root?.continuationContents ?? null) as JsonValue;
-  const collected: YouTubeSongCandidate[] = [];
-  const seen = new Set<string>(seenIds);
-
-  collectFromNode(contents, limit, parse, seen, collected);
-
-  return collected;
-};
-
-/** V37 — token de continuation : parcours défensif de l'arbre complet.
- * Les mises en page connues l'exposent sous des chemins différents selon le
- * client (`continuationItemRenderer.continuationEndpoint.continuationCommand
- * .token`, `nextContinuationData.continuationToken`…) : la recherche par CLÉ
- * (jamais par chemin figé) encaisse la dérive de protocole. `null` = pas de
- * page supplémentaire — la première page fait foi, sans erreur. */
-const findContinuationToken = (json: unknown): string | null => {
-  let found: string | null = null;
-
-  // `token` est une clé GÉNÉRIQUE : on ne l'accepte qu'à l'intérieur d'un
-  // sous-arbre de continuation identifié (anti-faux-positif). Le contexte se
-  // propage aux descendants : le token réel vit DANS `continuationCommand`
-  // (`continuationEndpoint.continuationCommand.token`), pas à côté.
-  const visit = (node: JsonValue, insideContinuation: boolean): void => {
-    if (found !== null) {
-      return;
-    }
-
-    const record = asRecord(node);
-    if (record) {
-      const direct = record.continuationToken;
-      if (typeof direct === 'string' && direct.length > 0) {
-        found = direct;
-        return;
-      }
-
-      const isContinuationNode =
-        record.continuationCommand !== undefined ||
-        record.continuationEndpoint !== undefined ||
-        record.continuationItemRenderer !== undefined;
-      const continuationContext = insideContinuation || isContinuationNode;
-
-      const token = record.token;
-      if (
-        typeof token === 'string' &&
-        token.length > 0 &&
-        continuationContext
-      ) {
-        found = token;
-        return;
-      }
-
-      for (const value of Object.values(record)) {
-        visit(value as JsonValue, continuationContext);
-      }
-      return;
-    }
-
-    for (const value of asArray(node)) {
-      visit(value, insideContinuation);
-    }
-  };
-
-  visit((asRecord(json) ?? {}) as JsonValue, false);
-
-  return found;
-};
-
-/**
- * V37 — PAGE DE CONTINUATION (source de catalogue UNIQUEMENT) : la première
- * page innertube rend souvent moins de lignes que le catalogue demandé ; si
- * la réponse expose un token de continuation, UNE requête supplémentaire la
- * complète (dédoublonnée par videoId). Bornes strictes :
- *   - jamais plus d'une page supplémentaire (pas de parcours infini) ;
- *   - son échec ne transforme JAMAIS une recherche déjà fructueuse en
- *     panne — les résultats de la première page sont rendus tels quels ;
- *   - le matcher de lecture ne passe JAMAIS ici (requêtes bornées).
- */
-const fetchContinuationPage = async (
-  firstPageJson: unknown,
-  client: { clientName: string; clientVersion: string; hl: string; gl: string },
-  parse: (item: unknown) => YouTubeSongCandidate | null,
-  existing: YouTubeSongCandidate[],
-  limit: number,
-  fetchOptions: { signal?: AbortSignal }
-): Promise<YouTubeSongCandidate[]> => {
-  if (existing.length >= limit) {
-    return existing;
-  }
-
-  const token = findContinuationToken(firstPageJson);
-  if (!token) {
-    return existing;
-  }
-
-  const startedAt = Date.now();
-  try {
-    const continuationJson = await fetchJson(
-      SEARCH_URL,
-      { context: { client }, continuation: token },
-      fetchOptions
-    );
-    const more = collectContinuationCandidates(
-      continuationJson,
-      limit - existing.length,
-      parse,
-      existing.map((candidate) => candidate.videoId)
-    );
-
-    recordSearchDiagnostic({
-      scope: 'youtube',
-      op: 'search',
-      cls: more.length > 0 ? 'ok' : 'empty',
-      ms: Date.now() - startedAt,
-      client: `${client.clientName}+continuation`,
-      results: more.length,
-    });
-
-    return more.length > 0 ? [...existing, ...more] : existing;
-  } catch (error) {
-    // Annulation demandée : propagée comme partout (jamais une panne).
-    if (error instanceof InnertubeError && error.kind === 'aborted') {
-      throw error;
-    }
-    // La page supplémentaire est un PLUS : son échec rend la première page
-    // telle quelle (une recherche fructueuse ne devient jamais une panne).
-    recordSearchDiagnostic({
-      scope: 'youtube',
-      op: 'search',
-      cls: classifyDiagnosticError(error),
-      ms: Date.now() - startedAt,
-      client: `${client.clientName}+continuation`,
-      httpStatus: error instanceof InnertubeError ? error.status : undefined,
-    });
-    return existing;
-  }
 };
 
 /**
@@ -804,7 +644,7 @@ export const searchYouTubeSongs = async (
       fetchOptions
     );
     const ms = Date.now() - startedAt;
-    let candidates = collectCandidates(json, limit, itemToCandidate);
+    const candidates = collectCandidates(json, limit, itemToCandidate);
 
     if (candidates.length > 0) {
       recordSearchDiagnostic({
@@ -815,18 +655,6 @@ export const searchYouTubeSongs = async (
         client: WEB_REMIX.clientName,
         results: candidates.length,
       });
-      // V37 — catalogue : complète la première page si elle rend moins que
-      // demandé (le matcher de lecture, sans repli, n'y passe jamais).
-      if (useFallback) {
-        candidates = await fetchContinuationPage(
-          json,
-          WEB_REMIX,
-          itemToCandidate,
-          candidates,
-          limit,
-          fetchOptions
-        );
-      }
       return candidates;
     }
 
@@ -876,7 +704,7 @@ export const searchYouTubeSongs = async (
       fetchOptions
     );
     const ms = Date.now() - startedAt;
-    let candidates = collectCandidates(json, limit, videoRendererToCandidate);
+    const candidates = collectCandidates(json, limit, videoRendererToCandidate);
 
     recordSearchDiagnostic({
       scope: 'youtube',
@@ -888,14 +716,6 @@ export const searchYouTubeSongs = async (
     });
 
     if (candidates.length > 0) {
-      candidates = await fetchContinuationPage(
-        json,
-        WEB,
-        videoRendererToCandidate,
-        candidates,
-        limit,
-        fetchOptions
-      );
       return candidates;
     }
   } catch (error) {

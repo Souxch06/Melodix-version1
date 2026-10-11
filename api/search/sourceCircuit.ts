@@ -23,7 +23,6 @@
 
 import { AudiusRequestError } from '../audius/client';
 import { BackendError } from '../../services/backend/client';
-import { ItunesRequestError } from '../itunes/client';
 import { InnertubeError } from '../../services/audio/youtubeInnertube';
 
 import type { SearchSourceId } from './searchRanking';
@@ -42,7 +41,6 @@ const circuits: Record<GenericCircuitSource, CircuitEntry> = {
   audius: { consecutiveFailures: 0, openUntilMs: 0 },
   backend: { consecutiveFailures: 0, openUntilMs: 0 },
   youtube: { consecutiveFailures: 0, openUntilMs: 0 },
-  itunes: { consecutiveFailures: 0, openUntilMs: 0 },
 };
 
 export type SourceErrorVerdict = 'aborted' | 'failure' | 'benign';
@@ -98,26 +96,6 @@ export const classifySourceError = (error: unknown): SourceErrorVerdict => {
     }
     if (error.kind === 'http') {
       return (error.status ?? 0) >= 429 ? 'failure' : 'benign';
-    }
-    return 'failure';
-  }
-
-  // V37 — iTunes Search API : même discipline qu'Audius. Une annulation
-  // n'est jamais une panne ; réseau/timeout/débit = panne réelle ; un 4xx
-  // autoritaire prouve que la source répond (bénin).
-  if (error instanceof ItunesRequestError) {
-    if (error.kind === 'aborted') {
-      return 'aborted';
-    }
-    if (
-      error.kind === 'network' ||
-      error.kind === 'timeout' ||
-      error.kind === 'rate-limited'
-    ) {
-      return 'failure';
-    }
-    if (error.kind === 'http') {
-      return (error.status ?? 0) >= 500 ? 'failure' : 'benign';
     }
     return 'failure';
   }
@@ -179,10 +157,6 @@ export const getSourceCircuitStates = (
   youtube: {
     failures: circuits.youtube.consecutiveFailures,
     openForMs: Math.max(0, circuits.youtube.openUntilMs - nowMs),
-  },
-  itunes: {
-    failures: circuits.itunes.consecutiveFailures,
-    openForMs: Math.max(0, circuits.itunes.openUntilMs - nowMs),
   },
 });
 

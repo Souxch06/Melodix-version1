@@ -67,7 +67,6 @@ import {
 import ExpoConstants from 'expo-constants';
 
 import { getAudiusStreamUrl } from '../../audius';
-import { getItunesPreviewUrl } from '../../itunes';
 import { getYouTubeAudioStreamUrlDetailed } from '../../../services/audio/youtubeInnertube';
 import { isBackendConfigured } from '../../../services/backend/client';
 import {
@@ -190,11 +189,6 @@ const PROBE_URLS: { service: string; url: string }[] = [
   { service: 'audius', url: 'https://api.audius.co/' },
   { service: 'youtube', url: 'https://music.youtube.com/' },
   { service: 'spotify', url: 'https://api.spotify.com/v1/search' },
-  // V37 — iTunes Search API (source de catalogue ajoutée en V37).
-  {
-    service: 'itunes',
-    url: 'https://itunes.apple.com/search?term=test&media=music&entity=song&limit=1',
-  },
 ];
 
 const runProbe = async (probe: {
@@ -312,28 +306,6 @@ const verifyYouTubeStream = async (
   }
 };
 
-/** V37 — vérifie un extrait iTunes : id de piste → `lookup` (endpoint
- * documenté) → réponse HTTP réelle du flux. « available » exige une réponse
- * 2xx/206 du serveur de contenu — jamais déduit de la seule présence d'un id. */
-const verifyItunesStream = async (
-  trackId: string
-): Promise<OnlineStreamCheck> => {
-  try {
-    const url = await getItunesPreviewUrl(trackId);
-
-    if (!url) {
-      return 'unavailable';
-    }
-
-    const check = await checkStreamUrlDetailed(url, {
-      timeoutMs: STREAM_CHECK_TIMEOUT_MS,
-    });
-    return streamCheckToLegacyEnum(check);
-  } catch {
-    return 'network-error';
-  }
-};
-
 type CaseRunResult = {
   report: OnlineCaseReport;
   /** Couverture du statut V32 (inchangée). */
@@ -347,9 +319,7 @@ const normalize = (value: string): string =>
     .toLowerCase();
 
 const isPlayableId = (id: string): boolean =>
-  id.startsWith('audius:') ||
-  id.startsWith('youtube:') ||
-  id.startsWith('itunes:');
+  id.startsWith('audius:') || id.startsWith('youtube:');
 
 const runCase = (queryCase: QueryCase): Promise<CaseRunResult> =>
   new Promise((resolve) => {
@@ -423,15 +393,12 @@ const runCase = (queryCase: QueryCase): Promise<CaseRunResult> =>
       const playableIds = playableTracks.length;
 
       // VÉRIFICATION TECHNIQUE DES FLUX — échantillon borné : au plus une
-      // piste par source native (Audius, YouTube, iTunes) par cas.
+      // piste par source native (Audius, YouTube) par cas.
       const firstAudius = playableTracks.find((track) =>
         track.id.startsWith('audius:')
       );
       const firstYouTube = playableTracks.find((track) =>
         track.id.startsWith('youtube:')
-      );
-      const firstItunes = playableTracks.find((track) =>
-        track.id.startsWith('itunes:')
       );
 
       const audiusCheck: OnlineStreamCheck = firstAudius
@@ -442,10 +409,6 @@ const runCase = (queryCase: QueryCase): Promise<CaseRunResult> =>
         : null;
       const youtubeCheck: OnlineStreamCheck =
         youtubeVerification?.legacy ?? 'not-tested';
-      // V37 — extrait iTunes : résolution `lookup` + contrôle HTTP réel.
-      const itunesCheck: OnlineStreamCheck = firstItunes
-        ? await verifyItunesStream(firstItunes.id.slice('itunes:'.length))
-        : 'not-tested';
 
       const timings: ProgressiveSearchTimings | undefined = update?.timings;
       const totalMs = timings?.totalMs ?? Date.now() - startedAt;
@@ -478,11 +441,7 @@ const runCase = (queryCase: QueryCase): Promise<CaseRunResult> =>
           perSourceCounts,
           relevantResults: relevantItems.length,
           playableIds,
-          streamVerified: {
-            audius: audiusCheck,
-            youtube: youtubeCheck,
-            itunes: itunesCheck,
-          },
+          streamVerified: { audius: audiusCheck, youtube: youtubeCheck },
           ...(youtubeVerification
             ? { youtubeStreamDetail: youtubeVerification.detail }
             : {}),
@@ -645,5 +604,4 @@ export const describeOnlineCoverageSourceIds: readonly SearchSourceId[] = [
   'backend',
   'audius',
   'youtube',
-  'itunes',
 ];

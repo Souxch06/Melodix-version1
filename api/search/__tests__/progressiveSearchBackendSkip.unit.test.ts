@@ -17,7 +17,6 @@ import { isBackendConfigured, isSpotifySessionActive } from '@services';
 import { searchAudiusTracks } from '../../audius';
 import { backendSearchCatalog } from '../../backend';
 import { searchSpotifyCatalogQuick } from '../../spotify/search';
-import { searchItunesTracks } from '../../itunes';
 import { searchYouTubeTracks } from '../../youtube';
 import {
   resetProgressiveSearchEngine,
@@ -54,10 +53,6 @@ jest.mock('../../youtube', () => ({
   searchYouTubeTracks: jest.fn(),
 }));
 
-jest.mock('../../itunes', () => ({
-  searchItunesTracks: jest.fn(),
-}));
-
 const mockedBackendConfigured = isBackendConfigured as jest.MockedFunction<
   typeof isBackendConfigured
 >;
@@ -75,9 +70,6 @@ const mockedSpotifyQuick = searchSpotifyCatalogQuick as jest.MockedFunction<
 >;
 const mockedYouTubeSearch = searchYouTubeTracks as jest.MockedFunction<
   typeof searchYouTubeTracks
->;
-const mockedItunesSearch = searchItunesTracks as jest.MockedFunction<
-  typeof searchItunesTracks
 >;
 
 const emptyResults = (): SearchResultsModel => ({
@@ -121,7 +113,6 @@ beforeEach(() => {
   mockedAudiusSearch.mockResolvedValue([]);
   mockedSpotifyQuick.mockResolvedValue(emptyResults());
   mockedYouTubeSearch.mockResolvedValue([]);
-  mockedItunesSearch.mockResolvedValue([]);
   mockedBackendSearch.mockResolvedValue(emptyResults());
 });
 

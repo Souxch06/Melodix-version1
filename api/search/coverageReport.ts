@@ -113,12 +113,7 @@ export type OnlineCaseReport = {
    * condition technique, PAS une preuve de lecture. */
   playableIds: number;
   /** Contrôle technique réel du flux sur un échantillon borné. */
-  streamVerified: {
-    audius: OnlineStreamCheck;
-    youtube: OnlineStreamCheck;
-    /** V37 — extrait iTunes : absent des rapports antérieurs à V37. */
-    itunes?: OnlineStreamCheck;
-  };
+  streamVerified: { audius: OnlineStreamCheck; youtube: OnlineStreamCheck };
   /** V34 — cause détaillée de l'issue du flux YouTube (si piste testée) :
    * distingue restriction YouTube / formats non résolus / refus HTTP. */
   youtubeStreamDetail?: YouTubeStreamDiagnostic;
@@ -317,7 +312,6 @@ export const buildOnlineBenchmarkReport = (
     for (const check of [
       kase.streamVerified.audius,
       kase.streamVerified.youtube,
-      kase.streamVerified.itunes ?? 'not-tested',
     ]) {
       if (check === 'not-tested') {
         continue;
@@ -476,7 +470,6 @@ export const renderOnlineBenchmarkText = (
     lines.push(
       `      flux audio vérifiés : audius=${kase.streamVerified.audius} · ` +
         `youtube=${kase.streamVerified.youtube} · ` +
-        `itunes=${kase.streamVerified.itunes ?? 'not-tested'} · ` +
         `lecture démarrée : ${kase.playbackStarted}` +
         (kase.youtubeStreamDetail
           ? `\n      diagnostic YouTube : ${describeYouTubeDetail(kase.youtubeStreamDetail)}`

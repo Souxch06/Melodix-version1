@@ -25,12 +25,7 @@
  * copiable pour rapport de bogue.
  */
 
-export type SearchDiagnosticScope =
-  | 'audius'
-  | 'youtube'
-  | 'backend'
-  | 'itunes'
-  | 'engine';
+export type SearchDiagnosticScope = 'audius' | 'youtube' | 'backend' | 'engine';
 
 export type SearchDiagnosticClass =
   | 'ok'

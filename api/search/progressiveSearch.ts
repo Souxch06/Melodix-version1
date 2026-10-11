@@ -11,7 +11,6 @@ import { getIsOnline } from '../../services/network/networkState';
 
 import { audiusTrackToLibraryItem, searchAudiusTracks } from '../audius';
 import { backendSearchCatalog } from '../backend';
-import { searchItunesTracks } from '../itunes';
 import { searchSpotifyCatalogQuick } from '../spotify/search';
 import { searchYouTubeTracks } from '../youtube';
 
@@ -77,18 +76,9 @@ export {
  * métadonnées à matcher par la cascade existante du player).
  */
 
-/** Limites de résultats par source (page naturelle de chacune).
- *
- * V37 — COUVERTURE : l'agrégat Audius rend rarement autant de pistes que
- * demandé (il mélange pistes/utilisateurs/playlists) ; la passe complémentaire
- * `/tracks/search` remplit le reste. 100 doublent la surface utile sans coût
- * réseau démesuré (une seule requête par passe, nœud sain ≈ 300-600 ms).
- * YouTube passe de 15 à 25 : le client innertube V37 suit la pagination
- * (continuation) quand la première page ne suffit pas. */
-export const AUDIUS_SEARCH_LIMIT = 100;
+/** Limites de résultats par source (page naturelle de chacune). */
+export const AUDIUS_SEARCH_LIMIT = 50;
 export const BACKEND_SEARCH_LIMIT = 50;
-/** V37 — recherche catalogue YouTube : 25 morceaux (pagination incluse). */
-export const YOUTUBE_CATALOG_LIMIT = 25;
 
 /** Budget par source (ms) : au-delà, la source est déclarée en échec POUR
  * CETTE recherche et ses résultats tardifs sont ignorés — les résultats des
@@ -99,8 +89,6 @@ export const SOURCE_TIMEOUTS_MS: Record<SearchSourceId, number> = {
   backend: 6_000,
   audius: 7_500,
   youtube: 8_000,
-  // V37 : l'API iTunes répond vite (CDN mondial) ; 6 s comme Spotify.
-  itunes: 6_000,
 };
 
 /** Borne absolue d'une recherche : après cela, tout ce qui pend encore est
@@ -256,28 +244,24 @@ const buildUpdate = (run: Run): ProgressiveSearchUpdate => {
         backend: run.contributions.backend.tracks,
         audius: run.contributions.audius.tracks,
         youtube: run.contributions.youtube.tracks,
-        itunes: run.contributions.itunes.tracks,
       },
       artists: {
         spotify: run.contributions.spotify.artists,
         backend: run.contributions.backend.artists,
         audius: run.contributions.audius.artists,
         youtube: run.contributions.youtube.artists,
-        itunes: run.contributions.itunes.artists,
       },
       albums: {
         spotify: run.contributions.spotify.albums,
         backend: run.contributions.backend.albums,
         audius: run.contributions.audius.albums,
         youtube: run.contributions.youtube.albums,
-        itunes: run.contributions.itunes.albums,
       },
       playlists: {
         spotify: run.contributions.spotify.playlists,
         backend: run.contributions.backend.playlists,
         audius: run.contributions.audius.playlists,
         youtube: run.contributions.youtube.playlists,
-        itunes: run.contributions.itunes.playlists,
       },
     },
     run.query
@@ -356,7 +340,6 @@ const buildUpdate = (run: Run): ProgressiveSearchUpdate => {
       backend: countContributions(run.contributions.backend),
       audius: countContributions(run.contributions.audius),
       youtube: countContributions(run.contributions.youtube),
-      itunes: countContributions(run.contributions.itunes),
     };
   }
 
@@ -633,9 +616,7 @@ const youtubeSource =
     )(async (controller) => {
       const tracks = await withSourceTimeout(
         'youtube',
-        // V37 — couverture : 25 morceaux au lieu de 15 (la pagination
-        // innertube V37 complète la première page si besoin).
-        searchYouTubeTracks(run.query, YOUTUBE_CATALOG_LIMIT, {
+        searchYouTubeTracks(run.query, undefined, {
           signal: controller.signal,
         }),
         SOURCE_TIMEOUTS_MS.youtube,
@@ -643,36 +624,6 @@ const youtubeSource =
       );
 
       run.contributions.youtube.tracks = tracks;
-    });
-
-/**
- * V37 — source iTunes Search API : élargit fortement la couverture du
- * catalogue (répertoire commercial quasi exhaustif) avec des extraits 30 s
- * RÉELLEMENT jouables. Mêmes garde-fous que les autres sources sans compte :
- * disjoncteur propre, budget dédié, annulation réelle, isolement total —
- * une panne iTunes ne touche JAMAIS Audius/YouTube/backend, ni l'inverse.
- */
-const itunesSource =
-  (run: Run, nowMs: number): SourceFetcher =>
-  () =>
-    withGenericCircuit(
-      run,
-      'itunes',
-      nowMs
-    )(async (controller) => {
-      const tracks = await withSourceTimeout(
-        'itunes',
-        searchItunesTracks(run.query, undefined, {
-          signal: controller.signal,
-        }),
-        SOURCE_TIMEOUTS_MS.itunes,
-        () => controller.abort()
-      );
-
-      // Ceinture : un tableau est la SEULE forme acceptée — toute autre
-      // valeur est traitée comme un résultat vide plutôt que de casser la
-      // fusion (jamais d'update mort à cause d'une source).
-      run.contributions.itunes.tracks = Array.isArray(tracks) ? tracks : [];
     });
 
 const startRun = (run: Run, nowMs: number): void => {
@@ -707,12 +658,10 @@ const startRun = (run: Run, nowMs: number): void => {
   // V32 : les sources SANS compte partent IMMÉDIATEMENT. Spotify est lancé
   // par `launch` après la vérification de session — jamais l'inverse : une
   // lecture de session lente (stockage sécurisé) ne retarde plus le premier
-  // résultat Audius/backend/YouTube. V37 : iTunes (extrait 30 s, sans
-  // compte) part avec elles — toutes sont indépendantes.
+  // résultat Audius/backend/YouTube.
   void audiusSource(run, nowMs)();
   void backendSource(run, nowMs)();
   void youtubeSource(run, nowMs)();
-  void itunesSource(run, nowMs)();
 
   // Ceinture : même si une source ignorait son budget, la recherche solde —
   // et V31 coupe RÉELLEMENT les requêtes encore en vol. V32 : le minuteur
@@ -833,14 +782,12 @@ export const searchCatalogProgressive = (
           backend: emptyContributions(),
           audius: emptyContributions(),
           youtube: emptyContributions(),
-          itunes: emptyContributions(),
         },
         states: {
           spotify: 'pending',
           backend: 'pending',
           audius: 'pending',
           youtube: 'pending',
-          itunes: 'pending',
         },
         spotifySessionActive: false,
         lastUpdate: null,

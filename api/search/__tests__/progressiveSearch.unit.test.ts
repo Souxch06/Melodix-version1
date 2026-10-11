@@ -17,7 +17,6 @@ import {
 import { audiusTrackToLibraryItem, searchAudiusTracks } from '../../audius';
 import { backendSearchCatalog } from '../../backend';
 import { searchSpotifyCatalogQuick } from '../../spotify/search';
-import { searchItunesTracks } from '../../itunes';
 import { searchYouTubeTracks } from '../../youtube';
 import {
   clearSearchCache,
@@ -62,10 +61,6 @@ jest.mock('../../youtube', () => ({
   searchYouTubeTracks: jest.fn(),
 }));
 
-jest.mock('../../itunes', () => ({
-  searchItunesTracks: jest.fn(),
-}));
-
 const mockedSessionActive = isSpotifySessionActive as jest.MockedFunction<
   typeof isSpotifySessionActive
 >;
@@ -86,9 +81,6 @@ const mockedSpotifyQuick = searchSpotifyCatalogQuick as jest.MockedFunction<
 >;
 const mockedYouTubeSearch = searchYouTubeTracks as jest.MockedFunction<
   typeof searchYouTubeTracks
->;
-const mockedItunesSearch = searchItunesTracks as jest.MockedFunction<
-  typeof searchItunesTracks
 >;
 
 const track = (
@@ -159,7 +151,6 @@ beforeEach(() => {
     after(100, { tracks: [], artists: [], albums: [], playlists: [] })
   );
   mockedYouTubeSearch.mockImplementation(() => after(100, []));
-  mockedItunesSearch.mockImplementation(() => after(100, []));
 });
 
 afterEach(() => {
