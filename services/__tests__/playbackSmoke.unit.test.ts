@@ -109,6 +109,10 @@ const makeDeps = (
     },
     subscribe: (listener) => {
       player.listeners.push(listener);
+      // Sémantique du VRAI moteur : l'abonné est appelé immédiatement avec
+      // l'état courant (services/player.ts subscribe). Reproduit ici pour que
+      // les waiters soient testés dans les mêmes conditions qu'en production.
+      listener({ status: player.status } as unknown as PlayerState);
       return () => {
         player.listeners = player.listeners.filter((l) => l !== listener);
       };
@@ -319,6 +323,59 @@ describe('runPlaybackSmoke — séquence et verdicts', () => {
     expect(all).not.toContain('Titre Ultra Secret');
     expect(all).not.toContain('SECRETID42');
     expect(all).toContain('track:selected source=audius');
+  });
+});
+
+describe('V35 — régression : émission synchrone à la souscription', () => {
+  it('pause/reprise réfléchies instantanément : confirmées sans crash', async () => {
+    const player = fakePlayer();
+    const { deps, logs } = makeDeps(
+      player,
+      {
+        settleAfterMs: 10,
+        tracks: [track('audius:a1', 'Seule')],
+      },
+      {
+        // Le vrai moteur publie l'état PENDANT la commande : l'abonné des
+        // waiters reçoit l'état cible dès la souscription (appel immédiat).
+        // C'est le scénario qui a produit le TypeError en production
+        // (mesure CI) : il doit classer ok, jamais planter.
+        pauseEngine: async () => {
+          player.emit('paused');
+        },
+        resumeEngine: async () => {
+          player.emit('playing');
+        },
+      }
+    );
+
+    const smokePromise = runPlaybackSmoke('auto', deps);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    player.emit('playing');
+
+    const report = await smokePromise;
+
+    expect(report.verdict).toBe('started');
+    expect(report.controlsVerdict).toBe('ok');
+    expect(logs.join(' ')).toContain('controls:pause ok');
+    expect(logs.join(' ')).toContain('controls:resume ok');
+    expect(player.stopCalls).toBe(1);
+  });
+
+  it('état déjà error à la souscription : verdict error sans crash', async () => {
+    const player = fakePlayer();
+    const { deps } = makeDeps(player, {
+      settleAfterMs: 10,
+      tracks: [track('audius:a1', 'Morte')],
+    });
+    // Le moteur est DÉJÀ en erreur quand le waiter s'abonne : l'appel
+    // immédiat solde la promesse pendant l'initialisation des poignées.
+    player.status = 'error';
+
+    const report = await runPlaybackSmoke('auto', deps);
+
+    expect(report.verdict).toBe('error');
+    expect(report.finalStatus).toBe('error');
   });
 });
 

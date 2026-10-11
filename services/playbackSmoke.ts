@@ -218,14 +218,33 @@ const waitForStatus = (
   new Promise((resolve) => {
     const startedAt = Date.now();
     let settled = false;
+    let cleaned = false;
+    let unsubscribe: (() => void) | null = null;
+    let pollTimer: ReturnType<typeof setInterval> | null = null;
+
+    // Le moteur appelle l'abonné IMMÉDIATEMENT à la souscription : `finish`
+    // peut donc courir PENDANT l'initialisation (poignées pas encore
+    // assignées). Le nettoyage est ré-exécuté après celle-ci — jamais d'appel
+    // sur une liaison non initialisée (TypeError observé en mesure CI V35).
+    const cleanup = () => {
+      if (cleaned) {
+        return;
+      }
+      cleaned = true;
+      if (unsubscribe) {
+        unsubscribe();
+      }
+      if (pollTimer !== null) {
+        clearInterval(pollTimer);
+      }
+    };
 
     const finish = (reached: boolean) => {
       if (settled) {
         return;
       }
       settled = true;
-      unsubscribe();
-      clearInterval(pollTimer);
+      cleanup();
       resolve(reached);
     };
 
@@ -235,14 +254,21 @@ const waitForStatus = (
       }
     };
 
-    const unsubscribe = deps.subscribe((state) => observe(state.status));
+    unsubscribe = deps.subscribe((state) => observe(state.status));
 
-    const pollTimer = setInterval(() => {
+    pollTimer = setInterval(() => {
       observe(deps.getStatus());
       if (!settled && Date.now() - startedAt >= budgetMs) {
         finish(false);
       }
     }, deps.pollMs);
+
+    // Soldé par l'émission synchrone pendant subscribe : libérer maintenant
+    // que les deux poignées existent.
+    if (settled) {
+      cleaned = false;
+      cleanup();
+    }
   });
 
 /** Attend un état moteur terminal avec confirmation de tenue de `playing`.
@@ -259,6 +285,24 @@ const waitForPlaybackOutcome = (
     let playingSince: number | null = null;
     let lastStatus: PlayerStatus | null = deps.getStatus();
     let settled = false;
+    let cleaned = false;
+    let unsubscribe: (() => void) | null = null;
+    let pollTimer: ReturnType<typeof setInterval> | null = null;
+
+    // Même garde que waitForStatus : l'appel immédiat de l'abonné par le
+    // moteur peut solder PENDANT l'initialisation des poignées.
+    const cleanup = () => {
+      if (cleaned) {
+        return;
+      }
+      cleaned = true;
+      if (unsubscribe) {
+        unsubscribe();
+      }
+      if (pollTimer !== null) {
+        clearInterval(pollTimer);
+      }
+    };
 
     const finish = (
       verdict: 'started' | 'error' | 'unavailable' | 'timeout',
@@ -268,8 +312,7 @@ const waitForPlaybackOutcome = (
         return;
       }
       settled = true;
-      unsubscribe();
-      clearInterval(pollTimer);
+      cleanup();
       resolve({ verdict, finalStatus });
     };
 
@@ -289,9 +332,9 @@ const waitForPlaybackOutcome = (
       }
     };
 
-    const unsubscribe = deps.subscribe((state) => observe(state.status));
+    unsubscribe = deps.subscribe((state) => observe(state.status));
 
-    const pollTimer = setInterval(() => {
+    pollTimer = setInterval(() => {
       observe(deps.getStatus());
 
       if (
@@ -305,6 +348,11 @@ const waitForPlaybackOutcome = (
         finish('timeout', lastStatus);
       }
     }, deps.pollMs);
+
+    if (settled) {
+      cleaned = false;
+      cleanup();
+    }
   });
 
 /** Exécute la séquence complète : recherche réelle → sélection → tentative
