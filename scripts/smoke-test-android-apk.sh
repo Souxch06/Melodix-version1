@@ -612,7 +612,7 @@ if [ "$PB_VERDICT" = "verdict:started" ]; then
     sleep 5
     _p2tries=$((_p2tries + 1))
     PLAYBACK_TRACE=$(adb logcat -d 2>/dev/null | grep -F '[PlaybackSmoke]' || true)
-    if printf '%s\n' "$PLAYBACK_TRACE" | grep -Eq 'controls:(resume ok|resume timeout|pause timeout)'; then
+    if printf '%s\n' "$PLAYBACK_TRACE" | grep -Eq 'phase2:summary|controls:(resume ok|resume timeout|pause timeout)'; then
       break
     fi
   done
@@ -633,10 +633,12 @@ if [ "$PB_VERDICT" = "verdict:started" ]; then
       echo "::warning title=Changement de piste (émulateur)::non observé dans le budget (trace: ${PB_TC:-absente})"
       ;;
   esac
+  PB_SUMMARY=$(printf '%s\n' "$PLAYBACK_TRACE" | grep -Eo 'phase2:summary [^|]*' | tail -1 || true)
   if [ "$PB_PAUSE" = "controls:pause ok" ] && [ "$PB_RESUME" = "controls:resume ok" ]; then
     echo "::notice title=Commandes lecteur (émulateur)::pause puis reprise CONFIRMÉES par l'état moteur réel après lecture démarrée (état moteur, pas de sortie sonore)"
   else
-    echo "::warning title=Commandes lecteur (émulateur)::pause/reprise non confirmées dans le budget (pause=${PB_PAUSE:-absente} reprise=${PB_RESUME:-absente}) — mesure honnête sur émulateur -noaudio"
+    _PB_DUMP=$(printf '%s\n' "$PLAYBACK_TRACE" | tail -25 | tr '\n' '|')
+    echo "::warning title=Commandes lecteur (émulateur)::pause/reprise non confirmées dans le budget (pause=${PB_PAUSE:-absente} reprise=${PB_RESUME:-absente} ${PB_SUMMARY:-resume-absent}) — mesure honnête sur émulateur -noaudio — trace fixture: ${_PB_DUMP}"
   fi
   PB_PHASE2=" · changement de piste ${PB_TC:-non observé} · pause ${PB_PAUSE:-non observée} · reprise ${PB_RESUME:-non observée}"
 fi

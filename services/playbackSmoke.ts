@@ -426,6 +426,7 @@ export const runPlaybackSmoke = async (
   let trackChangeVerdict: PlaybackSmokeTrackChangeVerdict | null = null;
 
   if (outcome.verdict === 'started') {
+    deps.log('phase2:enter');
     // 4a) CHANGEMENT DE PISTE : une deuxième piste jouable distincte existe-t-
     //     elle ? Si oui, lecture réelle de celle-ci puis confirmation tenue.
     const second = selectSecondPlayableTrack(tracks, source, selected.id);
@@ -459,6 +460,7 @@ export const runPlaybackSmoke = async (
     //     réel (jamais par la seule résolution de la commande). Les commandes
     //     sont BORNÉES : un appel natif qui ne rend pas dégèle la séquence et
     //     l'observateur classe honnêtement (timeout), jamais de silence.
+    deps.log('controls:start');
     await commandWithBudget(deps.pauseEngine(), deps.statusBudgetMs);
     const paused = await waitForStatus(deps, 'paused', deps.statusBudgetMs);
     if (!paused) {
@@ -476,6 +478,15 @@ export const runPlaybackSmoke = async (
         deps.log(`controls:resume timeout status=${deps.getStatus()}`);
       }
     }
+  }
+
+  // Ligne CONSOLIDÉE de phase 2 : une seule ligne facile à grepper, même si
+  // le logcat saturé perdait des breadcrumbs intermédiaires.
+  if (outcome.verdict === 'started') {
+    deps.log(
+      `phase2:summary track-change=${trackChangeVerdict} ` +
+        `controls=${controlsVerdict}`
+    );
   }
 
   // 5) Retour au calme (jamais de lecture qui tourne en fin de smoke).
