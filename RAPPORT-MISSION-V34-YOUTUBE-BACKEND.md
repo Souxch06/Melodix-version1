@@ -100,13 +100,13 @@
 
 ## 6. État final
 
-- **Commit final :** `8036853` + commits de livraison (nettoyage rapports, retrait du déclencheur temporaire, ce rapport).
+- **Commit final :** `8822099` (rapport + retrait du déclencheur temporaire + nettoyage rapports ; code applicatif strictement identique à `8036853`, build vert vérifié à `8822099`).
 - **Branche :** `arena/5ef0ee6a-melodix` poussée, propre, liée à la **PR #9 (ouverte, aucun merge — consigne respectée)**.
 - **`main` :** inchangé (`fceab85950b069edcb65ed718a8ffd419a1bc785`).
 - **Vérifications finales :** TypeScript, ESLint, Prettier, `git diff --check` OK ; Jest complet 2398/0/14 ; banc en ligne `real-measures` ; smoke Android vert.
 
 ## 7. APK
 
-- **`Melodix-v4.5.0-test.30-8036853.apk`** (versionName 4.5.0-test.30, 89 Mo, sha256 `e3b326a718918e4594267e5a74bcfcf32183bc4f87d907f50da8c4df1c7856b4`)
-- Artifact : https://github.com/Souxch06/Melodix/actions/runs/38131092765/artifacts/11699486624
+- **`Melodix-v4.5.0-test.30-8822099.apk`** (versionName 4.5.0-test.30, 89 Mo, sha256 `e3b326a718918e4594267e5a74bcfcf32183bc4f87d907f50da8c4df1c7856b4` — build identique à celui de `8036853`, tous deux verts)
+- Artifact : https://github.com/Souxch06/Melodix/actions/runs/38133314220/artifacts/11700610769
 - C'est le premier build contenant la vérification automatisée « piste trouvée → lecture réelle » (verdict `started` mesuré dans ce build).
