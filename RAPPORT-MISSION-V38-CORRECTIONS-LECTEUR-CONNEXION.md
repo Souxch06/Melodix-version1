@@ -283,14 +283,31 @@ Aucune autre surface modifiée. Aucun test supprimé. Pas de refonte du moteur.
 Version livrée : **`4.5.0-test.32` / versionCode `45032`** (package.json,
 app.config.js et gate du workflow synchronisés dans le même commit).
 
-| Élément             | Valeur                                               |
-| ------------------- | ---------------------------------------------------- |
-| Commit final (code) | `a6dbc5d`                                            |
-| Run APK Android     | (complété à la fin du run — voir tableau ci-dessous) |
-| Artifact APK        | (complété à la fin du run)                           |
-| sha256 / taille     | (complétés depuis les annotations du run)            |
+| Élément                   | Valeur                                                                                                                                                        |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Commit final              | `815ec96` (code V38 `a6dbc5d` + rapport ; les deux ne diffèrent QUE par ce rapport)                                                                           |
+| Run APK Android           | **38204478328 — SUCCESS** @ `815ec96` (le run `a6dbc5d` 38204355509 a été annulé automatiquement par le push du rapport — comportement attendu, pas un échec) |
+| Artifact                  | `Melodix-v4.5.0-test.32-815ec96.apk` — id **11726953735**, 47 097 946 octets (archive)                                                                        |
+| sha256 APK                | `9a6c1a6c077b01030afe23339b25b0ee5d135b2468467db47b90652fa89561d8` (annotation du run, APK ~89 Mo non compressé)                                              |
+| Certificat de signature   | SHA-256 `fac61745dc0903786fb9ede62a962b399f7348f0bb6f899b8332667591033b9c` (V3.0)                                                                             |
+| versionName / versionCode | `4.5.0-test.32` / `45032` (vérifiés dans l'APK par aapt, annotation du run)                                                                                   |
+| Run bench réseau          | **38204474975 — SUCCESS** @ `815ec96` : 14/14 cas soldés, mesures réelles (iTunes dominant, Audius + YouTube présents)                                        |
 
-_Tableau final complété après la fin des runs CI du commit de livraison._
+Verdicts du run de livraison (annotations) :
+
+- **Playback smoke (cold start) : `verdict:started`** — recherche réelle, piste
+  jouable, lecture confirmée par le moteur.
+- **Commandes lecteur (émulateur) : pause puis reprise CONFIRMÉES par l'état
+  moteur réel** — passe toujours APRÈS les modifications V38.
+- **Changement de piste (émulateur) : changement RÉEL vérifié** — lecture
+  confirmée sur une deuxième piste issue de la recherche réelle (valide le
+  nouveau chemin `manualAdvanceToIndex` sur l'émulateur).
+- Installation Android réelle : service foreground + MediaSession + notification +
+  deep-links OAuth (scénarios A et B) réussis ; wiring cold-start avec transaction
+  PKCE persistée vérifié ; Spotify Web : hôte production monté, aucun faux playing
+  (limites CI honnêtement signalées par les annotations elles-mêmes).
+- Diagnostic Spotify : client_id et redirect `melodix://callback` effectifs dans
+  le bundle et le manifest final.
 
 ## 12. Ce qui exige encore un téléphone physique (non vérifiable ici)
 
