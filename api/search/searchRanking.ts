@@ -32,16 +32,67 @@ export const SEARCH_SOURCE_PRIORITY = [
 
 export type SearchSourceId = (typeof SEARCH_SOURCE_PRIORITY)[number];
 
-/** Normalisation raisonnée : minuscules, accents retirés (NFD), ponctuation
+/**
+ * V44 — Lettres européennes que ni NFD ni NFKD ne savent décomposer
+ * (vérifié caractère par caractère : U+00F8, U+0153, U+00E6, U+00DF, U+0142,
+ * U+0111, U+00F0, U+00FE, U+0127, U+0167, U+0131, U+0138, U+014B).
+ *
+ * Sans ce repli EXPLICITE, l'étape `[^a-z0-9]+` les SUPPRIMAIT purement et
+ * simplement : « Cœur de pirate » → « c ur de pirate », « Bjørn » → « bj rn ».
+ * Deux conséquences démontrées par les tests :
+ *  - CLASSEMENT : une requête saisie au clavier (« Coeur de pirate », sans œ)
+ *    ne correspondait plus au titre officiel → score 0, titre exact non
+ *    remonté ;
+ *  - DOUBLONS : le même morceau servi par deux sources avec les deux
+ *    orthographes produisait deux clés de dédoublonnage distinctes.
+ *
+ * Clés en MINUSCULES : la table est appliquée après `toLowerCase()`.
+ * (`ſ`→s, `ĳ`→ij, `ﬁ`→fi et le Latin pleine chasse sont, eux, déjà repliés
+ * par NFKC — inutiles ici.)
+ */
+const UNDECOMPOSABLE_FOLDINGS: Record<string, string> = {
+  ø: 'o',
+  œ: 'oe',
+  æ: 'ae',
+  ß: 'ss',
+  ł: 'l',
+  đ: 'd',
+  ð: 'd',
+  þ: 'th',
+  ħ: 'h',
+  ŧ: 't',
+  ı: 'i',
+  ĸ: 'k',
+  ŋ: 'n',
+};
+
+/** Classe de caractères à replier explicitement (mêmes clés que la table). */
+const UNDECOMPOSABLE_PATTERN = /[øœæßłđðþħŧıĸŋ]/g;
+
+/**
+ * Normalisation raisonnée : minuscules, accents retirés (NFD), ponctuation
  * remplacée par des espaces, espaces consécutifs réduits. Les marqueurs de
  * variante (« (Remix) », « - Live »…) restent DANS la chaîne normalisée :
- * deux versions différentes d'un même titre ne sont jamais confondues. */
+ * deux versions différentes d'un même titre ne sont jamais confondues.
+ *
+ * Ordre des étapes (chacune justifiée) :
+ *  1. NFKC — replie les formes de COMPATIBILITÉ que NFD ignore (Latin pleine
+ *     chasse « ＭＵＳＩＣ » → « MUSIC », ligatures « ﬁ » → « fi ») ;
+ *  2. NFD + suppression des diacritiques — « Édith » → « Edith » ;
+ *  3. minuscules ;
+ *  4. apostrophes supprimées (« Guns N' Roses » → « guns n roses ») ;
+ *  5. repli EXPLICITE des lettres non décomposables — AVANT l'étape 6, sinon
+ *     elles seraient effacées au lieu d'être repliées ;
+ *  6. tout le reste (ponctuation, symboles) → espace, puis trim.
+ */
 export const normalizeForSearch = (value: string): string =>
   value
+    .normalize('NFKC')
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
     .replace(/['’]/g, '')
+    .replace(UNDECOMPOSABLE_PATTERN, (char) => UNDECOMPOSABLE_FOLDINGS[char])
     .replace(/[^a-z0-9]+/g, ' ')
     .trim();
 

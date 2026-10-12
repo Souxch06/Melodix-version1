@@ -763,6 +763,27 @@ export type ProgressiveSearchHandle = {
 };
 
 /**
+ * V44 — Clé d'identité d'une recherche (cache + course active partagée).
+ *
+ * La normalisation est volontairement PERDANTE (c'est ce qui permet à
+ * « Édith Piaf » et « edith piaf » de partager la même entrée de cache). Mais
+ * une requête composée uniquement de symboles (« ❤️ », « 🎵 ») se normalise
+ * en chaîne VIDE : sans garde, TOUTES ces requêtes distinctes partageaient la
+ * même clé — donc le même cache et la même course `activeRuns`, et la seconde
+ * recevait les résultats de la première (contamination démontrée par test).
+ *
+ * Règle : clé normalisée quand elle est informative, sinon repli sur la
+ * requête brute (minuscules, espaces réduits) — jamais la chaîne vide.
+ */
+const searchIdentityKeyOf = (query: string): string => {
+  const normalized = normalizeForSearch(query);
+  if (normalized) {
+    return normalized;
+  }
+  return query.trim().toLowerCase().replace(/\s+/g, ' ');
+};
+
+/**
  * Lance (ou rejoint) une recherche progressive.
  *
  * - retour immédiat du cache valide (0 ms perçu) + rafraîchissement en
@@ -780,7 +801,7 @@ export const searchCatalogProgressive = (
   options: ProgressiveSearchOptions = {}
 ): ProgressiveSearchHandle => {
   const q = query.trim();
-  const cacheKey = normalizeForSearch(q);
+  const cacheKey = searchIdentityKeyOf(q);
   const nowMs = Date.now();
 
   let run: Run | null = null;
