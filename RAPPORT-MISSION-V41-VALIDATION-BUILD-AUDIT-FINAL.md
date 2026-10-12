@@ -103,11 +103,18 @@ rapport : les tests ci-dessus sont automatisés/simulés ou sur émulateur
   pause physique non revalidées (téléphone requis), instabilité de
   l'émulateur CI.
 
-### Tableau de livraison (mis à jour après build)
+### Tableau de livraison (valeurs réelles vérifiées)
 
-| Élément            | Valeur        |
-| ------------------ | ------------- |
-| Commit final       | _à compléter_ |
-| Run APK            | _à compléter_ |
-| Artifact / version | _à compléter_ |
-| Lien               | _à compléter_ |
+| Élément           | Valeur                                                                             |
+| ----------------- | ---------------------------------------------------------------------------------- |
+| Commit final      | `b63b012`                                                                          |
+| Run APK           | `38235617713` — SUCCÈS                                                             |
+| Artifact          | `Melodix-v4.5.0-test.34-b63b012.apk` (id `11741467110`, 47 098 254 o)              |
+| Version interne   | versionCode `45034`, versionName `4.5.0-test.34`, minSdk 23, targetSdk 34          |
+| sha256 APK        | `90812d486a570f6e7625b4463d5a898561a9966965b306a6c16dcedb63f60442`                 |
+| Certificat (V3.0) | `fac61745dc0903786fb9ede62a962b399f7348f0bb6f899b8332667591033b9c`                 |
+| Lien              | https://github.com/Souxch06/Melodix/actions/runs/38235617713/artifacts/11741467110 |
+
+L'échec du run `38233405808` était une instabilité de l'émulateur CI (même
+code vert 40 min avant et après ; deep link routé, app vivante, 24 dumps
+réussis) — aucun défaut de code démontré.
