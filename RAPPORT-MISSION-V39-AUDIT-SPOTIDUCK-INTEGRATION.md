@@ -253,13 +253,16 @@ sonore ni la visibilité de la notification (voir §9).
 
 ## 8. Livraison
 
-| Élément                     | Valeur                                                         |
-| --------------------------- | -------------------------------------------------------------- |
-| Branche                     | `arena/5ef0ee6a-melodix` (session Arena ; voir §1)             |
-| Commit code V39             | (commit des corrections — sha dans l'historique de la branche) |
-| Version                     | `4.5.0-test.33` / versionCode `45033`                          |
-| PR                          | #9 (ouverte, MERGEABLE — non mergée)                           |
-| Run APK / artifact / sha256 | complétés à la fin du run CI du commit de livraison            |
+| Élément         | Valeur                                                                                                                                                                                  |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Branche         | `arena/5ef0ee6a-melodix` (session Arena ; voir §1)                                                                                                                                      |
+| Commit final    | `2bf974d`                                                                                                                                                                               |
+| Version         | `4.5.0-test.33` / versionCode `45033` (package.json, app.config.js, gate workflow synchronisés)                                                                                         |
+| PR              | #9 (ouverte, MERGEABLE — non mergée ; `main` `fceab85` intacte)                                                                                                                         |
+| Run APK Android | **38211184534 — SUCCESS** @ `2bf974d`                                                                                                                                                   |
+| Artifact        | `Melodix-v4.5.0-test.33-2bf974d.apk` — id **11729692217**, 47 097 993 octets (archive)                                                                                                  |
+| sha256 APK      | `3c348a9ca95130aee78b00b53c816bd82167fbab1ce1ebedbdd4f0646049e4af` (annotation du run)                                                                                                  |
+| Verdicts du run | smoke `verdict:started` ; pause/reprise et changement de piste confirmés par l'état moteur ; installation + service foreground + MediaSession + notification + deep-links OAuth réussis |
 
 ## 9. Validations manuelles qui restent nécessaires (impossibles en CI)
 
