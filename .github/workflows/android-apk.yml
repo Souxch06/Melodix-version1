@@ -486,8 +486,12 @@ jobs:
         env:
           APK: ${{ steps.apk.outputs.name }}
           EXPECTED_PACKAGE: com.souxch06.melodix
-          EXPECTED_VERSION_CODE: '45033'
-          EXPECTED_VERSION_NAME: 4.5.0-test.33
+          # V41 — plus de version attendue CODÉE EN DUR ici : c'est la cause
+          # démontrée de l'échec du run 38229368736 (45033 attendu vs 45034
+          # réel après la montée de version V40). Le script
+          # verify-android-apk.sh dérive désormais la version attendue de sa
+          # source unique (app.config.js) — toute montée de version future
+          # reste cohérente sans toucher au workflow.
           EXPECTED_MIN_SDK: '23'
           EXPECTED_TARGET_SDK: '34'
           EXPECTED_SCHEME: melodix
