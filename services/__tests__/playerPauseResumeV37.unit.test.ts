@@ -241,8 +241,12 @@ describe('V37 Pause/Reprise — chemins UI du téléphone', () => {
       positionMillis: 8_000,
       durationMillis: 180_000,
     });
-    // Le statut moteur passe à buffering via le tick.
-    expect(melodixPlayer.getState().buffering).toBe(true);
+    // V38 : pendant une lecture CONFIRMÉE, un tick isBuffering=true
+    // (chargement de chunks) ne doit PLUS passer l'UI en spinner — c'est ce
+    // reflet qui masquait le bouton Pause sur téléphone physique. Le statut
+    // moteur reste `playing` ; la commande pause ci-dessous en est la preuve.
+    expect(melodixPlayer.getState().buffering).toBe(false);
+    expect(melodixPlayer.getState().status).toBe('playing');
 
     await melodixPlayer.pause();
     expect(melodixPlayer.getState().status).toBe('paused');

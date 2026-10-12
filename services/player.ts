@@ -412,6 +412,16 @@ class MelodixPlayer {
    * dans la fenêtre sont ignorés (anti-tick-périmé démontré en V37). */
   private transportConfirmedPlaying: boolean | null = null;
   private transportConfirmedAtMs = 0;
+  /** V38 — dernier isPlaying NATIF observé (source de vérité transport).
+   * `state.status` est un état dérivé (filtres de grâce, statuts transitifs)
+   * ; pour décider l'intention d'un toggle SANS argument quand un Sound
+   * existe, l'état natif brut prime : sur appareil physique, des ticks
+   * {isPlaying:true, isBuffering:true} (chargement de chunks pendant la
+   * lecture) faisaient calculer « play » à un tap Pause parce que l'état
+   * dérivé n'était plus `playing`. */
+  private lastNativePlaying: boolean | null = null;
+  /** V38 — diagnostic : premier tick natif journalisé UNE fois par Sound. */
+  private lastNativeTickLoggedForToken = -1;
   /**
    * Source Spotify Web (optionnelle, injectée par PlayerContext). Le moteur
    * ne connaît QUE ce port : jamais le backend, le runtime ni la porte
@@ -600,6 +610,7 @@ class MelodixPlayer {
     const sound = this.sound;
     this.sound = null;
     this.soundTrackId = null;
+    this.lastNativePlaying = null; // V38 : plus de Sound = plus d'état natif
 
     if (!sound) {
       await this.unloadQueue;
@@ -702,6 +713,20 @@ class MelodixPlayer {
       return;
     }
 
+    // V38 — l'état natif BRUT est la source de vérité transport : mémorisé
+    // AVANT tout filtre (fenêtre de grâce V37) pour qu'un toggle sans
+    // argument sache si le son sort réellement, quel que soit l'état dérivé.
+    if (typeof status.isPlaying === 'boolean') {
+      this.lastNativePlaying = status.isPlaying;
+      if (this.lastNativeTickLoggedForToken !== token) {
+        this.lastNativeTickLoggedForToken = token;
+        appendDiagLog(
+          `[MEDIA_DIAG] FIRST_NATIVE_TICK isPlaying=${status.isPlaying} ` +
+            `isBuffering=${status.isBuffering === true}`
+        );
+      }
+    }
+
     // Certains callbacks expo-av (focus audio, buffering, fin) omettent la
     // position/durée ou publient momentanément NaN/0. Ne jamais effacer une
     // valeur fiable : mini-player, plein écran et MediaSession partagent cet
@@ -728,8 +753,20 @@ class MelodixPlayer {
       durationMillis: validDuration
         ? reportedDuration
         : this.state.durationMillis,
+      // V38 — le drapeau `buffering` de l'UI ne doit JAMAIS être vrai une
+      // fois la lecture confirmée (`playing`) : expo-av rapporte
+      // isBuffering=true pendant le chargement des chunks d'un flux EN
+      // LECTURE (mIsLoading dans SimpleExoPlayerData). Le refléter tel quel
+      // transformait le bouton Pause en spinner non pressable pendant la
+      // lecture sur réseau réel — défaut Pause démontré sur téléphone
+      // physique (le son continuait, la commande était visuellement et
+      // mécaniquement inaccessible). Avant la confirmation `playing`, le
+      // spinner reste honnête : aucun son ne sort encore.
       ...(typeof status.isBuffering === 'boolean'
-        ? { buffering: status.isBuffering }
+        ? {
+            buffering:
+              this.state.status === 'playing' ? false : status.isBuffering,
+          }
         : {}),
     };
 
@@ -1600,6 +1637,30 @@ class MelodixPlayer {
     });
   };
 
+  /**
+   * V38 — avance manuelle (next/previous/ligne de file) : le son de la
+   * piste en cours est déchargé AVANT la résolution de la cible. Sur réseau
+   * réel, l'ancien ordre (résoudre B puis décharger A) laissait l'ancienne
+   * piste JOUER pendant toute la résolution — symptôme exact remonté du
+   * téléphone : « le titre change mais le son reste sur l'ancien morceau ».
+   * Le silence immédiat est le seul retour honnête pendant le chargement.
+   */
+  private manualAdvanceToIndex = async (index: number) => {
+    const from = this.state.index;
+    appendDiagLog(
+      `[MEDIA_DIAG] PLAYER_ADVANCE from=${from} to=${index} ` +
+        `repeat=${this.state.repeat} hasSound=${this.sound !== null}`
+    );
+    if (this.sound) {
+      const requestToken = ++this.playToken;
+      await this.unloadCurrent();
+      if (this.playToken !== requestToken) {
+        return; // une commande plus récente a gagné pendant l'unload
+      }
+    }
+    await this.playIndex(index);
+  };
+
   private advanceManual = async (direction: 1 | -1) => {
     // next/previous tapés = intention explicite : la vue Spotify Web peut
     // s'ouvrir pour la piste cible (voir trySpotifyWeb).
@@ -1620,7 +1681,7 @@ class MelodixPlayer {
       // previous. L'ancien modulo bouclait même quand repeat était désactivé.
       if (this.state.repeat === 'all') {
         const wrapped = nextPointer < 0 ? indices.length - 1 : 0;
-        await this.playIndex(indices[wrapped]);
+        await this.manualAdvanceToIndex(indices[wrapped]);
       } else if (direction === 1) {
         await this.stop();
       } else {
@@ -1629,7 +1690,7 @@ class MelodixPlayer {
       return;
     }
 
-    await this.playIndex(indices[nextPointer]);
+    await this.manualAdvanceToIndex(indices[nextPointer]);
   };
 
   private handleStreamFailure = async (
@@ -1713,7 +1774,7 @@ class MelodixPlayer {
     }
 
     this.spotifyWebManualIntent = true; // ligne de file tapée = geste explicite
-    await this.playIndex(index);
+    await this.manualAdvanceToIndex(index);
   };
 
   private playIndex = async (index: number) => {
@@ -1741,6 +1802,9 @@ class MelodixPlayer {
     this.transportIntent = null;
     this.transportConfirmedPlaying = null;
     this.transportQueue = Promise.resolve();
+    // V38 : l'état natif mémorisé appartient au morceau précédent — il ne
+    // doit pas influencer un toggle visant la nouvelle piste.
+    this.lastNativePlaying = null;
     const isStale = () => this.playToken !== token;
 
     appendDiagLog(
@@ -2152,12 +2216,25 @@ class MelodixPlayer {
     const sound = this.sound;
     const playToken = this.playToken;
     // L'intention en vol prime sur l'état React, qui ne change qu'après la
-    // réponse native.
+    // réponse native. V38 : quand un Sound existe, le dernier isPlaying
+    // NATIF observé prime sur l'état dérivé — un statut transitoire
+    // (`buffering` pendant un chargement de chunks, état retardé) ne doit
+    // plus transformer un tap Pause en `playAsync()` sur un son déjà en
+    // lecture (défaut Pause démontré sur téléphone physique).
     const desiredPlaying =
       desired === undefined
-        ? !(this.transportIntent ?? this.state.status === 'playing')
+        ? !(
+            this.transportIntent ??
+            this.lastNativePlaying ??
+            this.state.status === 'playing'
+          )
         : desired;
     this.transportIntent = desiredPlaying;
+    appendDiagLog(
+      `[MEDIA_DIAG] PLAYER_TOGGLE cmd=${desiredPlaying ? 'play' : 'pause'} ` +
+        `via=${desired === undefined ? 'ui' : 'engine'} ` +
+        `status=${this.state.status} nativePlaying=${String(this.lastNativePlaying)}`
+    );
     // V37 — une nouvelle commande transport rend la confirmation précédente
     // OBSOLÈTE : l'état natif va changer de notre propre fait ; seule la
     // réponse de CETTE commande réarmera la protection anti-tick-périmé.
@@ -2201,7 +2278,19 @@ class MelodixPlayer {
           this.onPlaybackStatusUpdate(playToken, runtimeStatus);
         }
         if (!desiredPlaying) this.persistSession();
+        appendDiagLog(
+          `[MEDIA_DIAG] PLAYER_TOGGLE_OK cmd=${desiredPlaying ? 'play' : 'pause'} ` +
+            `nativeIsPlaying=${String(
+              runtimeStatus && typeof runtimeStatus.isPlaying === 'boolean'
+                ? runtimeStatus.isPlaying
+                : null
+            )}`
+        );
       } catch (error) {
+        appendDiagLog(
+          `[MEDIA_DIAG] PLAYER_TOGGLE_FAIL cmd=${desiredPlaying ? 'play' : 'pause'} ` +
+            `error=${error instanceof Error ? error.message : 'inconnue'}`
+        );
         console.error(
           desiredPlaying ? 'Failed to resume:' : 'Failed to pause:',
           error
