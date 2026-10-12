@@ -39,14 +39,59 @@ const ALLOWED_DETAIL_KEYS = new Set([
   'songCount',
   'cachedSeconds',
   'clientIdPresent', // booléen — JAMAIS l'identifiant lui-même
+  // --- Diagnostics HTTP d'un 403 (V42) -------------------------------------
+  // Ces clés sont construites par apiClient.ts UNIQUEMENT à partir de
+  // données déjà bornées et sanitisées : forme du corps (enum), Content-Type
+  // (en-tête sanitisé), URL finale (sanitisée), statusText (sanitisé),
+  // en-têtes issus d'une ALLOWLIST EXPLICITE excluant Authorization /
+  // Set-Cookie / cookies, et un compteur numérique. Ce sont précisément les
+  // champs qui distinguent un refus de l'API Spotify d'un refus d'une couche
+  // réseau intermédiaire (server: envoy, via: edgeproxy, cf-ray…) : sans eux,
+  // la ligne logcat `api.http` ne permettait PAS de trancher, alors que le
+  // code les collectait pour cela. La garde sensible de formatDetails
+  // s'applique à CHAQUE valeur émise (défense en profondeur).
+  'bodyShape',
+  'contentType',
+  'finalUrl',
+  'statusText',
+  'headers',
+  'attempts',
 ]);
+
+/**
+ * Masque récursif : applique la garde sensible à CHAQUE chaîne réellement
+ * émise (y compris à l'intérieur d'un objet comme `headers`), même si
+ * l'appelant a déjà sanitisé — défense en profondeur. Toute chaîne
+ * suspecte devient `<redacted>` ; toute chaîne est bornée à 80 caractères.
+ */
+const scrubValue = (value: unknown): unknown => {
+  if (typeof value === 'string') {
+    if (sensitivePattern.test(value)) {
+      return '<redacted>';
+    }
+    return value.slice(0, 80);
+  }
+  if (Array.isArray(value)) {
+    return value.map(scrubValue);
+  }
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [nestedKey, nestedValue] of Object.entries(
+      value as Record<string, unknown>
+    )) {
+      out[nestedKey] = scrubValue(nestedValue);
+    }
+    return out;
+  }
+  return value;
+};
 
 /** Sérialisation bornée : un log > 300 caractères est tronqué (bruit). */
 const formatDetails = (details: Record<string, unknown>): string => {
   const safe: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(details)) {
     if (ALLOWED_DETAIL_KEYS.has(key)) {
-      safe[key] = typeof value === 'string' ? value.slice(0, 80) : value;
+      safe[key] = scrubValue(value);
     }
   }
   const text = Object.keys(safe).length ? JSON.stringify(safe) : '';
