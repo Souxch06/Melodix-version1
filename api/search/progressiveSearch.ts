@@ -11,7 +11,7 @@ import { getIsOnline } from '../../services/network/networkState';
 
 import { audiusTrackToLibraryItem, searchAudiusTracks } from '../audius';
 import { backendSearchCatalog } from '../backend';
-import { searchItunesTracks } from '../itunes';
+import { ITUNES_SEARCH_LIMIT, searchItunesTracks } from '../itunes';
 import { searchSpotifyCatalogQuick } from '../spotify/search';
 import { searchYouTubeTracks } from '../youtube';
 
@@ -87,8 +87,11 @@ export {
  * (continuation) quand la première page ne suffit pas. */
 export const AUDIUS_SEARCH_LIMIT = 100;
 export const BACKEND_SEARCH_LIMIT = 50;
-/** V37 — recherche catalogue YouTube : 25 morceaux (pagination incluse). */
-export const YOUTUBE_CATALOG_LIMIT = 25;
+/** V40 — recherche catalogue YouTube : 40 morceaux (première page +
+ * continuation). Le relèvement reste borné : la continuation n'est suivie
+ * que si la première page rend moins que demandé, et son échec ne
+ * transforme jamais une recherche fructueuse en panne. */
+export const YOUTUBE_CATALOG_LIMIT = 40;
 
 /** Budget par source (ms) : au-delà, la source est déclarée en échec POUR
  * CETTE recherche et ses résultats tardifs sont ignorés — les résultats des
@@ -100,7 +103,10 @@ export const SOURCE_TIMEOUTS_MS: Record<SearchSourceId, number> = {
   audius: 7_500,
   youtube: 8_000,
   // V37 : l'API iTunes répond vite (CDN mondial) ; 6 s comme Spotify.
-  itunes: 6_000,
+  // V40 : la page passe de 50 à 200 résultats — le payload quadruple ;
+  // 8 s absorbent la taille de réponse sur réseau réel (le budget reste
+  // sous la borne dure de la course, 9 s).
+  itunes: 8_000,
 };
 
 /** Borne absolue d'une recherche : après cela, tout ce qui pend encore est
@@ -662,7 +668,11 @@ const itunesSource =
     )(async (controller) => {
       const tracks = await withSourceTimeout(
         'itunes',
-        searchItunesTracks(run.query, undefined, {
+        // V40 : plafond EXPLICITE au point d'appel (le maximum documenté de
+        // l'API, ITUNES_SEARCH_LIMIT=200) — jamais implicitement hérité du
+        // défaut du fournisseur, pour que le budget et la couverture restent
+        // vérifiés ici, là où la course est arbitrée.
+        searchItunesTracks(run.query, ITUNES_SEARCH_LIMIT, {
           signal: controller.signal,
         }),
         SOURCE_TIMEOUTS_MS.itunes,

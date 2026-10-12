@@ -16,9 +16,14 @@ import { itunesSearchGet } from './client';
  *   montre via sa barre de progression réelle et le badge provider).
  */
 
-/** Nombre de morceaux demandés : l'API accepte jusqu'à 200 ; 50 donne une
- * couverture réelle par requête sans réponse démesurée. */
-export const ITUNES_SEARCH_LIMIT = 50;
+/** Nombre de morceaux demandés par défaut : le MAXIMUM documenté de l'API
+ * iTunes Search (`limit` : 1–200). V40 — couverture : le plafond précédent
+ * (50) était la première cause de résultats manquants (titres, versions,
+ * remix, lives, remasters absents des premières pages) ; l'API renvoie 200
+ * résultats en UNE SEULE requête HTTP (pas de pagination, pas d'allers-
+ * retours supplémentaires — le surcoût est la taille de la réponse, pas la
+ * latence). Le banc réseau V40 mesure l'amélioration réelle de couverture. */
+export const ITUNES_SEARCH_LIMIT = 200;
 
 type ItunesSongResult = {
   wrapperType?: string;

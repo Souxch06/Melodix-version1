@@ -10,6 +10,7 @@ import type { ProgressiveSearchUpdate } from '../progressiveSearch';
 import {
   resetProgressiveSearchEngine,
   searchCatalogProgressive,
+  SOURCE_TIMEOUTS_MS,
 } from '../progressiveSearch';
 import { clearSearchCache, configureSearchCache } from '../searchResultsCache';
 import { resetSourceCircuits } from '../sourceCircuit';
@@ -265,10 +266,12 @@ describe('V37 — moteur progressif : source iTunes', () => {
     searchCatalogProgressive('song', onUpdate);
     await jest.advanceTimersByTimeAsync(400);
 
-    // Pas encore soldé : iTunes est toujours en vol (budget 6 s).
+    // Pas encore soldé : iTunes est toujours en vol (budget réel SOURCE_TIMEOUTS_MS.itunes).
     expect(updates[updates.length - 1].pending).toBe(true);
 
-    await jest.advanceTimersByTimeAsync(6_500);
+    // Dépasser le budget iTunes courant (dérivé de la constante, pas codé en
+    // dur) sans franchir la borne dure globale de la course.
+    await jest.advanceTimersByTimeAsync(SOURCE_TIMEOUTS_MS.itunes);
 
     const final = updates[updates.length - 1];
     expect(final.pending).toBe(false);
