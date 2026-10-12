@@ -91,7 +91,7 @@ module.exports = {
   expo: {
     name: 'Melodix',
     slug: 'melodix',
-    version: '4.5.0-test.35',
+    version: '4.5.0-test.36',
     orientation: 'portrait',
     icon: './assets/images/icon.png',
     scheme: 'melodix',
@@ -116,7 +116,7 @@ module.exports = {
     },
     android: {
       package: 'com.souxch06.melodix',
-      versionCode: 45035,
+      versionCode: 45036,
       intentFilters: extraIntentFilters,
       /**
        * MODE CLAVIER — `resize` est OBLIGATOIRE et désormais explicite.

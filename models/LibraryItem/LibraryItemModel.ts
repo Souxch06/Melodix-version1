@@ -31,4 +31,14 @@ export type LibraryItemModel = {
    * upload clean — un mauvais enregistrement, pas une simple indisponibilité.
    */
   explicit?: boolean | null;
+  /**
+   * V46 — Signal de POPULARITÉ normalisé (0..1), quand la source en publie
+   * un. Audius expose `play_count`/`favorite_count` ; iTunes Search n'expose
+   * aucune popularité ; Spotify expose `popularity` (0..100).
+   *
+   * Utilisé UNIQUEMENT comme critère de DÉPARTAGE à score de correspondance
+   * égal — jamais pour inventer une pertinence. `null`/absent = inconnu :
+   * l'item n'est ni favorisé ni pénalisé (aucun fournisseur privilégié).
+   */
+  popularity?: number | null;
 };

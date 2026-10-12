@@ -100,6 +100,75 @@ export const normalizeForSearch = (value: string): string =>
 export const trackDedupeKey = (item: LibraryItemModel): string =>
   `${normalizeForSearch(item.title)}::${normalizeForSearch(item.subtitle ?? '')}`;
 
+/**
+ * V46 — Normalisation des CRÉDITS DE COLLABORATION, en plus de
+ * `normalizeForSearch`.
+ *
+ * Défaut démontré : un même morceau servi par deux sources avec des crédits
+ * équivalents produisait deux clés distinctes, donc un DOUBLON affiché :
+ *   « Daft Punk feat. Pharrell »  → « daft punk feat pharrell »
+ *   « Daft Punk ft. Pharrell »    → « daft punk ft pharrell »   ≠
+ *   « A & B »                     → « a b »
+ *   « A x B »                     → « a x b »                   ≠
+ *
+ * Replis appliqués (tous bornés par des mots, jamais au milieu d'un mot) :
+ *  - `featuring` / `feat` / `ft` (avec ou sans point) → `feat` ;
+ *  - séparateurs d'artistes `&`, `+`, `and`, `x` isolé entre deux mots → `&`.
+ *
+ * Volontairement EXCLUS (risque de fusionner deux morceaux différents) :
+ * `with` (« Song with a Message »), les chiffres, et tout repli de titre.
+ * Les marqueurs de VERSION (remix, live, instrumental, remaster…) ne sont
+ * JAMAIS touchés : deux versions distinctes doivent rester distinctes.
+ */
+export const normalizeCredits = (value: string): string =>
+  // Les replis sont appliqués AVANT `normalizeForSearch` : cette dernière
+  // supprime `&` et `+` (non alphanumériques), donc les replier après serait
+  // inopérant — défaut constaté à l'écriture des tests (« Nash & Young » et
+  // « Nash and Young » restaient différents).
+  normalizeForSearch(
+    value
+      // « featuring » AVANT « feat » : sinon le préfixe serait replié d'abord.
+      .replace(/\bfeaturing\b\.?/gi, ' feat ')
+      .replace(/\bfeat\b\.?/gi, ' feat ')
+      .replace(/\bft\b\.?/gi, ' feat ')
+      // Séparateurs d'artistes → token canonique MOT (« and »), le seul qui
+      // survive à la suppression de ponctuation de `normalizeForSearch`.
+      .replace(/\s*[&+]\s*/g, ' and ')
+      // « x » isolé ENTRE deux mots uniquement (jamais en début/fin, jamais
+      // au milieu d'un mot : « Xzibit » n'est pas touché).
+      .replace(/(\w)\s+x\s+(\w)/gi, '$1 and $2')
+  )
+    .replace(/\s+/g, ' ')
+    .trim();
+
+/**
+ * V46 — Clé d'identité d'un morceau pour le dédoublonnage inter-sources.
+ *
+ * `normalizeCredits` (et non `normalizeForSearch`) pour le titre ET
+ * l'artiste : c'est ce qui reconnaît les crédits de collaboration
+ * équivalents. Deux morceaux réellement différents restent distincts — la clé
+ * inclut l'artiste, et les marqueurs de version sont préservés.
+ */
+export const trackIdentityKey = (item: LibraryItemModel): string =>
+  `${normalizeCredits(item.title)}::${normalizeCredits(item.subtitle ?? '')}`;
+
+/**
+ * V46 — Clé ISRC : signal d'identité FORT mais FACULTATIF (mission V46).
+ * Normalisé (casse/espaces) car les sources le publient parfois en minuscules
+ * ou espacé. Renvoie `null` quand l'ISRC est absent ou inutilisable : la clé
+ * titre+artiste reste alors le seul arbitre — l'ISRC n'est JAMAIS une
+ * condition obligatoire.
+ */
+export const isrcIdentityKey = (item: LibraryItemModel): string | null => {
+  const raw =
+    typeof item.isrc === 'string' ? item.isrc.trim().toUpperCase() : '';
+  // Un ISRC valide fait 12 caractères alphanumériques ; on refuse toute
+  // valeur plus courte pour ne pas fusionner sur un fragment bruité.
+  return /^[A-Z0-9]{12}$/.test(raw.replace(/[^A-Z0-9]/g, ''))
+    ? raw.replace(/[^A-Z0-9]/g, '')
+    : null;
+};
+
 /** Clé générique (artistes/albums/playlists) : type + titre (+ sous-titre). */
 const itemDedupeKey = (item: LibraryItemModel): string =>
   `${item.type}::${normalizeForSearch(item.title)}::${normalizeForSearch(
@@ -127,6 +196,10 @@ export const dedupeItems = (
   const picked: { item: LibraryItemModel; order: number }[] = [];
   // Clé → source qui l'a déclarée en premier (l'arbitre inter-sources).
   const keyOwners = new Map<string, SearchSourceId>();
+  // V46 — ISRC → source. Signal d'identité FORT mais facultatif : il rattrape
+  // les cas où le titre/l'artiste diffèrent entre sources (« … (feat. X) »
+  // côté Audius, « … (feat X) [Remaster] » côté iTunes).
+  const isrcOwners = new Map<string, SearchSourceId>();
   const seenIds = new Set<string>();
   let order = 0;
 
@@ -137,24 +210,29 @@ export const dedupeItems = (
       }
       seenIds.add(item.id);
 
-      const key =
-        item.type === 'track' ? trackDedupeKey(item) : itemDedupeKey(item);
+      const isTrack = item.type === 'track';
+      const key = isTrack ? trackIdentityKey(item) : itemDedupeKey(item);
+      const isrc = isTrack ? isrcIdentityKey(item) : null;
+
       const owner = keyOwners.get(key);
+      const isrcOwner = isrc === null ? undefined : isrcOwners.get(isrc);
 
-      if (owner === undefined) {
-        keyOwners.set(key, source);
-        picked.push({ item, order: order++ });
+      // Déjà déclaré par une source PLUS prioritaire (par le titre+artiste OU
+      // par l'ISRC) : la copie moins prioritaire est écartée, rien ne bouge
+      // dans la liste affichée.
+      const ownedByOther =
+        (owner !== undefined && owner !== source) ||
+        (isrcOwner !== undefined && isrcOwner !== source);
+
+      if (ownedByOther) {
         continue;
       }
 
-      if (owner === source) {
-        // Variante interne à la même source (explicit/clean, id distinct).
-        picked.push({ item, order: order++ });
-        continue;
+      keyOwners.set(key, source);
+      if (isrc !== null) {
+        isrcOwners.set(isrc, source);
       }
-
-      // Clé déjà déclarée par une source PLUS prioritaire : la copie moins
-      // prioritaire est écartée, rien ne bouge dans la liste affichée.
+      picked.push({ item, order: order++ });
     }
   }
 
@@ -163,13 +241,19 @@ export const dedupeItems = (
 
 /** Score de correspondance d'un item avec la requête (0..3). */
 export const matchScore = (item: LibraryItemModel, query: string): number => {
-  const q = normalizeForSearch(query);
+  const q = normalizeCredits(query);
   if (!q) {
     return 0;
   }
 
-  const title = normalizeForSearch(item.title);
-  const subtitle = normalizeForSearch(item.subtitle ?? '');
+  // V46 — `normalizeCredits` (et plus seulement `normalizeForSearch`) : une
+  // requête « Daft Punk ft Pharrell » retrouve désormais « … feat. Pharrell ».
+  const title = normalizeCredits(item.title);
+  const subtitle = normalizeCredits(item.subtitle ?? '');
+  // V46 — l'ALBUM devient une cible de correspondance : une requête
+  // « Random Access Memories Daft Punk » (album + artiste, titre absent)
+  // passait à 0 alors que le morceau cherché est bien là.
+  const album = normalizeCredits(item.albumName ?? '');
 
   // Correspondance EXACTE titre+artiste : le cas nominal de la mission.
   const words = q.split(' ').filter(Boolean);
@@ -185,10 +269,15 @@ export const matchScore = (item: LibraryItemModel, query: string): number => {
     return 2.5;
   }
 
-  // Chaque mot de la requête trouvé quelque part (titre ou artiste).
+  // Chaque mot de la requête trouvé quelque part (titre, artiste OU album).
   if (
     words.length > 0 &&
-    words.every((word) => title.includes(word) || subtitle.includes(word))
+    words.every(
+      (word) =>
+        title.includes(word) ||
+        subtitle.includes(word) ||
+        (album !== '' && album.includes(word))
+    )
   ) {
     return 2;
   }
@@ -201,18 +290,52 @@ export const matchScore = (item: LibraryItemModel, query: string): number => {
 };
 
 /**
+ * V46 — Popularité normalisée pour le départage. `null` si inconnue : un item
+ * sans popularité n'est JAMAIS pénalisé face à un item qui en a une, et deux
+ * items sans popularité conservent leur ordre d'origine (tri stable).
+ */
+const popularityOf = (item: LibraryItemModel): number | null => {
+  const value = item.popularity;
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return null;
+  }
+  return Math.min(1, Math.max(0, value));
+};
+
+/**
  * Classement STABLE : les paliers de score conservent l'ordre de pertinence
  * d'origine (celui des sources). Une correspondance exacte ne passe jamais
  * APRÈS un résultat approximatif, et un résultat approximatif n'est jamais
  * inventé « exact ».
+ *
+ * V46 — À score ÉGAL uniquement, la popularité connue départage (un titre
+ * écouté 2 M de fois passe avant un upload à 3 écoutes). Ce n'est qu'un
+ * critère de départage : il ne peut JAMAIS faire passer un score inférieur
+ * devant un score supérieur, et n'exprime aucune préférence de fournisseur.
  */
 export const rankItems = (
   items: LibraryItemModel[],
   query: string
 ): LibraryItemModel[] =>
   items
-    .map((item, index) => ({ item, index, score: matchScore(item, query) }))
-    .sort((a, b) => b.score - a.score || a.index - b.index)
+    .map((item, index) => ({
+      item,
+      index,
+      score: matchScore(item, query),
+      popularity: popularityOf(item),
+    }))
+    .sort((a, b) => {
+      if (b.score !== a.score) {
+        return b.score - a.score;
+      }
+      // Départage par popularité seulement si les DEUX sont connues.
+      if (a.popularity !== null && b.popularity !== null) {
+        if (b.popularity !== a.popularity) {
+          return b.popularity - a.popularity;
+        }
+      }
+      return a.index - b.index;
+    })
     .map(({ item }) => item);
 
 /**

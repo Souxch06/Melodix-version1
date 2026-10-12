@@ -114,6 +114,48 @@ export const getAudiusTrendingPlaylists = async (
     }));
 };
 
+/**
+ * V46 — Popularité Audius normalisée dans 0..1.
+ *
+ * Audius publie des compteurs BRUTS (`play_count`, `favorite_count`) dont
+ * l'échelle est ouverte : une échelle logarithmique borne le résultat sans
+ * écraser les petits comptes. Référence documentée : 10 000 000 lectures
+ * (ou 100 000 favoris) = 1.0.
+ *
+ * Limite assumée : cette échelle n'est PAS comparable point à point avec le
+ * `popularity` de Spotify (0..100). Le champ n'est donc utilisé QUE comme
+ * départage à score de correspondance égal — jamais comme critère principal.
+ */
+export const AUDIUS_POPULARITY_PLAY_REFERENCE = 10_000_000;
+export const AUDIUS_POPULARITY_FAVORITE_REFERENCE = 100_000;
+
+const normalizedCount = (
+  value: number | null | undefined,
+  reference: number
+): number | null => {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    return null;
+  }
+  const scaled = Math.log10(value + 1) / Math.log10(reference + 1);
+  return Math.min(1, Math.max(0, scaled));
+};
+
+export const audiusPopularityOf = (track: AudiusTrackMatch): number | null => {
+  const plays = normalizedCount(
+    track.play_count,
+    AUDIUS_POPULARITY_PLAY_REFERENCE
+  );
+  const favorites = normalizedCount(
+    track.favorite_count,
+    AUDIUS_POPULARITY_FAVORITE_REFERENCE
+  );
+
+  if (plays === null && favorites === null) {
+    return null;
+  }
+  return Math.max(plays ?? 0, favorites ?? 0);
+};
+
 /** Morceau Audius brut → carte bibliothèque jouable (type 'track'). */
 export const audiusTrackToLibraryItem = (
   track: AudiusTrackMatch
@@ -125,6 +167,20 @@ export const audiusTrackToLibraryItem = (
   title: track.title ?? '',
   subtitle: track.user?.name ?? '',
   imageURL: artworkUrl(track.artwork),
+  // V46 — métadonnées auparavant JETÉES alors qu'Audius les publie. La
+  // priorité de dédoublonnage place Audius devant iTunes précisément pour
+  // conserver « la copie la plus riche » ; sans durée ni ISRC, la copie
+  // gagnante était en réalité la PLUS PAUVRE, ce qui affaiblissait le
+  // matcher audio et le départage. La durée Audius est en SECONDES.
+  durationMs:
+    typeof track.duration === 'number' && track.duration > 0
+      ? Math.round(track.duration * 1000)
+      : null,
+  isrc:
+    typeof track.isrc === 'string' && track.isrc.trim()
+      ? track.isrc.trim()
+      : null,
+  popularity: audiusPopularityOf(track),
 });
 
 /** Morceau Audius brut → TrackModel du player. */
