@@ -207,6 +207,16 @@ export const LoginScreen = () => {
           body: translations.loginProfileForbiddenBody,
           retryable: true,
         };
+      case 'network-blocked':
+        // V39 — HTTP 403 au corps NON JSON : le refus vient d'une couche
+        // réseau intermédiaire (CDN, filtre opérateur, proxy), pas de
+        // l'API Spotify ni de la configuration développeur. Le message le
+        // dit exactement et propose l'action utile : changer de réseau.
+        return {
+          title: translations.loginNetworkBlockedTitle,
+          body: translations.loginNetworkBlockedBody,
+          retryable: true,
+        };
       case 'not-configured':
         return {
           title: translations.loginNotConfigured,

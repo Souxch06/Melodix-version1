@@ -153,6 +153,20 @@ export type LoginErrorOutcome =
       cause: string;
       diagnostic?: SpotifyOAuthDiagnostic;
     }
+  /**
+   * V39 — HTTP 403 au CORPS NON JSON sur `/v1/me` (page HTML d'un CDN,
+   * filtre parental/opérateur, proxy d'entreprise…) : le refus ne vient PAS
+   * de l'API Spotify elle-même mais d'une COUCHE RÉSEAU INTERMÉDIAIRE
+   * (diagnostic remonté du terrain : 403 non JSON persistant après plusieurs
+   * tentatives). La cause n'est ni la configuration développeur ni la
+   * session : l'écran dédié propose de changer de réseau — JAMAIS de
+   * re-refresh ni de boucle de retry automatiques.
+   */
+  | {
+      kind: 'network-blocked';
+      cause: string;
+      diagnostic?: SpotifyOAuthDiagnostic;
+    }
   | { kind: 'unknown'; cause: string; diagnostic?: SpotifyOAuthDiagnostic };
 
 export type LoginOutcome =

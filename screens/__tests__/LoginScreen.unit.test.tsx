@@ -257,6 +257,25 @@ describe('LoginScreen — parcours humain, connexion FACULTATIVE (V29)', () => {
     expect(hasTextContaining(root, 'client_secret')).toBe(false);
   });
 
+  it('V39 — 403 NON JSON sur /me : diagnostic « couche réseau intermédiaire », jamais la config Spotify', () => {
+    mockAuthState = {
+      status: 'error',
+      outcome: { kind: 'network-blocked', cause: 'me:http·403' },
+    };
+    const root = render(<LoginScreen />);
+    expect(
+      root.getByText('Le réseau bloque la requête vers Spotify.')
+    ).toBeTruthy();
+    // Le corps dit EXACTEMENT la cause (couche intermédiaire) et l'action
+    // utile (changer de réseau) — jamais le message dev-mode/Premium, car ce
+    // 403 n'est PAS un refus de configuration de l'API Spotify.
+    expect(hasTextContaining(root, 'couche intermédiaire')).toBe(true);
+    expect(hasTextContaining(root, 'autre réseau')).toBe(true);
+    expect(hasTextContaining(root, 'Users and Access')).toBe(false);
+    // Réessai manuel autorisé (jamais de boucle automatique) :
+    expect(root.getByTestId(TEST_IDS.RETRY_BUTTON)).toBeTruthy();
+  });
+
   it.each(['network', 'callback-failed', 'unknown', 'not-configured-typo'])(
     'erreur %s → message HUMAIN générique demandé, pas de poussière technique',
     (kind) => {

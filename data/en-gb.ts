@@ -128,6 +128,11 @@ export const EN_GB_LOGIN = {
   loginProfileForbiddenTitle: 'Spotify denied access to this app.',
   loginProfileForbiddenBody:
     'Sign-in itself worked, but Spotify is rejecting this app’s requests (HTTP 403). In development mode, the app requires an active Premium subscription for its owner, and your account must be listed under “Users and Access”. Nothing has been deleted — try again after checking the Spotify developer dashboard.',
+  // V39 — NON-JSON 403 body: an intermediate network layer blocks the
+  // request (CDN, carrier filter, proxy) — not the Spotify API itself.
+  loginNetworkBlockedTitle: 'Your network is blocking the request to Spotify.',
+  loginNetworkBlockedBody:
+    'Sign-in worked, but an intermediate network layer (carrier, filter, proxy) returned an HTTP 403 without a valid Spotify response. This is not an account or configuration problem: try another network (mobile data or a different Wi-Fi), then retry.',
   loginNotConfigured: 'Spotify sign-in is unavailable right now.',
   loginNotConfiguredBody: 'Please try again later.',
   // TEMPORARY DIAGNOSTIC MODE: non-sensitive technical details, hidden by

@@ -486,8 +486,8 @@ jobs:
         env:
           APK: ${{ steps.apk.outputs.name }}
           EXPECTED_PACKAGE: com.souxch06.melodix
-          EXPECTED_VERSION_CODE: '45032'
-          EXPECTED_VERSION_NAME: 4.5.0-test.32
+          EXPECTED_VERSION_CODE: '45033'
+          EXPECTED_VERSION_NAME: 4.5.0-test.33
           EXPECTED_MIN_SDK: '23'
           EXPECTED_TARGET_SDK: '34'
           EXPECTED_SCHEME: melodix

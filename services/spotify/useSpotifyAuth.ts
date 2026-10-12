@@ -490,26 +490,46 @@ export const useSpotifyAuth = (): {
         // re-refresh, AUCUN nouvel échange, aucune reconnexion forcée — la
         // session stockée reste utilisable dès que Spotify autorise le
         // compte. L'écran dédié (LoginScreen) porte le diagnostic lisible.
-        const profileForbidden = kind === 'http' && httpStatus === 403;
+        //
+        // V39 — le 403 se scinde en DEUX causes distinctes selon la FORME
+        // du corps (remontée du terrain : 403 NON JSON persistant = couche
+        // réseau intermédiaire, pas l'API Spotify) :
+        //  - corps non-JSON (HTML/CDN/filtre) → 'network-blocked' : ni la
+        //    configuration développeur ni la session ne sont en cause ;
+        //  - corps JSON ou vide → 'profile-forbidden' (configuration).
+        // Les retentatives edge bornées ont déjà eu lieu dans l'apiClient :
+        // ici AUCUNE boucle supplémentaire, jamais de re-refresh.
+        const forbidden = kind === 'http' && httpStatus === 403;
+        const networkLayerForbidden =
+          forbidden && httpDiagnostics?.bodyShape === 'non-json';
+        const profileForbidden = forbidden && !networkLayerForbidden;
         fail(
           {
             kind:
               kind === 'unauthenticated'
                 ? 'oauth-refused'
-                : profileForbidden
-                  ? 'profile-forbidden'
-                  : kind === 'http'
-                    ? 'unknown'
-                    : 'network',
+                : networkLayerForbidden
+                  ? 'network-blocked'
+                  : profileForbidden
+                    ? 'profile-forbidden'
+                    : kind === 'http'
+                      ? 'unknown'
+                      : 'network',
             cause: safeCause(uiCause),
           },
           buildDiagnostic(
             'profile',
             kind === 'network'
               ? 'Profil /me : Spotify injoignable (réseau)'
-              : profileForbidden
-                ? 'Profil /me : accès refusé par Spotify (HTTP 403) — session enregistrée, API Web indisponible pour ce compte'
-                : `Profil /me en échec (${kind})`,
+              : networkLayerForbidden
+                ? `Profil /me : HTTP 403 au corps non JSON (couche réseau intermédiaire — ${
+                    typeof httpDiagnostics?.attempts === 'number'
+                      ? `${httpDiagnostics.attempts} tentative(s)`
+                      : 'tentatives bornées'
+                  }) — session enregistrée, à retester sur un autre réseau`
+                : profileForbidden
+                  ? 'Profil /me : accès refusé par Spotify (HTTP 403) — session enregistrée, API Web indisponible pour ce compte'
+                  : `Profil /me en échec (${kind})`,
             {
               httpStatus,
               errorCode: kind,

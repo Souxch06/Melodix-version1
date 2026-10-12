@@ -427,6 +427,60 @@ describe('useSpotifyAuth — taxonomie du diagnostic OAuth', () => {
     logSpy.mockRestore();
   });
 
+  it('V39 — /me 403 au corps NON JSON → network-blocked (couche réseau intermédiaire, pas la config Spotify)', async () => {
+    (getCurrentUser as jest.Mock).mockRejectedValueOnce(
+      new SpotifyApiError(
+        'http',
+        'Réponse Spotify non valide (403).',
+        403,
+        '',
+        {
+          bodyShape: 'non-json',
+          contentType: 'text/html',
+          attempts: 3,
+        }
+      )
+    );
+
+    const { result } = renderHook(() => useSpotifyAuth());
+    await act(async () => {
+      await result.current.startLogin();
+    });
+
+    expect(result.current.state.status).toBe('error');
+    if (result.current.state.status === 'error') {
+      expect(result.current.state.outcome.kind).toBe('network-blocked');
+      expect(result.current.state.outcome.cause).toContain('403');
+    }
+    // Diagnostic physique confirmé : plusieurs tentatives déjà bornées côté
+    // client — le login n'en déclenche AUCUNE supplémentaire, et la session
+    // n'est pas purgée (le réseau est en cause, pas l'authentification).
+    expect(redeemAuthorizationCode).toHaveBeenCalledTimes(1);
+    expect(getCurrentUser).toHaveBeenCalledTimes(1);
+  });
+
+  it('V39 — /me 403 au corps VIDE reste profile-forbidden (config, pas réseau)', async () => {
+    (getCurrentUser as jest.Mock).mockRejectedValueOnce(
+      new SpotifyApiError(
+        'http',
+        'Réponse Spotify non valide (403).',
+        403,
+        '',
+        { bodyShape: 'empty', contentType: '', attempts: 2 }
+      )
+    );
+
+    const { result } = renderHook(() => useSpotifyAuth());
+    await act(async () => {
+      await result.current.startLogin();
+    });
+
+    expect(result.current.state.status).toBe('error');
+    if (result.current.state.status === 'error') {
+      expect(result.current.state.outcome.kind).toBe('profile-forbidden');
+    }
+  });
+
   it('session non sauvegardée → unknown (save-failed)', async () => {
     (redeemAuthorizationCode as jest.Mock).mockResolvedValueOnce({
       kind: 'save-failed',

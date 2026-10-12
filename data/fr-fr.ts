@@ -184,6 +184,11 @@ export const FR_FR_LOGIN = {
   loginProfileForbiddenTitle: 'Spotify a refusé l’accès à cette application.',
   loginProfileForbiddenBody:
     'La connexion en elle-même a réussi, mais Spotify rejette les requêtes de cette application (HTTP 403). En mode développement, l’application exige un abonnement Premium actif pour son propriétaire et que ton compte figure dans « Users and Access ». Rien n’a été supprimé — réessaie après vérification dans le tableau de bord développeur Spotify.',
+  // V39 — HTTP 403 au corps NON JSON : une couche réseau intermédiaire
+  // (CDN, filtre opérateur, proxy) bloque la requête — pas l’API Spotify.
+  loginNetworkBlockedTitle: 'Le réseau bloque la requête vers Spotify.',
+  loginNetworkBlockedBody:
+    'La connexion a réussi, mais une couche intermédiaire du réseau (opérateur, filtre, proxy) a renvoyé un refus HTTP 403 sans réponse Spotify valide. Ce n’est ni un problème de compte ni de configuration : essaie sur un autre réseau (données mobiles ou autre Wi-Fi), puis réessaie.',
   loginNotConfigured:
     "La connexion Spotify n'est pas disponible pour le moment.",
   loginNotConfiguredBody: 'Réessaie plus tard.',
