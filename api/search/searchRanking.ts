@@ -27,6 +27,13 @@ export const SEARCH_SOURCE_PRIORITY = [
   'backend',
   'audius',
   'youtube',
+  // V47 — Jamendo : catalogue INDÉPENDANT à flux COMPLET. Placé après les
+  // sources plein-durée déjà établies et AVANT les extraits 30 s : un même
+  // titre déjà servi en version complète par une source plus prioritaire
+  // n'est pas rétrogradé, et un titre absent partout ailleurs entre quand
+  // même. Aucune source n'est artificiellement favorisée au-delà de cet
+  // ordre de priorité historique.
+  'jamendo',
   'itunes',
 ] as const;
 

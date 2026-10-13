@@ -12,6 +12,11 @@ import { getIsOnline } from '../../services/network/networkState';
 import { audiusTrackToLibraryItem, searchAudiusTracks } from '../audius';
 import { backendSearchCatalog } from '../backend';
 import { ITUNES_SEARCH_LIMIT, searchItunesTracks } from '../itunes';
+import {
+  JAMENDO_SEARCH_LIMIT,
+  isJamendoConfigured,
+  searchJamendoTracks,
+} from '../jamendo';
 import { searchSpotifyCatalogQuick } from '../spotify/search';
 import { searchYouTubeTracks } from '../youtube';
 
@@ -107,6 +112,9 @@ export const SOURCE_TIMEOUTS_MS: Record<SearchSourceId, number> = {
   // 8 s absorbent la taille de réponse sur réseau réel (le budget reste
   // sous la borne dure de la course, 9 s).
   itunes: 8_000,
+  // V47 : l'API Jamendo répond depuis l'Europe avec des latences comparables
+  // à iTunes ; 8 s restent sous la borne dure de la course (9 s).
+  jamendo: 8_000,
 };
 
 /** Borne absolue d'une recherche : après cela, tout ce qui pend encore est
@@ -263,6 +271,7 @@ const buildUpdate = (run: Run): ProgressiveSearchUpdate => {
         audius: run.contributions.audius.tracks,
         youtube: run.contributions.youtube.tracks,
         itunes: run.contributions.itunes.tracks,
+        jamendo: run.contributions.jamendo.tracks,
       },
       artists: {
         spotify: run.contributions.spotify.artists,
@@ -270,6 +279,7 @@ const buildUpdate = (run: Run): ProgressiveSearchUpdate => {
         audius: run.contributions.audius.artists,
         youtube: run.contributions.youtube.artists,
         itunes: run.contributions.itunes.artists,
+        jamendo: run.contributions.jamendo.artists,
       },
       albums: {
         spotify: run.contributions.spotify.albums,
@@ -277,6 +287,7 @@ const buildUpdate = (run: Run): ProgressiveSearchUpdate => {
         audius: run.contributions.audius.albums,
         youtube: run.contributions.youtube.albums,
         itunes: run.contributions.itunes.albums,
+        jamendo: run.contributions.jamendo.albums,
       },
       playlists: {
         spotify: run.contributions.spotify.playlists,
@@ -284,6 +295,7 @@ const buildUpdate = (run: Run): ProgressiveSearchUpdate => {
         audius: run.contributions.audius.playlists,
         youtube: run.contributions.youtube.playlists,
         itunes: run.contributions.itunes.playlists,
+        jamendo: run.contributions.jamendo.playlists,
       },
     },
     run.query
@@ -363,6 +375,7 @@ const buildUpdate = (run: Run): ProgressiveSearchUpdate => {
       audius: countContributions(run.contributions.audius),
       youtube: countContributions(run.contributions.youtube),
       itunes: countContributions(run.contributions.itunes),
+      jamendo: countContributions(run.contributions.jamendo),
     };
   }
 
@@ -685,6 +698,53 @@ const itunesSource =
       run.contributions.itunes.tracks = Array.isArray(tracks) ? tracks : [];
     });
 
+/**
+ * V47 — source Jamendo (API officielle v3.0) : catalogue INDÉPENDANT
+ * complémentaire, apportant des titres réellement absents d'Audius, avec un
+ * flux audio COMPLET documenté (pas un extrait 30 s).
+ *
+ * NON CONFIGURÉE → la source est marquée `skipped` avec une contribution VIDE
+ * et n'émet AUCUNE requête : le comportement de la recherche est alors
+ * strictement celui d'avant V47 (ni échec de source, ni disjoncteur, ni
+ * latence, ni quota consommé). C'est l'état par défaut.
+ *
+ * Configurée, mêmes garde-fous que les autres sources sans compte :
+ * disjoncteur propre, budget dédié, annulation réelle, isolement total — une
+ * panne ou un quota Jamendo épuisé ne touche JAMAIS les autres sources.
+ */
+const jamendoSource =
+  (run: Run, nowMs: number): SourceFetcher =>
+  () => {
+    if (!isJamendoConfigured()) {
+      run.contributions.jamendo = emptyContributions();
+      // `skipped` — EXACTEMENT la convention déjà appliquée à Spotify sans
+      // session (cf. plus haut) et au backend non configuré : la source n'est
+      // pas en panne, elle n'est pas armée. Elle ne compte donc ni comme échec,
+      // ni dans les disjoncteurs, n'empêche pas le verdict « toutes les
+      // sources saines écartées » et ne bloque pas le règlement de la course.
+      settleSource(run, 'jamendo', 'skipped');
+      return Promise.resolve();
+    }
+
+    return withGenericCircuit(
+      run,
+      'jamendo',
+      nowMs
+    )(async (controller) => {
+      const tracks = await withSourceTimeout(
+        'jamendo',
+        searchJamendoTracks(run.query, JAMENDO_SEARCH_LIMIT, {
+          signal: controller.signal,
+        }),
+        SOURCE_TIMEOUTS_MS.jamendo,
+        () => controller.abort()
+      );
+
+      // Ceinture : un tableau est la SEULE forme acceptée.
+      run.contributions.jamendo.tracks = Array.isArray(tracks) ? tracks : [];
+    });
+  };
+
 const startRun = (run: Run, nowMs: number): void => {
   // V31 — HORS LIGNE : si l'appareil n'a pas de réseau au lancement, on
   // n'émet AUCUNE requête (ni latence à attendre un timeout, ni disjoncteur
@@ -723,6 +783,7 @@ const startRun = (run: Run, nowMs: number): void => {
   void backendSource(run, nowMs)();
   void youtubeSource(run, nowMs)();
   void itunesSource(run, nowMs)();
+  void jamendoSource(run, nowMs)();
 
   // Ceinture : même si une source ignorait son budget, la recherche solde —
   // et V31 coupe RÉELLEMENT les requêtes encore en vol. V32 : le minuteur
@@ -865,6 +926,7 @@ export const searchCatalogProgressive = (
           audius: emptyContributions(),
           youtube: emptyContributions(),
           itunes: emptyContributions(),
+          jamendo: emptyContributions(),
         },
         states: {
           spotify: 'pending',
@@ -872,6 +934,7 @@ export const searchCatalogProgressive = (
           audius: 'pending',
           youtube: 'pending',
           itunes: 'pending',
+          jamendo: 'pending',
         },
         spotifySessionActive: false,
         lastUpdate: null,

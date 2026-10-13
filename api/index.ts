@@ -98,6 +98,19 @@ export {
   searchItunesTracks,
 } from './itunes';
 
+// API officielle Jamendo v3.0 (source de catalogue V47 — catalogue
+// indépendant à flux audio COMPLET ; lecture directe via le provider
+// `jamendo`. Inactive sans `client_id` : dégradation propre, aucun backend
+// payant obligatoire, aucune clé dans le dépôt ni dans l'UI.)
+export {
+  JAMENDO_SEARCH_LIMIT,
+  JamendoRequestError,
+  getJamendoClientIdInfo,
+  isJamendoConfigured,
+  resolveJamendoStreamUrl,
+  searchJamendoTracks,
+} from './jamendo';
+
 export { SEE_ALL_KINDS, SEE_ALL_SOURCES, isSeeAllKind } from './seeAll';
 export type {
   SeeAllFetchContext,

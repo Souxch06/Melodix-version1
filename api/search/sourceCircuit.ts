@@ -43,6 +43,7 @@ const circuits: Record<GenericCircuitSource, CircuitEntry> = {
   backend: { consecutiveFailures: 0, openUntilMs: 0 },
   youtube: { consecutiveFailures: 0, openUntilMs: 0 },
   itunes: { consecutiveFailures: 0, openUntilMs: 0 },
+  jamendo: { consecutiveFailures: 0, openUntilMs: 0 },
 };
 
 export type SourceErrorVerdict = 'aborted' | 'failure' | 'benign';
@@ -183,6 +184,10 @@ export const getSourceCircuitStates = (
   itunes: {
     failures: circuits.itunes.consecutiveFailures,
     openForMs: Math.max(0, circuits.itunes.openUntilMs - nowMs),
+  },
+  jamendo: {
+    failures: circuits.jamendo.consecutiveFailures,
+    openForMs: Math.max(0, circuits.jamendo.openUntilMs - nowMs),
   },
 });
 

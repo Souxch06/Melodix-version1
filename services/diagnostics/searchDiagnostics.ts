@@ -30,6 +30,7 @@ export type SearchDiagnosticScope =
   | 'youtube'
   | 'backend'
   | 'itunes'
+  | 'jamendo'
   | 'engine';
 
 export type SearchDiagnosticClass =

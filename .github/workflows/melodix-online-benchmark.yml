@@ -63,6 +63,13 @@ jobs:
       # configuré uniquement). Variable absente → backend déclaré « non
       # configuré » et sauté volontairement, sans requête ni erreur.
       MELODIX_BACKEND_URL: ${{ vars.MELODIX_BACKEND_URL }}
+      # V47 — Jamendo (API officielle) : le banc mesure la source SI ET
+      # SEULEMENT SI l'app en reçoit un identifiant, exactement comme pour le
+      # backend. La valeur n'apparaît JAMAIS dans le rapport (seuls l'état
+      # armée/non armée et le nombre de résultats réellement obtenus le sont).
+      # Variable absente → la source n'émet aucune requête et le banc rend 0 :
+      # c'est une mesure réelle « source non armée », jamais une simulation.
+      EXPO_PUBLIC_JAMENDO_CLIENT_ID: ${{ vars.MELODIX_JAMENDO_CLIENT_ID }}
     steps:
       - name: Récupérer le code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

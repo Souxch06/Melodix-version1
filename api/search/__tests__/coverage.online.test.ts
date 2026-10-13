@@ -181,6 +181,163 @@ const CASES: QueryCase[] = [
     query: 'Formidable',
     expectAnyWord: ['formidable'],
   },
+
+  // ── V47 — banc porté de 14 à 34 requêtes (mission : au moins 30
+  //    requêtes variées). Les catégories manquantes sont couvertes ici :
+  //    tubes FR/EN supplémentaires, titres récents, artistes indépendants,
+  //    collaborations, remixes, lives, titres peu connus et écritures
+  //    européennes non décomposables par NFD/NFKD.
+
+  {
+    id: 'fr-hit-2',
+    category: 'tube français (variété)',
+    query: 'Mylène Farmer Désenchantée',
+    expectAnyWord: ['désenchantée', 'farmer'],
+  },
+  {
+    id: 'fr-hit-3',
+    category: 'tube français (rap)',
+    query: 'Orelsan La terre est ronde',
+    expectAnyWord: ['terre', 'orelsan'],
+  },
+  {
+    id: 'fr-hit-4',
+    category: 'tube français (pop récente)',
+    query: 'Angèle Balance ton quoi',
+    expectAnyWord: ['balance', 'angèle'],
+  },
+  {
+    id: 'fr-hit-5',
+    category: 'tube français (pop)',
+    query: 'Clara Luciani La grenade',
+    expectAnyWord: ['grenade', 'luciani'],
+  },
+  {
+    id: 'fr-old-2',
+    category: 'titre français ancien',
+    query: 'Georges Brassens Les Copains',
+    expectAnyWord: ['copains', 'brassens'],
+  },
+  {
+    id: 'fame-en-2',
+    category: 'tube international (patrimoine)',
+    query: 'Michael Jackson Billie Jean',
+    expectAnyWord: ['billie jean', 'jackson'],
+  },
+  {
+    id: 'fame-en-3',
+    category: 'tube international (pop)',
+    query: 'Dua Lipa Levitating',
+    expectAnyWord: ['levitating', 'lipa'],
+  },
+  {
+    id: 'fame-en-4',
+    category: 'tube international (R&B)',
+    query: 'Rihanna Umbrella',
+    expectAnyWord: ['umbrella', 'rihanna'],
+  },
+  {
+    id: 'fame-es',
+    category: 'titre non francophone (ES)',
+    query: 'Rosalía Malamente',
+    expectAnyWord: ['malamente', 'rosalía'],
+  },
+  {
+    id: 'recent-2',
+    category: 'titre récent',
+    query: 'Billie Eilish Birds of a Feather',
+    expectAnyWord: ['birds', 'eilish'],
+  },
+  {
+    id: 'recent-3',
+    category: 'titre récent',
+    query: 'Benson Boone Beautiful Things',
+    expectAnyWord: ['beautiful things', 'boone'],
+  },
+  {
+    id: 'recent-4',
+    category: 'titre récent (rap)',
+    query: 'Kendrick Lamar Not Like Us',
+    expectAnyWord: ['not like us', 'kendrick'],
+  },
+  {
+    id: 'indie-2',
+    category: 'artiste indépendant (folk)',
+    query: 'Elliott Smith Between the Bars',
+    expectAnyWord: ['between the bars', 'smith'],
+  },
+  {
+    id: 'indie-3',
+    category: 'artiste indépendant (électro FR)',
+    query: 'Rone Parade',
+    expectAnyWord: ['parade', 'rone'],
+  },
+  {
+    id: 'obscure',
+    category: 'titre peu connu',
+    query: 'Grouper Heavy Water',
+    expectAnyWord: ['grouper', 'heavy water'],
+  },
+  {
+    id: 'obscure-2',
+    category: 'titre peu connu (jazz)',
+    query: 'Alice Coltrane Journey in Satchidananda',
+    expectAnyWord: ['satchidananda', 'coltrane'],
+  },
+  {
+    id: 'collab-2',
+    category: 'collaboration',
+    query: 'DJ Khaled Rihanna Wild Thoughts',
+    expectAnyWord: ['wild thoughts'],
+  },
+  {
+    id: 'collab-3',
+    category: 'collaboration (duo FR)',
+    query: 'Gims Dadju Jusqu au bout',
+    expectAnyWord: ['bout', 'gims'],
+  },
+  {
+    id: 'remix-2',
+    category: 'remix (version distincte)',
+    query: 'Gotye Somebody That I Used to Know Remix',
+    expectAnyWord: ['used to know'],
+  },
+  {
+    id: 'live-2',
+    category: 'live (version distincte)',
+    query: 'Nirvana About a Girl Unplugged',
+    expectAnyWord: ['about a girl'],
+  },
+  {
+    id: 'instrumental-2',
+    category: 'instrumental (bande originale)',
+    query: 'Hans Zimmer Time Inception',
+    expectAnyWord: ['time', 'zimmer'],
+  },
+  {
+    id: 'unicode-oe',
+    category: 'écriture européenne (œ)',
+    query: 'Cœur de pirate Comme des enfants',
+    expectAnyWord: ['enfants', 'pirate'],
+  },
+  {
+    id: 'unicode-o-slash',
+    category: 'écriture européenne (ø)',
+    query: 'MØ Final Song',
+    expectAnyWord: ['final song'],
+  },
+  {
+    id: 'unicode-icelandic',
+    category: 'écriture européenne (islandais)',
+    query: 'Sigur Rós Svefn-g-englar',
+    expectAnyWord: ['svefn', 'sigur'],
+  },
+  {
+    id: 'unicode-german',
+    category: 'écriture européenne (allemand)',
+    query: 'Rammstein Sehnsucht',
+    expectAnyWord: ['sehnsucht', 'rammstein'],
+  },
 ];
 
 /** Sondes : infrastructure PUBLIQUE, hôtes réels utilisés par l'application.
@@ -645,5 +802,11 @@ export const describeOnlineCoverageSourceIds: readonly SearchSourceId[] = [
   'backend',
   'audius',
   'youtube',
+  // V47 — Jamendo mesurée par le banc en ligne quand un `client_id` est
+  // fourni à l’exécution. Sans identifiant la source n’émet AUCUNE requête :
+  // le banc rend alors 0 pour elle, ce qui reste une mesure RÉELLE
+  // (« source non armée ») et jamais une simulation présentée comme un
+  // résultat réseau.
+  'jamendo',
   'itunes',
 ];

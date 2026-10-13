@@ -309,15 +309,17 @@ export const audiusTrackSource = (id: string): TrackSource => ({
 
 /**
  * Id logique de file d'attente pour un TrackModel.id : `audius:*`,
- * `youtube:*` et `itunes:*` (V37) restent tels quels (fournisseurs NATIFS —
- * flux direct sans matching : la recherche catalogue YouTube alimente le
- * lecteur depuis V30, la recherche iTunes depuis V37), tout le reste est
- * une métadonnée catalogue à matcher (`spotify:`).
+ * `youtube:*`, `itunes:*` (V37) et `jamendo:*` (V47) restent tels quels
+ * (fournisseurs NATIFS — flux direct sans matching : la recherche catalogue
+ * YouTube alimente le lecteur depuis V30, la recherche iTunes depuis V37, la
+ * recherche Jamendo depuis V47), tout le reste est une métadonnée catalogue à
+ * matcher (`spotify:`).
  */
 export const queueIdForTrackId = (trackId: string): string =>
   trackId.startsWith('audius:') ||
   trackId.startsWith('youtube:') ||
-  trackId.startsWith('itunes:')
+  trackId.startsWith('itunes:') ||
+  trackId.startsWith('jamendo:')
     ? trackId
     : `spotify:${trackId}`;
 
@@ -335,6 +337,13 @@ export const itunesTrackSource = (id: string): TrackSource => ({
   id,
 });
 
+/** V47 — piste Jamendo native : lecture DIRECTE du flux COMPLET publié par
+ * l'API officielle Jamendo (jamais de matching, jamais de substitution). */
+export const jamendoTrackSource = (id: string): TrackSource => ({
+  provider: 'jamendo',
+  id,
+});
+
 /** Source de lecture associée (même règle que queueIdForTrackId). */
 export const sourceForTrackId = (trackId: string): TrackSource => {
   if (trackId.startsWith('audius:')) {
@@ -345,6 +354,9 @@ export const sourceForTrackId = (trackId: string): TrackSource => {
   }
   if (trackId.startsWith('itunes:')) {
     return itunesTrackSource(trackId.slice('itunes:'.length));
+  }
+  if (trackId.startsWith('jamendo:')) {
+    return jamendoTrackSource(trackId.slice('jamendo:'.length));
   }
   return spotifyTrackSource(trackId);
 };

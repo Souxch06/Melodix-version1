@@ -1,6 +1,7 @@
 import type { AudioProvider } from './types';
 import { createAudiusAudioProvider } from './audiusAudioProvider';
 import { createItunesAudioProvider } from './itunesAudioProvider';
+import { createJamendoAudioProvider } from './jamendoAudioProvider';
 import { createYouTubeAudioProvider } from './youtubeAudioProvider';
 
 /**
@@ -17,7 +18,11 @@ import { createYouTubeAudioProvider } from './youtubeAudioProvider';
  * V37 — `itunes` est ENREGISTRÉ mais volontairement HORS de la cascade :
  * il ne lit que ses pistes natives `itunes:<trackId>` (extrait 30 s fourni
  * par Apple), jamais en substitution d'une métadonnée sans correspondance.
- * La cascade Audius → YouTube reste strictement inchangée.
+ *
+ * V47 — `jamendo` suit EXACTEMENT la même règle : enregistré, hors cascade,
+ * il ne lit que ses pistes natives `jamendo:<trackId>` (flux COMPLET publié
+ * par l'API officielle Jamendo), jamais en substitution d'une métadonnée sans
+ * correspondance. La cascade Audius → YouTube reste strictement inchangée.
  */
 const ORDER = ['audius', 'youtube'] as const;
 
@@ -25,6 +30,9 @@ const providers: Record<string, AudioProvider> = {
   audius: createAudiusAudioProvider(),
   youtube: createYouTubeAudioProvider(),
   itunes: createItunesAudioProvider(),
+  // V47 — enregistré mais HORS de la cascade `ORDER` ci-dessus : ne lit que
+  // ses pistes natives `jamendo:<trackId>` (flux complet de l'API officielle).
+  jamendo: createJamendoAudioProvider(),
 };
 
 export const DEFAULT_AUDIO_PROVIDER_ID = 'audius';
