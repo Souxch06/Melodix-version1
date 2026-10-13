@@ -287,4 +287,91 @@ consignés en section 9 après exécution de la CI.
 
 ## 9. SHA final, fichiers, workflows et APK
 
-_(complété après l'exécution des workflows)_
+**SHA final** : `e64bb4b` (branche `arena/5ef0ee6a-melodix`, PR #9 **non
+fusionnée**, `main` intacte à `fceab859`).
+
+### Fichiers modifiés
+
+| Fichier                                                  | Nature                                                                                        |
+| -------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `api/jamendo/searchTracks.ts`                            | capture de `shareurl` + `license_ccurl`, cache d'attribution borné, `getJamendoAttribution()` |
+| `api/jamendo/index.ts`                                   | export de `getJamendoAttribution` et du type `JamendoAttribution`                             |
+| `api/jamendo/__tests__/jamendoSearchTracks.unit.test.ts` | **+10 tests** (attribution, conformité cache, identité non-Spotify)                           |
+| `.github/workflows/android-apk.yml`                      | étape « Diagnostic source Jamendo (V49) »                                                     |
+| `RAPPORT-MISSION-V49-ACTIVATION-JAMENDO.md`              | ce rapport                                                                                    |
+
+### Workflows
+
+| Workflow            | Exécution     | Résultat                                           |
+| ------------------- | ------------- | -------------------------------------------------- |
+| Banc réseau Melodix | `38358028926` | **success** — `real-measures`, 39/39 cas soldés    |
+| APK Android         | `38358033907` | **success** — 25 étapes, dont la nouvelle étape 23 |
+
+### Oracle d'armement vérifié en conditions réelles
+
+La nouvelle étape **« Diagnostic source Jamendo (V49) »** (étape 23 du job) a été
+**exécutée et a réussi**. Annotation réellement produite par la CI :
+
+```
+[notice] source NON ARMÉE (aucun identifiant) — attendu et sans effet :
+         l'APK fonctionne normalement, la recherche ignore Jamendo sans émettre
+         de requête
+```
+
+Le niveau est bien **`notice`** et non `error` : l'asymétrie voulue est confirmée
+en conditions réelles — l'absence d'identifiant ne casse pas le build, tandis
+qu'un identifiant présent mais non inliné l'arrêterait.
+
+### Mesures réseau réelles (exécution `38358028926`, commit `e64bb4b`)
+
+```
+Statut : real-measures
+Cas : 39 exécutés · 39 soldés · 39 avec résultats · 39 pertinents
+Résultats par source : {"spotify":0,"backend":0,"audius":271,"youtube":476,"itunes":4328,"jamendo":0}
+Erreurs par source   : {}
+Premier résultat : n=39 · médiane=17 ms · p90=104 ms
+Durée totale     : n=39 · médiane=467 ms · p90=617 ms
+```
+
+Après les modifications V49, Jamendo non armée contribue toujours **0** résultat
+avec **0** erreur : aucune régression sur Audius, YouTube ou iTunes.
+
+### APK
+
+- **Lien exact : <https://github.com/Souxch06/Melodix/actions/runs/38358033907/artifacts/11794655271>**
+- Nom : `Melodix-v4.5.0-test.37-e64bb4b.apk` · taille **47 104 938 octets**
+- `versionCode='45037'` · `versionName='4.5.0-test.37'`
+- **SHA-256 : `8b8634a03163d924db23c478c76863aa8039586844f5aefcd0a882456a5f2e70`**
+
+L'empreinte diffère de celle de V48 (`0779f2c1…`), ce qui confirme que le code
+embarqué a bien changé.
+
+**Aucune écoute sur appareil physique n'a été réalisée.** Le build réussi et les
+tests automatisés ne valident **pas** la lecture audio réelle.
+
+---
+
+## 10. Séparation exigée des trois niveaux de preuve
+
+**1. Prouvé par des tests automatisés** (déterministes, sans réseau) : la forme
+des requêtes, la cartographie, le filtrage des pistes non lisibles, toutes les
+classes d'erreur (401/403/429/4xx/5xx/JSON invalide/quota en en-tête), les
+délais, l'annulation, le disjoncteur, la déduplication sans perte de variantes,
+l'isolement des pannes, l'identité non-Spotify des résultats, la capture
+d'attribution, la conformité du cache (aucun octet audio), et le câblage des deux
+canaux de configuration.
+
+**2. Mesuré sur le réseau réel** (banc CI, `real-measures`) : 39/39 recherches
+soldées ; Jamendo non armée → **0** résultat, **0** erreur, aucune latence
+ajoutée ; Audius 271, YouTube 476, iTunes 4 328 résultats ; latences médianes
+17 ms (premier résultat) et 467 ms (total). Et, côté build, la preuve que
+l'oracle d'armement s'exécute et classe correctement l'état « non armée ».
+
+**3. Impossible à valider ici** : le gain de catalogue Jamendo (aucun identifiant
+valide, `api.jamendo.com` injoignable depuis le sandbox) ; la lecture audio
+physique (aucun téléphone) ; la conformité d'attribution en conditions réelles
+(l'affichage du crédit et du lien retour reste à implémenter) ; la licéité de
+l'identifiant embarqué au regard de la clause 2 (réponse de Jamendo requise).
+
+**Le catalogue ne s'est pas enrichi.** Aucun résultat Jamendo réel et exploitable
+n'a été mesuré, et ce rapport ne l'affirme à aucun moment.
