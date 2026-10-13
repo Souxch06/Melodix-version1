@@ -41,6 +41,7 @@ import {
   spotifyLog,
 } from './devLog';
 import { SpotifyApiError } from './apiClient';
+import type { SpotifyApiHttpDiagnostics } from './apiClient';
 import { recordSpotifyDiagnosticEvent } from './diagnosticHistory';
 import {
   clearPendingOAuthTransaction,
@@ -98,6 +99,62 @@ const cleanDiagnosticField = (
   if (isSensitiveDiagnosticValue(text)) {
     return '<redacted>';
   }
+  return text.length > 120 ? `${text.slice(0, 117)}…` : text;
+};
+
+/**
+ * V58 — Preuve DISCRIMINANTE d'un 403 sur `/v1/me`, rendue VISIBLE à l'écran.
+ *
+ * Le contexte : la documentation officielle Spotify (« Quota modes ») établit
+ * qu'en mode Development un utilisateur absent de la liste « Users and Access »
+ * PEUT terminer le login puis recevoir un **403** sur les appels API. Ce 403
+ * officiel arrive avec un corps **JSON** (`{"error":{"status":403,...}}`).
+ * Un 403 au corps **non JSON** n'est donc PAS cette cause documentée — mais
+ * cela ne prouve pas non plus qu'un intermédiaire en est responsable : un
+ * corps non JSON est un INDICE, pas une preuve.
+ *
+ * Or `apiClient.ts` collecte déjà les seules métadonnées capables de trancher
+ * (en-têtes allowlistés, Content-Type, forme du corps, nombre de tentatives).
+ * Elles étaient **jetées** ici : `buildDiagnostic` ne recevait que statut,
+ * code et message Spotify — ce dernier étant vide pour un corps non JSON. Le
+ * téléphone affichait donc une INTERPRÉTATION sans la moindre preuve, et le
+ * mainteneur ne pouvait pas distinguer les causes.
+ *
+ * Sécurité : les valeurs proviennent de `RESPONSE_HEADER_ALLOWLIST`
+ * (Authorization, cookies et en-têtes porteurs en sont EXCLUS) et ont déjà été
+ * sanitisées par `sanitizeErrorDescription` ; `cleanDiagnosticField` repasse
+ * derrière. La chaîne est volontairement courte : `description` est tronquée
+ * à 120 caractères à l'affichage.
+ */
+const describeForbiddenEvidence = (
+  diagnostics: SpotifyApiHttpDiagnostics | undefined
+): string | null => {
+  if (!diagnostics) {
+    return null;
+  }
+  const headers = diagnostics.headers ?? {};
+  const parts: string[] = [`corps=${diagnostics.bodyShape}`];
+  if (diagnostics.contentType) {
+    parts.push(`ct=${diagnostics.contentType}`);
+  }
+  // Ordre choisi par pouvoir discriminant : `server`/`via` identifient QUI
+  // répond (edge Spotify vs intermédiaire), `www-authenticate` indique si la
+  // réponse vient d'une couche qui négocie une authentification.
+  for (const name of [
+    'server',
+    'via',
+    'www-authenticate',
+    'x-cache',
+  ] as const) {
+    const value = headers[name];
+    if (value) {
+      parts.push(`${name}=${value}`);
+    }
+  }
+  if (typeof diagnostics.attempts === 'number') {
+    parts.push(`essais=${diagnostics.attempts}`);
+  }
+  const text = parts.join(' · ');
   return text.length > 120 ? `${text.slice(0, 117)}…` : text;
 };
 
@@ -522,18 +579,26 @@ export const useSpotifyAuth = (): {
             kind === 'network'
               ? 'Profil /me : Spotify injoignable (réseau)'
               : networkLayerForbidden
-                ? `Profil /me : HTTP 403 au corps non JSON (couche réseau intermédiaire — ${
-                    typeof httpDiagnostics?.attempts === 'number'
-                      ? `${httpDiagnostics.attempts} tentative(s)`
-                      : 'tentatives bornées'
-                  }) — session enregistrée, à retester sur un autre réseau`
+                ? // V58 — le libellé précédent AFFIRMAIT « couche réseau
+                  // intermédiaire ». Un corps non JSON est un INDICE, pas une
+                  // preuve : la cause réelle doit être lue dans la preuve
+                  // ci-dessous (Content-Type + en-têtes allowlistés).
+                  'Profil /me : HTTP 403 au corps NON JSON — cause non établie, voir la preuve (en-têtes) ci-dessous'
                 : profileForbidden
                   ? 'Profil /me : accès refusé par Spotify (HTTP 403) — session enregistrée, API Web indisponible pour ce compte'
                   : `Profil /me en échec (${kind})`,
             {
               httpStatus,
               errorCode: kind,
-              description: spotifyMessage || null,
+              // V58 — pour un 403, le message Spotify est vide dès que le
+              // corps n'est pas JSON : on affichait donc `null` et toute la
+              // preuve discriminante collectée par l'apiClient était perdue.
+              // Le message Spotify reste prioritaire quand il existe (il est
+              // la cause documentée, ex. utilisateur non autorisé en mode
+              // Development) ; sinon on affiche la preuve brute sanitisée.
+              description: forbidden
+                ? spotifyMessage || describeForbiddenEvidence(httpDiagnostics)
+                : spotifyMessage || null,
             }
           )
         );

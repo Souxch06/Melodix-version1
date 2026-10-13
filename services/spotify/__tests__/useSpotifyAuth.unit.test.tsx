@@ -459,6 +459,151 @@ describe('useSpotifyAuth — taxonomie du diagnostic OAuth', () => {
     expect(getCurrentUser).toHaveBeenCalledTimes(1);
   });
 
+  /**
+   * V58 — le 403 sur `/me` ne peut PAS être tranché sans preuve.
+   *
+   * La documentation officielle Spotify (« Quota modes ») établit qu'en mode
+   * Development un utilisateur absent de la liste « Users and Access » peut
+   * terminer le login puis recevoir un 403 sur les appels API — avec un corps
+   * JSON. Un 403 au corps non JSON n'est donc pas cette cause, mais cela ne
+   * prouve pas non plus qu'un intermédiaire en soit responsable.
+   *
+   * Ces tests verrouillent que la PREUVE discriminante (Content-Type +
+   * en-têtes allowlistés déjà sanitisés par l'apiClient) remonte jusqu'au
+   * diagnostic visible, au lieu d'être jetée.
+   */
+  describe('V58 — preuve discriminante du 403 sur /me', () => {
+    it('403 NON JSON : les en-têtes allowlistés remontent dans le diagnostic visible', async () => {
+      (getCurrentUser as jest.Mock).mockRejectedValueOnce(
+        new SpotifyApiError(
+          'http',
+          'Réponse Spotify non valide (403).',
+          403,
+          '',
+          {
+            bodyShape: 'non-json',
+            contentType: 'text/html; charset=utf-8',
+            headers: {
+              server: 'envoy',
+              via: 'HTTP/2 edgeproxy+1.1 google',
+              'content-type': 'text/html; charset=utf-8',
+            },
+            attempts: 3,
+          }
+        )
+      );
+
+      const { result } = renderHook(() => useSpotifyAuth());
+      await act(async () => {
+        await result.current.startLogin();
+      });
+
+      expect(result.current.state.status).toBe('error');
+      if (result.current.state.status !== 'error') return;
+      const diag = result.current.state.outcome.diagnostic;
+      expect(diag).not.toBeNull();
+      // LA régression : avant V58, `description` était `null` sur ce cas —
+      // toute la preuve collectée par l'apiClient était perdue.
+      expect(diag?.description).not.toBeNull();
+      expect(diag?.description).toContain('corps=non-json');
+      expect(diag?.description).toContain('ct=text/html');
+      expect(diag?.description).toContain('server=envoy');
+      expect(diag?.description).toContain('via=HTTP/2 edgeproxy');
+      expect(diag?.description).toContain('essais=3');
+      // La borne d'affichage (120 caractères) est respectée.
+      expect((diag?.description ?? '').length).toBeLessThanOrEqual(120);
+    });
+
+    it('403 NON JSON : le message N’AFFIRME plus une cause non prouvée', async () => {
+      (getCurrentUser as jest.Mock).mockRejectedValueOnce(
+        new SpotifyApiError(
+          'http',
+          'Réponse Spotify non valide (403).',
+          403,
+          '',
+          {
+            bodyShape: 'non-json',
+            contentType: 'text/html',
+            attempts: 2,
+          }
+        )
+      );
+
+      const { result } = renderHook(() => useSpotifyAuth());
+      await act(async () => {
+        await result.current.startLogin();
+      });
+
+      if (result.current.state.status !== 'error') return;
+      const message = result.current.state.outcome.diagnostic?.message ?? '';
+      // Avant V58 le message affirmait « couche réseau intermédiaire » :
+      // c'était une INTERPRÉTATION présentée comme un fait.
+      expect(message).not.toContain('couche réseau intermédiaire');
+      expect(message).toContain('cause non établie');
+      // La classification, elle, est inchangée.
+      expect(result.current.state.outcome.kind).toBe('network-blocked');
+    });
+
+    it('403 JSON avec message Spotify : la cause DOCUMENTÉE prime sur la preuve brute', async () => {
+      // Cas réel documenté par Spotify : utilisateur non ajouté à la liste
+      // « Users and Access » d'une app en mode Development → 403 JSON.
+      (getCurrentUser as jest.Mock).mockRejectedValueOnce(
+        new SpotifyApiError(
+          'http',
+          'Réponse Spotify non valide (403).',
+          403,
+          'User not registered in the allowlisted users list',
+          {
+            bodyShape: 'json',
+            contentType: 'application/json',
+            headers: { server: 'envoy' },
+            attempts: 1,
+          }
+        )
+      );
+
+      const { result } = renderHook(() => useSpotifyAuth());
+      await act(async () => {
+        await result.current.startLogin();
+      });
+
+      if (result.current.state.status !== 'error') return;
+      const diag = result.current.state.outcome.diagnostic;
+      // Le message Spotify EST la cause : il ne doit pas être écrasé par les
+      // en-têtes.
+      expect(diag?.description).toContain('User not registered');
+      expect(diag?.description).not.toContain('corps=json');
+      // Un 403 au corps JSON reste une cause de CONFIGURATION.
+      expect(result.current.state.outcome.kind).toBe('profile-forbidden');
+      // Et ne déclenche AUCUNE boucle de renouvellement.
+      expect(redeemAuthorizationCode).toHaveBeenCalledTimes(1);
+      expect(getCurrentUser).toHaveBeenCalledTimes(1);
+    });
+
+    it('403 sans aucun diagnostic HTTP : description null, jamais « undefined »', async () => {
+      (getCurrentUser as jest.Mock).mockRejectedValueOnce(
+        new SpotifyApiError(
+          'http',
+          'Réponse Spotify non valide (403).',
+          403,
+          ''
+        )
+      );
+
+      const { result } = renderHook(() => useSpotifyAuth());
+      await act(async () => {
+        await result.current.startLogin();
+      });
+
+      if (result.current.state.status !== 'error') return;
+      const diag = result.current.state.outcome.diagnostic;
+      expect(diag?.description).toBeNull();
+      expect(JSON.stringify(diag)).not.toContain('undefined');
+      // Pas de diagnostic HTTP → pas de forme de corps → voie configuration.
+      expect(result.current.state.outcome.kind).toBe('profile-forbidden');
+    });
+  });
+
   it('V39 — /me 403 au corps VIDE reste profile-forbidden (config, pas réseau)', async () => {
     (getCurrentUser as jest.Mock).mockRejectedValueOnce(
       new SpotifyApiError(
