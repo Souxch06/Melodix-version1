@@ -177,7 +177,10 @@ export type OnlineBenchmarkReport = {
   /** Rappel EXPLICITE de ce que chaque niveau vaut — ou ne vaut pas. */
   levels: {
     httpResponseReceived: 'mesuré (sondes)';
-    searchResultsReceived: 'mesuré (14 cas)';
+    // V47 — type LITTÉRAL paramétré : le nombre de cas est DÉRIVÉ du jeu
+    // réellement exécuté, jamais figé. Un banc étendu ne peut plus produire un
+    // libellé de preuve désynchronisé du nombre de cas mesurés.
+    searchResultsReceived: `mesuré (${number} cas)`;
     relevantResults: 'mesuré (mots attendus par cas)';
     audioStreamAvailable: 'mesuré (échantillon borné par cas)';
     playbackStarted: 'NON MESURÉ (aucun moteur audio sous Node)';
@@ -376,7 +379,7 @@ export const buildOnlineBenchmarkReport = (
     },
     levels: {
       httpResponseReceived: 'mesuré (sondes)',
-      searchResultsReceived: 'mesuré (14 cas)',
+      searchResultsReceived: `mesuré (${input.cases.length} cas)`,
       relevantResults: 'mesuré (mots attendus par cas)',
       audioStreamAvailable: 'mesuré (échantillon borné par cas)',
       playbackStarted: 'NON MESURÉ (aucun moteur audio sous Node)',

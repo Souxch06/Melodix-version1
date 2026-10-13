@@ -21,7 +21,8 @@
  *     403 d'un service n'est JAMAIS présenté comme une panne d'Internet.
  *     Chaque sonde est chronométrée et classée (http/timeout/erreur réseau),
  *     sans message brut.
- *  2. Les 14 cas du jeu fixe sont TOUS exécutés (aucun court-circuit).
+ *  2. TOUS les cas du jeu fixe sont exécutés (aucun court-circuit). V47 : le
+ *     jeu est porté de 14 à 39 requêtes variées (mission : au moins 30).
  *     Pour chaque cas : résultats RÉELS par source (avant fusion),
  *     pertinence, ids jouables, délai du premier résultat, durée totale,
  *     sources en échec/disjonctées.
@@ -182,7 +183,7 @@ const CASES: QueryCase[] = [
     expectAnyWord: ['formidable'],
   },
 
-  // ── V47 — banc porté de 14 à 34 requêtes (mission : au moins 30
+  // ── V47 — banc porté de 14 à 39 requêtes (mission : au moins 30
   //    requêtes variées). Les catégories manquantes sont couvertes ici :
   //    tubes FR/EN supplémentaires, titres récents, artistes indépendants,
   //    collaborations, remixes, lives, titres peu connus et écritures

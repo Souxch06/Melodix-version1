@@ -173,8 +173,55 @@ obtenus le sont.
 | **Tests simulés** (`fetch` et `expo-constants` remplacés) | suites Jest de ce commit                  | contrat de requête, cartographie, filtrage « jouable », erreurs, quota, annulation, isolement |
 | **Mesures réseau réelles**                                | workflow `melodix-online-benchmark` en CI | gains de couverture, latences, taux d'erreur — **uniquement** une fois un `client_id` fourni  |
 
-Aucune simulation n'est présentée ici comme une mesure réseau, et **aucun chiffre
-de couverture réelle n'est avancé**, faute de mesure.
+Aucune simulation n'est présentée ici comme une mesure réseau.
+
+### 4.1 Mesures réseau RÉELLES obtenues (exécution `38343267559`, commit `144ed67`)
+
+Le banc étendu a été exécuté sur le réseau réel en CI. Statut rendu par le banc :
+**`real-measures`**, réseau confirmé, **39/39 cas soldés**.
+
+| Mesure                             | Valeur réelle                                                                      |
+| ---------------------------------- | ---------------------------------------------------------------------------------- |
+| Cas exécutés / soldés / pertinents | **39 / 39 / 39**                                                                   |
+| Résultats totaux                   | **5 090** (ids jouables : 5 090)                                                   |
+| Par source                         | `spotify 0 · backend 0 · audius 271 · youtube 508 · itunes 4323 ·` **`jamendo 0`** |
+| Erreurs par source                 | **`{}`** (aucune)                                                                  |
+| Flux vérifiés                      | 97 contrôlés · 56 disponibles · 41 indisponibles                                   |
+| Premier résultat                   | n=39 · médiane **426 ms** · p90 **530 ms**                                         |
+| Durée totale                       | n=39 · médiane **721 ms** · p90 **2 213 ms**                                       |
+| Sondes                             | audius 200/244 ms · youtube 200/195 ms · itunes 200/201 ms · spotify 401/117 ms    |
+| Diagnostic YouTube                 | `no-streaming-data` ×39 · `ERROR` ×39 · formats audio 0                            |
+
+**Ce que cette mesure établit réellement — et ce qu'elle n'établit pas.**
+
+- Elle **établit** la dégradation propre sur réseau réel : Jamendo, non armée, a
+  contribué **0** résultat et produit **0** erreur sur les 39 cas. Aucune panne
+  masquée, aucune latence ajoutée (médiane de premier résultat 426 ms, cohérente
+  avec le banc V40 antérieur), aucun quota consommé. L'exigence « comportement
+  inchangé quand la source n'est pas configurée » est donc vérifiée par mesure
+  réseau, et plus seulement par simulation.
+- Elle **établit** aussi que les 39 requêtes sont toutes soldées et pertinentes,
+  y compris les écritures européennes (`œ`, `ø`, islandais, allemand) : le pliage
+  V44 tient sur réseau réel.
+- Elle **n'établit pas** le gain de couverture de Jamendo. `jamendo=0` est un
+  **saut** (variable `vars.MELODIX_JAMENDO_CLIENT_ID` absente du dépôt), pas un
+  résultat de recherche. **Aucun chiffre de gain n'est donc avancé.**
+- Le `401` Spotify est une réponse HTTP reçue (connectivité OK) avec un refus
+  **fonctionnel** du service : il confirme que le blocage Spotify reste externe et
+  non résolu, sans lien avec cette mission.
+- YouTube reste sans flux exploitable **depuis le runner** (`no-streaming-data`
+  ×39). C'est une contrainte du runner GitHub, pas la preuve d'un échec sur
+  téléphone — distinction déjà établie et maintenue.
+
+### 4.2 Régression corrigée au passage
+
+Le rapport du banc affichait `searchResultsReceived : mesuré (14 cas)` alors que
+39 cas étaient exécutés : ce libellé de **preuve** était figé dans
+`api/search/coverageReport.ts`. Un rapport de mesures réelles annonçait donc une
+portée fausse. Le libellé est désormais **dérivé** de `input.cases.length`, avec un
+type littéral paramétré et trois tests de verrouillage. Vérification : en
+réintroduisant le libellé figé, **3 tests échouent** ; avec le correctif,
+**15/15 passent**.
 
 ---
 
@@ -185,7 +232,8 @@ de couverture réelle n'est avancé**, faute de mesure.
 | `api/jamendo/__tests__/jamendoSearchTracks.unit.test.ts`        | 33     |
 | `services/audio/__tests__/jamendoAudioProvider.unit.test.ts`    | 10     |
 | `api/search/__tests__/progressiveSearchJamendoV47.unit.test.ts` | 14     |
-| **Total ajouté**                                                | **57** |
+| `api/search/__tests__/coverageReport.unit.test.ts` (verrou V47) | +3     |
+| **Total ajouté**                                                | **60** |
 
 Couverture : configuration/désarmement, forme de la requête (contrat documenté,
 plafond `limit` 200), honnêteté découverte/lecture (exclusion sans `audio`,

@@ -330,3 +330,44 @@ describe('renderOnlineBenchmarkText', () => {
     expect(text).not.toContain('watch?v=');
   });
 });
+
+/**
+ * V47 — régression VERROUILLÉE : le libellé de preuve
+ * `searchResultsReceived` était FIGÉ à « mesuré (14 cas) ». Quand le banc est
+ * passé de 14 à 39 requêtes, le rapport de MESURES RÉELLES publié en CI a donc
+ * affirmé « 14 cas » pour 39 cas exécutés — une désynchronisation entre la
+ * preuve annoncée et la mesure réelle. Le libellé est désormais DÉRIVÉ du
+ * nombre de cas réellement passés, et ce test l'empêche de se figer à nouveau.
+ */
+describe('V47 — niveau de preuve dérivé du nombre de cas réels', () => {
+  const reportWith = (count: number) =>
+    buildOnlineBenchmarkReport({
+      nodeVersion: 'v20.0.0',
+      fetchSource: 'undici',
+      status: 'real-measures',
+      reasons: ['mesures réelles'],
+      networkReachable: true,
+      probes: [probe()],
+      backendConfigured: false,
+      cases: Array.from({ length: count }, (_unused, index) =>
+        kase({ id: `case-${index}` })
+      ),
+    });
+
+  it('annonce 39 cas quand 39 cas sont mesurés (plus jamais « 14 » figé)', () => {
+    expect(reportWith(39).levels.searchResultsReceived).toBe('mesuré (39 cas)');
+  });
+
+  it('suit le jeu de cas quel que soit son nombre', () => {
+    expect(reportWith(14).levels.searchResultsReceived).toBe('mesuré (14 cas)');
+    expect(reportWith(1).levels.searchResultsReceived).toBe('mesuré (1 cas)');
+    expect(reportWith(60).levels.searchResultsReceived).toBe('mesuré (60 cas)');
+  });
+
+  it('reste cohérent avec le total de cas rendu dans le texte', () => {
+    const text = renderOnlineBenchmarkText(reportWith(39));
+
+    expect(text).toContain('searchResultsReceived : mesuré (39 cas)');
+    expect(text).toContain('Cas : 39 exécutés');
+  });
+});
