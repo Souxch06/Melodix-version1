@@ -211,4 +211,45 @@ cohérent avec le décompte ci-dessus.
 
 ## 8. SHA final, workflows et APK
 
-_(complété après l'exécution des workflows)_
+**SHA final** : `84db87b` (branche `arena/5ef0ee6a-melodix`, PR #9 non fusionnée).
+
+### Workflows
+
+| Workflow            | Exécution     | Résultat                                        |
+| ------------------- | ------------- | ----------------------------------------------- |
+| Banc réseau Melodix | `38349825570` | **success** — `real-measures`, 39/39 cas soldés |
+| APK Android         | `38349829156` | **success**                                     |
+
+### Mesures réseau réelles après correctifs (exécution `38349825570`)
+
+```
+Statut : real-measures
+Cas : 39 exécutés · 39 soldés · 39 avec résultats · 39 pertinents
+Résultats par source : {"spotify":0,"backend":0,"audius":271,"youtube":502,"itunes":4329,"jamendo":0}
+Erreurs par source   : {}
+Premier résultat : n=39 · médiane=37 ms · p90=77 ms
+Durée totale     : n=39 · médiane=471 ms · p90=578 ms
+searchResultsReceived : mesuré (39 cas)
+```
+
+Ce que cela vérifie sur réseau réel après les trois correctifs : Jamendo non
+armée contribue **0** résultat avec **0** erreur, la recherche reste soldée et
+servie par les autres sources, et aucune latence n'est ajoutée. `jamendo=0`
+demeure un **saut**, pas un résultat de recherche.
+
+### APK
+
+- **Lien exact : <https://github.com/Souxch06/Melodix/actions/runs/38349829156/artifacts/11790229776>**
+- Nom : `Melodix-v4.5.0-test.37-84db87b.apk` · taille **47 104 907 octets**
+- `versionCode='45037'` · `versionName='4.5.0-test.37'`
+- sha256 : `0779f2c1c1233158b7530cbb6013f0fa5023bc75b471ee6e69735235019ff180`
+- `package='com.souxch06.melodix'`, schéma `melodix://` présent, ABI
+  `arm64-v8a / armeabi-v7a / x86 / x86_64`, `targetSdk 34`
+
+**Vérification par empreinte.** Les builds V47 (`f799b82`, commits docs)
+produisaient tous le sha256 `15eb970f…`. Celui de V48 vaut `0779f2c1…`, donc
+**différent** : la variation confirme que les trois correctifs ont bien modifié
+le code réellement embarqué dans l'APK, et non seulement la documentation.
+
+**Aucune écoute sur appareil physique n'a été réalisée.** Les tests automatisés
+et le build réussi ne valident **pas** la lecture audio réelle.
