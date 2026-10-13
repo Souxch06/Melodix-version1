@@ -364,6 +364,16 @@ correctif passe dès la relance, sans aucune modification du code entre les deux
 Cette empreinte diffère de celle de la V50 (`1075cc60…`) : les octets livrés ont
 changé, ce qui est cohérent avec le correctif JS de `2e414d9`.
 
+**Pointe de branche `d97f7c6`** (mise à jour du présent rapport, commit de
+documentation seul) — runs [`38385742085`](https://github.com/Souxch06/Melodix/actions/runs/38385742085)
+(banc) et [`38385744973`](https://github.com/Souxch06/Melodix/actions/runs/38385744973)
+(APK), **tous deux `success`**. Artefact `11807437480` —
+`Melodix-v4.5.0-test.37-d97f7c6.apk`, **sha256 `dc1a9c0c6fd6f1bbe9a9281020a7304f568d212be2c26427e210e8d83e0d59d1`
+— IDENTIQUE à celui de `1cd46a5`**. C'est le comportement attendu et déjà observé
+en V48 : un commit qui ne modifie que la documentation ne change pas les octets
+livrés dans le bundle. L'APK de la pointe de branche est donc fonctionnellement
+celui du correctif.
+
 **Rappel indispensable :** cet APK est compilé, signé, installé et lancé sur un
 émulateur Android 14. **Cela ne prouve ni un son audible, ni une notification
 visible, ni les commandes sur écran verrouillé d'un téléphone réel.**
