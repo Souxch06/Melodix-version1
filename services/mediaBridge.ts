@@ -195,8 +195,36 @@ export const handleAudioBecomingNoisy = (): void => {
 
   appendDiagLog(`AUDIO_BECOMING_NOISY status=${status}`);
 
-  if (status === 'playing') {
-    void melodixPlayer.togglePlayPause();
+  // V51 — DEUX défauts corrigés ici, tous deux reproduits par
+  // `__tests__/mediaBridgeNoisyAudio.unit.test.ts` :
+  //
+  //  1. La garde ne couvrait QUE `playing`. Or Android émet
+  //     ACTION_AUDIO_BECOMING_NOISY dès que la sortie bascule vers le
+  //     haut-parleur, y compris PENDANT la mise en place : en `buffering`
+  //     (Sound créé, pas encore en lecture) comme en `resolving`/`loading`
+  //     (flux pas encore obtenu), le son partait ensuite dans le
+  //     haut-parleur — exactement le comportement que ce gestionnaire existe
+  //     pour empêcher. Les états traités sont donc désormais LES MÊMES que
+  //     ceux de la commande système PAUSE (voir `handleMediaCommand`).
+  //
+  //  2. La commande était un TOGGLE (`togglePlayPause()` sans argument), dont
+  //     la direction dépend de l'état interne transient
+  //     (`transportIntent ?? lastNativePlaying ?? status`). Un toggle peut
+  //     donc calculer « play » et RELANCER la lecture au moment précis où il
+  //     faut la couper. `pause()` est à direction FORCÉE et idempotente :
+  //     elle ne peut jamais reprendre la lecture.
+  //
+  // Une lecture déjà en pause, terminée (`ended`) ou sans piste n'est pas
+  // modifiée : `pause()` s'en garde elle-même, et aucune relance n'est
+  // possible. Le moteur reste la seule source de vérité — le natif notifie,
+  // il ne décide rien.
+  if (
+    status === 'playing' ||
+    status === 'buffering' ||
+    status === 'loading' ||
+    status === 'resolving'
+  ) {
+    void melodixPlayer.pause();
   }
 };
 
