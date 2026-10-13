@@ -33,10 +33,11 @@ export { getJamendoClientIdInfo, isJamendoConfigured } from './config';
 export type { JamendoClientIdInfo, JamendoClientIdSource } from './config';
 export {
   JAMENDO_SEARCH_LIMIT,
+  getJamendoAttribution,
   jamendoResultToMatch,
   jamendoTrackToLibraryItem,
   resetJamendoStreamCache,
   resolveJamendoStreamUrl,
   searchJamendoTracks,
 } from './searchTracks';
-export type { JamendoTrackMatch } from './searchTracks';
+export type { JamendoAttribution, JamendoTrackMatch } from './searchTracks';

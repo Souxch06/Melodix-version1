@@ -649,6 +649,52 @@ jobs:
           # Android 14 réel (émulateur) — pas un login Spotify.
           echo "::notice title=SPOTIFY-DIAG 7/7 limite CI::PHYSICAL SPOTIFY LOGIN NOT TESTABLE IN CI — le login Spotify réel exige un appareil + un compte ; le scénario B du smoke prouve le wiring cold-start AVEC transaction persistée, pas un login"
 
+      - name: Diagnostic source Jamendo (V49)
+        # V49 — Oracle build-level pour la source Jamendo.
+        #
+        # POURQUOI cette étape : en V48, un défaut faisait que l'APK livré ne
+        # pouvait JAMAIS être armé (aucune variable transmise au build). Le
+        # correctif a câblé les deux canaux, mais RIEN ne prouvait au build que
+        # l'identifiant atteignait effectivement le bundle. Sans cet oracle, un
+        # dépôt correctement configuré pouvait encore livrer une source
+        # silencieusement inactive — exactement la classe de panne que V48 a
+        # corrigée.
+        #
+        # CONFIDENTIALITÉ : la VALEUR n'est jamais affichée, ni ici ni dans les
+        # annotations — uniquement l'état armée/non armée et la présence dans le
+        # bundle. Le `client_id` Jamendo est un identifiant PUBLIC par
+        # conception (l'API l'exige en clair dans la querystring de chaque
+        # requête GET) : il est intégré au bundle de l'application et n'est donc
+        # PAS un secret confidentiel. Aucun secret n'est embarqué ici.
+        #
+        # ASYMÉTRIE VOLONTAIRE avec Spotify : l'ABSENCE d'identifiant est une
+        # NOTICE, jamais une erreur. Jamendo est une source OPTIONNELLE — sans
+        # elle l'APK compile et l'application fonctionne exactement comme avant
+        # V47. À l'inverse, un identifiant PRÉSENT mais NON inliné est une
+        # ERREUR : ce serait un build silencieusement incohérent.
+        env:
+          APK: ${{ steps.apk.outputs.name }}
+        run: |
+          BUNDLE='assets/index.android.bundle'
+          if [ -n "${EXPO_PUBLIC_JAMENDO_CLIENT_ID:-}" ]; then
+            if unzip -p "$APK" "$BUNDLE" 2>/dev/null | grep -aqF "$EXPO_PUBLIC_JAMENDO_CLIENT_ID"; then
+              echo "::notice title=JAMENDO-DIAG::source ARMÉE — identifiant public présent en env ET inliné dans le bundle (valeur non affichée)"
+            else
+              echo "::error title=JAMENDO-DIAG::identifiant PRÉSENT en env mais ABSENT du bundle — inlining Metro inopérant, la source Jamendo resterait inactive dans l'APK malgré la configuration du dépôt"
+              exit 1
+            fi
+            # Second canal (asset natif app.config) : vérifié sans exposer la
+            # valeur. Une divergence entre les deux canaux produirait un
+            # comportement différent selon le chemin de lecture.
+            if unzip -p "$APK" "$BUNDLE" 2>/dev/null | grep -aqF 'jamendoClientId'; then
+              echo "::notice title=JAMENDO-DIAG::clé extra.jamendoClientId présente dans le bundle (canal asset natif)"
+            else
+              echo "::notice title=JAMENDO-DIAG::clé extra.jamendoClientId absente du bundle — seul le canal d'inlining Metro alimente la source"
+            fi
+          else
+            echo "::notice title=JAMENDO-DIAG::source NON ARMÉE (aucun identifiant) — attendu et sans effet : l'APK fonctionne normalement, la recherche ignore Jamendo sans émettre de requête"
+          fi
+
       - name: Publier l'APK comme artefact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:

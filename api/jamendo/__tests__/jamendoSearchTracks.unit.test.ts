@@ -1,5 +1,8 @@
+import { queueIdForTrackId, sourceForTrackId } from '../../../services/player';
+
 import {
   JAMENDO_SEARCH_LIMIT,
+  getJamendoAttribution,
   jamendoResultToMatch,
   jamendoTrackToLibraryItem,
   resetJamendoStreamCache,
@@ -519,5 +522,190 @@ describe('V47 — Jamendo : résolution du flux pour la lecture', () => {
     await expect(resolveJamendoStreamUrl('399')).resolves.toBe(
       'https://mp3d.example/399.mp3'
     );
+  });
+});
+
+/**
+ * V49 — Conditions d'utilisation de l'API Jamendo (lues sur
+ * https://devportal.jamendo.com/api_terms_of_use).
+ *
+ * La clause 4.1 impose : créditer les membres Jamendo comme créateurs,
+ * créditer Jamendo comme fournisseur du contenu, ET fournir un lien direct
+ * depuis chaque contenu vers sa page sur la plateforme Jamendo. Les deux
+ * champs nécessaires (`shareurl`, `license_ccurl`) sont renvoyés PAR DÉFAUT
+ * par l'API — l'adaptateur les conservait auparavant sans les exploiter.
+ *
+ * La clause 3.3 interdit par ailleurs de concevoir l'application pour mettre
+ * en cache le CONTENU ou offrir un accès hors ligne ; la mise en cache n'est
+ * permise que « dans la mesure raisonnablement nécessaire au fonctionnement ».
+ */
+describe('V49 — attribution exigée par la clause 4.1', () => {
+  it('conserve le lien vers la page Jamendo et la licence Creative Commons', async () => {
+    setFetch(
+      jest.fn(async () =>
+        jsonResponse([
+          trackResult({
+            id: '1848357',
+            shareurl: 'https://www.jamendo.com/track/1848357',
+            license_ccurl: 'http://creativecommons.org/licenses/by-nc-nd/3.0/',
+          }),
+        ])
+      )
+    );
+
+    await searchJamendoTracks('x');
+
+    expect(getJamendoAttribution('1848357')).toEqual({
+      trackId: '1848357',
+      artistName: 'Some Independent Artist',
+      shareUrl: 'https://www.jamendo.com/track/1848357',
+      licenseUrl: 'http://creativecommons.org/licenses/by-nc-nd/3.0/',
+    });
+  });
+
+  it('N’INVENTE JAMAIS une URL de page à partir de l’identifiant', async () => {
+    setFetch(
+      jest.fn(async () =>
+        jsonResponse([
+          trackResult({
+            id: '777',
+            shareurl: '',
+            license_ccurl: undefined,
+          }),
+        ])
+      )
+    );
+
+    await searchJamendoTracks('x');
+
+    // Champ absent → null explicite, jamais une URL fabriquée.
+    expect(getJamendoAttribution('777')).toEqual({
+      trackId: '777',
+      artistName: 'Some Independent Artist',
+      shareUrl: null,
+      licenseUrl: null,
+    });
+  });
+
+  it('renvoie null pour une piste inconnue (pas d’attribution fabriquée)', () => {
+    expect(getJamendoAttribution('inconnue')).toBeNull();
+  });
+
+  it('borne le cache d’attribution (pas de croissance illimitée)', async () => {
+    const many = Array.from({ length: 400 }, (_, index) =>
+      trackResult({
+        id: String(index),
+        shareurl: `https://www.jamendo.com/track/${index}`,
+      })
+    );
+    setFetch(jest.fn(async () => jsonResponse(many)));
+
+    await searchJamendoTracks('x', 200);
+
+    expect(getJamendoAttribution('399')?.shareUrl).toBe(
+      'https://www.jamendo.com/track/399'
+    );
+  });
+});
+
+describe('V49 — conformité du cache à la clause 3.3 (aucun contenu mis en cache)', () => {
+  it('ne conserve que des URL et des métadonnées, JAMAIS d’octets audio', async () => {
+    setFetch(jest.fn(async () => jsonResponse([trackResult()])));
+
+    const items = await searchJamendoTracks('x');
+
+    // Les objets conservés sont sérialisables et ne contiennent aucun buffer.
+    const serialized = JSON.stringify({
+      items,
+      attribution: getJamendoAttribution('480531'),
+    });
+
+    expect(serialized).not.toContain('Buffer');
+    expect(serialized).not.toContain('base64');
+    // Aucun octet audio : l'item publié ne porte AUCUNE URL de flux (elle vit
+    // dans le cache privé du module et n'est résolue qu'à la lecture).
+    expect(serialized).not.toContain('mp3d.example');
+    expect(items[0]).not.toHaveProperty('audioUrl');
+    expect(items[0]).not.toHaveProperty('audio');
+  });
+
+  it('ne conserve JAMAIS l’URL de téléchargement (choix de l’artiste respecté)', async () => {
+    setFetch(
+      jest.fn(async () =>
+        jsonResponse([
+          trackResult({
+            audiodownload: 'https://mp3d.example/480531-download.mp3',
+            audiodownload_allowed: false,
+            shareurl: 'https://www.jamendo.com/track/480531',
+          }),
+        ])
+      )
+    );
+
+    await searchJamendoTracks('x');
+
+    const serialized = JSON.stringify(getJamendoAttribution('480531'));
+
+    expect(serialized).not.toContain('480531-download');
+    expect(serialized).not.toContain('audiodownload');
+  });
+
+  it('le cache est vidé par la réinitialisation (aucune persistance)', async () => {
+    setFetch(jest.fn(async () => jsonResponse([trackResult()])));
+
+    await searchJamendoTracks('x');
+    expect(getJamendoAttribution('480531')).not.toBeNull();
+
+    resetJamendoStreamCache();
+
+    expect(getJamendoAttribution('480531')).toBeNull();
+  });
+});
+
+/**
+ * V49 — Identité des résultats : une piste Jamendo doit rester identifiable
+ * comme telle et ne doit JAMAIS être présentée ni lue comme un morceau
+ * Spotify (une métadonnée Spotify est matchée à la lecture, `provider: null`).
+ */
+describe('V49 — les résultats Jamendo ne sont jamais des morceaux Spotify', () => {
+  it('chaque item porte le préfixe natif `jamendo:`', async () => {
+    setFetch(
+      jest.fn(async () =>
+        jsonResponse([
+          trackResult({ id: '1' }),
+          trackResult({ id: '2' }),
+          trackResult({ id: '3' }),
+        ])
+      )
+    );
+
+    const items = await searchJamendoTracks('x');
+
+    expect(items.length).toBeGreaterThan(0);
+    for (const item of items) {
+      expect(item.id.startsWith('jamendo:')).toBe(true);
+      expect(item.type).toBe('track');
+    }
+  });
+
+  it('un item Jamendo est routé vers le provider jamendo, JAMAIS vers spotify', async () => {
+    setFetch(
+      jest.fn(async () => jsonResponse([trackResult({ id: '480531' })]))
+    );
+
+    const items = await searchJamendoTracks('x');
+    const id = items[0].id;
+
+    // Id de file inchangé (pas de préfixe `spotify:` ajouté).
+    expect(queueIdForTrackId(id)).toBe('jamendo:480531');
+    // Source de lecture = jamendo, et non une métadonnée à matcher.
+    expect(sourceForTrackId(id)).toEqual({ provider: 'jamendo', id: '480531' });
+    expect(sourceForTrackId(id).provider).not.toBeNull();
+  });
+
+  it('une métadonnée Spotify reste distincte (provider null, à matcher)', () => {
+    // Contre-épreuve : le routage Spotify n'est pas affecté par Jamendo.
+    expect(sourceForTrackId('4v8mB')).toEqual({ provider: null, id: '4v8mB' });
+    expect(queueIdForTrackId('4v8mB')).toBe('spotify:4v8mB');
   });
 });

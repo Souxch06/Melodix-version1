@@ -38,6 +38,10 @@ type JamendoTrackResult = {
   audio?: string;
   duration?: number | string;
   license_ccurl?: string;
+  /** V49 — page du morceau sur la plateforme Jamendo (documenté, renvoyé par
+   * défaut : `https://www.jamendo.com/track/<id>`). Exigée par la clause 4.1
+   * des conditions d'utilisation de l'API (lien direct depuis chaque contenu). */
+  shareurl?: string;
 };
 
 type JamendoSearchResponse = {
@@ -54,6 +58,34 @@ export type JamendoTrackMatch = {
   /** URL du flux COMPLET (champ `audio` documenté de l'API). */
   audioUrl: string;
   durationMs: number | null;
+  /**
+   * V49 — données d'ATTRIBUTION exigées par la clause 4.1 des conditions
+   * d'utilisation de l'API Jamendo : lien direct vers la page du contenu sur la
+   * plateforme, et licence Creative Commons sous laquelle l'artiste a publié le
+   * morceau (les deux champs sont renvoyés PAR DÉFAUT par l'API).
+   */
+  shareUrl: string | null;
+  licenseUrl: string | null;
+};
+
+/**
+ * V49 — Attribution d'une piste Jamendo, telle qu'exigée par la clause 4.1 des
+ * conditions d'utilisation de l'API :
+ * - créditer les membres Jamendo comme créateurs (déjà fait : `artistName`) ;
+ * - créditer Jamendo comme fournisseur du contenu ;
+ * - fournir un lien direct depuis chaque contenu vers sa page sur la
+ *   plateforme Jamendo.
+ *
+ * Ces données sont conservées ici (et non dans `LibraryItemModel`, partagé par
+ * toutes les sources) pour ne pas élargir le modèle commun.
+ */
+export type JamendoAttribution = {
+  trackId: string;
+  artistName: string;
+  /** Lien direct vers la page du contenu sur la plateforme Jamendo. */
+  shareUrl: string | null;
+  /** Licence Creative Commons du contenu. */
+  licenseUrl: string | null;
 };
 
 /**
@@ -79,9 +111,46 @@ const rememberStreamUrl = (trackId: string, audioUrl: string): void => {
   }
 };
 
-/** Visible des tests : réinitialise le cache de flux. */
+/**
+ * V49 — Cache d'attribution, BORNÉ et non persistant, sur la même discipline
+ * que le cache de flux. Il ne contient QUE des métadonnées d'attribution
+ * (identifiant, artiste, lien de page, licence) : jamais d'octets audio.
+ *
+ * Rappel des conditions d'utilisation de l'API (clause 3.3) : une application
+ * ne doit « pas être conçue spécifiquement pour mettre en cache le contenu ni
+ * offrir un accès hors ligne » ; la mise en cache n'est permise « que dans la
+ * mesure raisonnablement nécessaire au fonctionnement ». Un cache d'URL borné
+ * à 300 entrées, non persistant, relève de cette exception — ce n'est ni du
+ * contenu, ni de l'accès hors ligne.
+ */
+const ATTRIBUTION_CACHE_MAX_ENTRIES = 300;
+const attributionCache = new Map<string, JamendoAttribution>();
+
+const rememberAttribution = (attribution: JamendoAttribution): void => {
+  attributionCache.set(attribution.trackId, attribution);
+  while (attributionCache.size > ATTRIBUTION_CACHE_MAX_ENTRIES) {
+    const oldest = attributionCache.keys().next();
+    if (oldest.done === true) {
+      break;
+    }
+    attributionCache.delete(oldest.value);
+  }
+};
+
+/**
+ * V49 — Attribution d'une piste Jamendo vue à la recherche, ou `null` si elle
+ * n'est pas connue (redémarrage, cache évincé). L'UI doit l'utiliser pour
+ * créditer l'artiste, créditer Jamendo comme fournisseur et proposer le lien
+ * vers la page du contenu — obligation de la clause 4.1.
+ */
+export const getJamendoAttribution = (
+  trackId: string
+): JamendoAttribution | null => attributionCache.get(trackId.trim()) ?? null;
+
+/** Visible des tests : réinitialise les caches de flux et d'attribution. */
 export const resetJamendoStreamCache = (): void => {
   streamUrlCache.clear();
+  attributionCache.clear();
 };
 
 const hasPlayableIdentity = (
@@ -146,6 +215,16 @@ export const jamendoResultToMatch = (
       '',
     audioUrl: (result.audio as string).trim(),
     durationMs: durationMsOf(result.duration),
+    // V49 — attribution (clause 4.1). `null` quand l'API ne publie pas le
+    // champ : on ne fabrique JAMAIS une URL de page à partir de l'identifiant.
+    shareUrl:
+      typeof result.shareurl === 'string' && result.shareurl.trim()
+        ? result.shareurl.trim()
+        : null,
+    licenseUrl:
+      typeof result.license_ccurl === 'string' && result.license_ccurl.trim()
+        ? result.license_ccurl.trim()
+        : null,
   };
 };
 
@@ -215,6 +294,15 @@ export const searchJamendoTracks = async (
 
     seen.add(match.trackId);
     rememberStreamUrl(match.trackId, match.audioUrl);
+    // V49 — l'attribution est conservée dès la recherche pour que l'UI puisse
+    // créditer l'artiste, créditer Jamendo et proposer le lien vers la page du
+    // contenu (obligation de la clause 4.1).
+    rememberAttribution({
+      trackId: match.trackId,
+      artistName: match.artistName,
+      shareUrl: match.shareUrl,
+      licenseUrl: match.licenseUrl,
+    });
     items.push(jamendoTrackToLibraryItem(match));
   }
 
