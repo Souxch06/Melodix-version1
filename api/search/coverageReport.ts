@@ -387,14 +387,42 @@ export const buildOnlineBenchmarkReport = (
   };
 };
 
+/**
+ * Qualifie un statut >= 400 reçu par une SONDE DE CONNECTIVITÉ.
+ *
+ * V57 — une sonde est, par construction, **NON AUTHENTIFIÉE** (aucun en-tête
+ * `Authorization`, aucun paramètre de requête). Le libellé unique
+ * « refus FONCTIONNEL du service » appliqué à tout 4xx était FAUX pour le
+ * 401 : sur un endpoint qui exige un jeton (ex. `/v1/search`), un 401 est la
+ * réponse **normale et documentée** à une requête sans jeton. Le présenter
+ * comme un refus fonctionnel laissait croire que l'authentification de
+ * l'application était cassée, alors que la sonde ne transporte justement
+ * aucune authentification. Cette confusion a été relevée en mission V55.
+ *
+ * Invariant CONSERVÉ : toute réponse HTTP (y compris 4xx/5xx) prouve la
+ * connectivité. Ce qui change est uniquement l'interprétation fonctionnelle,
+ * qui ne doit JAMAIS être déduite d'une sonde non authentifiée.
+ */
+const describeProbeHttpStatus = (httpStatus: number): string => {
+  if (httpStatus < 400) {
+    return '';
+  }
+  if (httpStatus === 401) {
+    return ' (réponse reçue = connectivité OK ; 401 ATTENDU pour une sonde NON authentifiée — le service exige un jeton : AUCUNE conclusion sur l’authentification de l’application)';
+  }
+  if (httpStatus === 403) {
+    return ' (réponse reçue = connectivité OK ; refus d’accès — edge/CDN ou configuration, pas une panne d’Internet)';
+  }
+  if (httpStatus >= 500) {
+    return ' (réponse reçue = connectivité OK ; erreur SERVEUR du service)';
+  }
+  return ' (réponse reçue = connectivité OK ; refus FONCTIONNEL du service)';
+};
+
 /** Classe d'erreur lisible pour une sonde (jamais un message brut). */
 export const describeProbeClass = (probe: OnlineProbeReport): string => {
   if (probe.cls === 'http' && typeof probe.httpStatus === 'number') {
-    return `HTTP ${probe.httpStatus}${
-      probe.httpStatus >= 400
-        ? ' (réponse reçue = connectivité OK ; refus FONCTIONNEL du service)'
-        : ''
-    }`;
+    return `HTTP ${probe.httpStatus}${describeProbeHttpStatus(probe.httpStatus)}`;
   }
   return probe.cls === 'timeout' ? 'timeout' : 'erreur réseau';
 };

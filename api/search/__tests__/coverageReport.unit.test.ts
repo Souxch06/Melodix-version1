@@ -6,6 +6,7 @@
  */
 import {
   buildOnlineBenchmarkReport,
+  describeProbeClass,
   latencyStatsOf,
   medianOf,
   percentileOf,
@@ -230,6 +231,82 @@ describe('V34 — agrégat des diagnostics YouTube', () => {
   });
 });
 
+/**
+ * V57 — RÉGRESSION : une sonde de connectivité est NON AUTHENTIFIÉE.
+ *
+ * Le défaut corrigé : `describeProbeClass` qualifiait TOUT statut >= 400 de
+ * « refus FONCTIONNEL du service ». Sur `GET https://api.spotify.com/v1/search`
+ * sans en-tête `Authorization` ni paramètre `q`, le 401 est la réponse
+ * NORMALE et documentée d'un endpoint qui exige un jeton — le qualifier de
+ * refus fonctionnel laissait croire que l'authentification de l'application
+ * était cassée (confusion relevée en mission V55).
+ *
+ * Invariant conservé dans tous les cas : une réponse HTTP prouve la
+ * connectivité. Ce qui est corrigé, c'est l'interprétation FONCTIONNELLE,
+ * qu'aucune sonde non authentifiée ne peut établir.
+ */
+describe('describeProbeClass — interprétation d’une sonde NON authentifiée (V57)', () => {
+  it('401 : réponse ATTENDUE d’une sonde sans jeton — jamais un refus fonctionnel', () => {
+    const label = describeProbeClass(
+      probe({ service: 'spotify', httpStatus: 401 })
+    );
+
+    expect(label).toBe(
+      'HTTP 401 (réponse reçue = connectivité OK ; 401 ATTENDU pour une sonde NON authentifiée — le service exige un jeton : AUCUNE conclusion sur l’authentification de l’application)'
+    );
+    // LE cœur de la régression : plus aucune assimilation à un refus.
+    expect(label).not.toContain('refus FONCTIONNEL');
+    // La conclusion de connectivité, elle, est conservée.
+    expect(label).toContain('connectivité OK');
+  });
+
+  it('403 : refus d’accès (edge/CDN ou configuration) — distinct du 401', () => {
+    const label = describeProbeClass(
+      probe({ service: 'spotify', httpStatus: 403 })
+    );
+
+    expect(label).toContain('HTTP 403');
+    expect(label).toContain('refus d’accès');
+    expect(label).toContain('connectivité OK');
+    expect(label).not.toContain('sonde NON authentifiée');
+  });
+
+  it('5xx : erreur SERVEUR du service — pas un refus fonctionnel', () => {
+    expect(describeProbeClass(probe({ httpStatus: 503 }))).toContain(
+      'erreur SERVEUR'
+    );
+    expect(describeProbeClass(probe({ httpStatus: 500 }))).not.toContain(
+      'refus FONCTIONNEL'
+    );
+  });
+
+  it('autre 4xx : le libellé « refus FONCTIONNEL » reste valable', () => {
+    const label = describeProbeClass(probe({ httpStatus: 400 }));
+
+    expect(label).toBe(
+      'HTTP 400 (réponse reçue = connectivité OK ; refus FONCTIONNEL du service)'
+    );
+  });
+
+  it('2xx : aucun qualificatif — la connectivité suffit', () => {
+    expect(describeProbeClass(probe({ httpStatus: 200 }))).toBe('HTTP 200');
+    expect(describeProbeClass(probe({ httpStatus: 204 }))).toBe('HTTP 204');
+  });
+
+  it('sans réponse HTTP : timeout et erreur réseau restent distingués', () => {
+    expect(
+      describeProbeClass(
+        probe({ cls: 'timeout', httpStatus: undefined, reachable: false })
+      )
+    ).toBe('timeout');
+    expect(
+      describeProbeClass(
+        probe({ cls: 'network-error', httpStatus: undefined, reachable: false })
+      )
+    ).toBe('erreur réseau');
+  });
+});
+
 describe('renderOnlineBenchmarkText', () => {
   it('confidentialité : ni requête, ni URL, ni jeton', () => {
     const report = buildOnlineBenchmarkReport({
@@ -252,9 +329,12 @@ describe('renderOnlineBenchmarkText', () => {
     expect(text).not.toContain('Daft Punk One More Time');
     expect(text).not.toContain('https://');
     expect(text).not.toContain('token');
-    // Un refus 401/403 est une réponse reçue — pas une panne d'Internet.
+    // Un 401 reçu par une sonde est une réponse reçue — pas une panne
+    // d'Internet. V57 : ce N'EST PAS non plus un « refus FONCTIONNEL » : la
+    // sonde n'envoie aucun jeton, un 401 y est la réponse attendue.
     expect(text).toContain('HTTP 401');
-    expect(text).toContain('refus FONCTIONNEL');
+    expect(text).toContain('sonde NON authentifiée');
+    expect(text).not.toContain('refus FONCTIONNEL');
     expect(text).toContain('NON MESURÉ');
   });
 
