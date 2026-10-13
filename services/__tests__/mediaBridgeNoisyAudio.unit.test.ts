@@ -12,7 +12,11 @@
  */
 import type { AudioProvider } from '../audio/types';
 import { __testSetAudioProviders } from '../audio';
-import { handleAudioBecomingNoisy, initMediaBridge } from '../mediaBridge';
+import {
+  handleAudioBecomingNoisy,
+  initMediaBridge,
+  setMediaBridgeEnabled,
+} from '../mediaBridge';
 import { melodixPlayer } from '../player';
 import type { PlayerTrack } from '../player';
 
@@ -230,5 +234,54 @@ describe('V51 — casque débranché : le moteur met en PAUSE, jamais en lecture
     await flush();
 
     expect(melodixPlayer.getState().status).toBe('ended');
+  });
+});
+
+describe('V52 — la pause au débranchement ne dépend PAS du réglage MediaSession', () => {
+  /**
+   * Propriété de sécurité : `bridgeEnabled` (réglage « MediaSession /
+   * notification ») ne pilote que la PROJECTION vers le natif. Le signal
+   * `ACTION_AUDIO_BECOMING_NOISY` est abonné inconditionnellement dans
+   * `initMediaBridge` : couper la sortie audio doit mettre en pause même
+   * quand l'utilisateur a désactivé la notification — sinon le morceau
+   * repart dans le haut-parleur sans aucun moyen système de l'arrêter.
+   *
+   * Aucun test ne verrouillait cette propriété avant celui-ci.
+   */
+  it('réglage DÉSACTIVÉ → la pause s’applique quand même, sans projection native', async () => {
+    setMediaBridgeEnabled(false);
+
+    await melodixPlayer.playQueue([morceau('a', 'Photo')], 0);
+    await flush();
+    expect(melodixPlayer.getState().status).toBe('playing');
+
+    mockUpdateSession.mockClear();
+    handleAudioBecomingNoisy();
+    await flush();
+
+    // 1. La lecture est bien coupée.
+    expect(melodixPlayer.getState().status).toBe('paused');
+    // 2. Et RIEN n'est projeté vers le natif (réglage désactivé respecté).
+    expect(mockUpdateSession).not.toHaveBeenCalled();
+  });
+
+  it('réglage ACTIVÉ → la pause s’applique ET la projection est relayée', async () => {
+    setMediaBridgeEnabled(true);
+
+    await melodixPlayer.playQueue([morceau('a', 'Photo')], 0);
+    await flush();
+    expect(melodixPlayer.getState().status).toBe('playing');
+
+    handleAudioBecomingNoisy();
+    await flush();
+
+    expect(melodixPlayer.getState().status).toBe('paused');
+    // La projection relaie l'état pausé vers la MediaSession/notification.
+    const lastCall = mockUpdateSession.mock.calls.at(-1)?.[0] as
+      | { isPlaying?: boolean }
+      | undefined;
+    expect(lastCall?.isPlaying).toBe(false);
+
+    setMediaBridgeEnabled(false);
   });
 });
