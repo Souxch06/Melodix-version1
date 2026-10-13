@@ -1,5 +1,42 @@
 # Rapport de mission V52 — Audit final de la PR #9 et plan de validation Android
 
+> ## ⚠️ ERRATUM V53 — la conclusion de fusion de ce rapport est FAUSSE
+>
+> **Ajouté à la mission V53. Ce bloc fait foi ; les §0, §2 et §5.2 ci-dessous sont
+> retirés.**
+>
+> Ce rapport affirmait que la branche et `main` n'avaient **aucun ancêtre commun**,
+> que la fusion produisait **175 conflits add/add**, et que le drapeau GitHub
+> `MERGEABLE/CLEAN` était trompeur. **Ces trois affirmations sont fausses.**
+>
+> **Cause :** l'environnement de travail est un **clone shallow** (`--depth 1`).
+> `git rev-parse --is-shallow-repository` répond `true` et `.git/shallow` contenait
+> exactement les deux commits pris à tort pour des racines (`4cd7553c`, `fceab859`).
+> Un commit listé dans `.git/shallow` voit ses parents masqués : il n'est pas une
+> racine, c'est une **borne de troncature**.
+>
+> **Faits réels, vérifiés sur l'historique complet et auprès de l'API GitHub :**
+>
+> - `fceab859` a le parent `4b61b601` ; `4cd7553c` est un vrai commit de fusion à
+>   **2 parents** (`e30461ac`, `7c858ddc`) ;
+> - `main` compte **174 commits** (et non 1), la branche **414** (et non 73) ;
+> - la base de fusion réelle est **`fceab859`, c'est-à-dire `main` lui-même** ;
+>   `main` est entièrement contenu dans la branche (0 commit absent) ;
+> - une **seule racine réelle partagée** : `d5aae015` ;
+> - `git merge-tree origin/main HEAD` → **rc=0, 0 conflit** ; c'est un
+>   **fast-forward pur** ;
+> - GitHub et git local concordent exactement : 240 commits, 418 fichiers,
+>   +80 690 / −3 638, `mergeable=true`, `mergeable_state=clean`.
+>
+> **Le drapeau GitHub `MERGEABLE/CLEAN` était correct.** Aucun blocage structurel
+> n'existe et **aucune réparation d'historique n'est nécessaire**.
+>
+> **Ce qui reste valable** dans ce rapport : l'état vert du code, la nécessité de
+> garder la PR ouverte, les blocages **contractuel** (Jamendo) et **physique**
+> (téléphone), et le protocole de test §6.
+>
+> Détails, commandes et comparaison des stratégies : `RAPPORT-MISSION-V53-DIAGNOSTIC-HISTORIQUE-GIT.md`.
+
 **Branche :** `arena/5ef0ee6a-melodix`
 **HEAD audité :** `5c7061a636a89c4a1ef983b33775b3350e515a45`
 **`main` :** `fceab85950b069edcb65ed718a8ffd419a1bc785` — **non modifié**
