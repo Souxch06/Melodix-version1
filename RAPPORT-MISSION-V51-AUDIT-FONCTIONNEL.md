@@ -331,28 +331,59 @@ rapporté à la section 6.
 
 ---
 
-## 6. Relance par push — commit de rapport
+## 6. Relance par push — résultat vérifié
 
-Le push du présent rapport déclenche un nouveau run APK. **Le résultat sera vérifié
-et rapporté** ; s'il échoue à nouveau sur la même sonde UI, il restera classé
-instabilité d'émulateur et **aucun artefact ne sera annoncé**.
+Commit de relance **`1cd46a5`** (le présent rapport ; seul ajout par rapport à
+`2e414d9`, qui porte le correctif). Runs déclenchés :
+
+| Workflow            | Exécution                                                                     | Conclusion  |
+| ------------------- | ----------------------------------------------------------------------------- | ----------- |
+| Banc réseau Melodix | [`38383734072`](https://github.com/Souxch06/Melodix/actions/runs/38383734072) | **success** |
+| APK Android         | [`38383738784`](https://github.com/Souxch06/Melodix/actions/runs/38383738784) | **success** |
+
+**L'étape 21 « Installer et lancer réellement l'APK sur Android 14 » est cette fois
+en SUCCÈS**, alors qu'elle avait échoué sur `2e414d9` avec le même correctif. Toutes
+les étapes clés sont vertes : 10 (TypeScript/ESLint/Prettier), 11 (Jest),
+14 (Robolectric), 15 (compilation), 16 (alignement 16 Kio + signature),
+19 (intégrité/installabilité/signature), **21 (émulateur)**, 22 (diagnostic OAuth),
+23 (diagnostic Jamendo), 24 (publication de l'artefact).
+
+**Ceci confirme le diagnostic de la section 5.2** : l'échec précédent était une
+instabilité de la sonde UI sur émulateur CI, **pas un défaut de code** — le même
+correctif passe dès la relance, sans aucune modification du code entre les deux runs.
+
+### 6.1 APK livré
+
+- **Run :** <https://github.com/Souxch06/Melodix/actions/runs/38383738784>
+- **Artefact :** `11805062347` — `Melodix-v4.5.0-test.37-1cd46a5.apk`
+- **Taille :** 47 105 837 octets
+- **Package :** `com.souxch06.melodix` · `versionCode 45037` · `versionName 4.5.0-test.37`
+  · `minSdk 23` · `targetSdk 34` · ABI `arm64-v8a`, `armeabi-v7a`, `x86`, `x86_64`
+- **sha256 :** `dc1a9c0c6fd6f1bbe9a9281020a7304f568d212be2c26427e210e8d83e0d59d1`
+
+Cette empreinte diffère de celle de la V50 (`1075cc60…`) : les octets livrés ont
+changé, ce qui est cohérent avec le correctif JS de `2e414d9`.
+
+**Rappel indispensable :** cet APK est compilé, signé, installé et lancé sur un
+émulateur Android 14. **Cela ne prouve ni un son audible, ni une notification
+visible, ni les commandes sur écran verrouillé d'un téléphone réel.**
 
 ---
 
 ## 7. Synthèse du classement demandé
 
-| Point audité                                        | Classement      | Détail                                                     |
-| --------------------------------------------------- | --------------- | ---------------------------------------------------------- |
-| Casque débranché pendant `buffering`/`resolving`    | **[CORRIGÉ]**   | 2 défauts, 6 tests, preuve de réversion 2 échecs → 6/6     |
-| Toggle pouvant relancer la lecture au débranchement | **[CORRIGÉ]**   | remplacé par `pause()` à direction forcée                  |
-| Parcours OAuth PKCE (échange, froid, anti-rejeu)    | **[SAIN]**      | tracé intégralement, aucun défaut démontré                 |
-| Distinction 403 Spotify vs 403 proxy                | **[SAIN]**      | déjà implémentée (forme du corps) et testée                |
-| Le 403 `/me` persistant lui-même                    | **[EXTERNE]**   | mode développeur Spotify ; non contourné, non contournable |
-| Rafraîchissement / purge de session                 | **[SAIN]**      | transitoire ≠ définitif, jamais de purge sur coupure       |
-| Pause/reprise, seek, fin naturelle, piste suivante  | **[SAIN]**      | durci en V37/V38, verrouillé par tests                     |
-| Chaîne notification → MediaSession → JS             | **[SAIN]**      | câblage vérifié maillon par maillon, abonnement réel       |
-| Son audible, notification visible, écran verrouillé | **[TÉLÉPHONE]** | aucun test automatisé ne peut l'établir                    |
-| Artefact APK au commit `2e414d9`                    | **non publié**  | étape 24 `skipped` — aucun lien ni empreinte à annoncer    |
+| Point audité                                        | Classement      | Détail                                                                                                                                               |
+| --------------------------------------------------- | --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Casque débranché pendant `buffering`/`resolving`    | **[CORRIGÉ]**   | 2 défauts, 6 tests, preuve de réversion 2 échecs → 6/6                                                                                               |
+| Toggle pouvant relancer la lecture au débranchement | **[CORRIGÉ]**   | remplacé par `pause()` à direction forcée                                                                                                            |
+| Parcours OAuth PKCE (échange, froid, anti-rejeu)    | **[SAIN]**      | tracé intégralement, aucun défaut démontré                                                                                                           |
+| Distinction 403 Spotify vs 403 proxy                | **[SAIN]**      | déjà implémentée (forme du corps) et testée                                                                                                          |
+| Le 403 `/me` persistant lui-même                    | **[EXTERNE]**   | mode développeur Spotify ; non contourné, non contournable                                                                                           |
+| Rafraîchissement / purge de session                 | **[SAIN]**      | transitoire ≠ définitif, jamais de purge sur coupure                                                                                                 |
+| Pause/reprise, seek, fin naturelle, piste suivante  | **[SAIN]**      | durci en V37/V38, verrouillé par tests                                                                                                               |
+| Chaîne notification → MediaSession → JS             | **[SAIN]**      | câblage vérifié maillon par maillon, abonnement réel                                                                                                 |
+| Son audible, notification visible, écran verrouillé | **[TÉLÉPHONE]** | aucun test automatisé ne peut l'établir                                                                                                              |
+| Artefact APK                                        | **livré**       | `2e414d9` : non publié (étape 24 `skipped`, aucun lien annoncé) ; relance `1cd46a5` : **success**, artefact `11805062347`, sha256 `dc1a9c0c…` (§6.1) |
 
 ---
 
