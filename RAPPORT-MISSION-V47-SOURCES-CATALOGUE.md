@@ -292,4 +292,41 @@ relancée après le reformatage Prettier et l'incrément de version.
 
 ## 9. Lien APK
 
-_(complété après l'exécution du build CI)_
+Build CI **réussi** pour le commit `2e6667c` :
+
+- Exécution : <https://github.com/Souxch06/Melodix/actions/runs/38344285475>
+- **APK : <https://github.com/Souxch06/Melodix/actions/runs/38344285475/artifacts/11788688332>**
+- Nom : `Melodix-v4.5.0-test.37-2e6667c.apk` · taille **47 104 979 octets**
+- `versionCode='45037'` · `versionName='4.5.0-test.37'` (conformes à
+  `app.config.js` et `package.json`)
+- sha256 : `15eb970f474f209bbde2106ed8d887a8040fdad7a38102ac3eb24bcc99a928d5`
+- `package='com.souxch06.melodix'`, schéma `melodix://` présent, ABI
+  `arm64-v8a / armeabi-v7a / x86 / x86_64`, `targetSdk 34`
+
+Le build antérieur (`144ed67`, exécution `38343271934`) a été **annulé** par le
+push du commit suivant — comportement attendu de la CI ; l'artefact de référence
+est bien celui de `2e6667c`.
+
+**Cet APK n'a fait l'objet d'aucune écoute sur appareil physique.** Les tests
+automatisés ont été exécutés ; ils ne remplacent pas une vérification auditive
+réelle.
+
+## 10. Seconde mesure réseau (confirmation du correctif de libellé)
+
+Le banc relancé sur `2e6667c` (exécution `38344281627`) confirme sur **sortie
+réseau réelle** que le libellé de preuve est désormais correct :
+
+```
+Statut           : real-measures
+Cas : 39 exécutés · 39 soldés · 39 avec résultats · 39 pertinents
+Résultats par source : {"spotify":0,"backend":0,"audius":271,"youtube":492,"itunes":4331,"jamendo":0}
+Erreurs par source   : {}
+Premier résultat : n=39 · médiane=163 ms · p90=518 ms
+Durée totale     : n=39 · médiane=549 ms · p90=2030 ms
+searchResultsReceived : mesuré (39 cas)
+```
+
+Avant le correctif, la même ligne annonçait `mesuré (14 cas)` pour 39 cas
+exécutés. Les légères variations de latence entre les deux exécutions (médiane
+426 ms puis 163 ms) sont des mesures réelles distinctes, non moyennées.
+`jamendo=0` reste un saut de source non armée, **pas** un résultat de recherche.
