@@ -292,20 +292,27 @@ relancée après le reformatage Prettier et l'incrément de version.
 
 ## 9. Lien APK
 
-Build CI **réussi** pour le commit `2e6667c` :
+Build CI **réussi** pour le commit en tête de branche, `f799b82` :
 
-- Exécution : <https://github.com/Souxch06/Melodix/actions/runs/38344285475>
-- **APK : <https://github.com/Souxch06/Melodix/actions/runs/38344285475/artifacts/11788688332>**
-- Nom : `Melodix-v4.5.0-test.37-2e6667c.apk` · taille **47 104 979 octets**
+- Exécution : <https://github.com/Souxch06/Melodix/actions/runs/38346457705>
+- **APK : <https://github.com/Souxch06/Melodix/actions/runs/38346457705/artifacts/11789613140>**
+- Nom : `Melodix-v4.5.0-test.37-f799b82.apk` · taille **47 104 978 octets**
 - `versionCode='45037'` · `versionName='4.5.0-test.37'` (conformes à
   `app.config.js` et `package.json`)
 - sha256 : `15eb970f474f209bbde2106ed8d887a8040fdad7a38102ac3eb24bcc99a928d5`
 - `package='com.souxch06.melodix'`, schéma `melodix://` présent, ABI
   `arm64-v8a / armeabi-v7a / x86 / x86_64`, `targetSdk 34`
 
+**Empreinte identique entre les deux builds.** Le commit `2e6667c` (exécution
+`38344285475`, artefact `11788688332`, 47 104 979 octets) et le commit `f799b82`
+(exécution `38346457705`, artefact `11789613140`, 47 104 978 octets) produisent
+le **même sha256** `15eb970f…`. `f799b82` ne modifie que le rapport de mission :
+la constance de l'empreinte vérifie donc que ce commit docs **n'a changé aucun
+octet du code embarqué**. L'écart d'un octet porte sur l'archive de l'artefact,
+pas sur l'APK signé.
+
 Le build antérieur (`144ed67`, exécution `38343271934`) a été **annulé** par le
-push du commit suivant — comportement attendu de la CI ; l'artefact de référence
-est bien celui de `2e6667c`.
+push du commit suivant — comportement attendu de la CI.
 
 **Cet APK n'a fait l'objet d'aucune écoute sur appareil physique.** Les tests
 automatisés ont été exécutés ; ils ne remplacent pas une vérification auditive
