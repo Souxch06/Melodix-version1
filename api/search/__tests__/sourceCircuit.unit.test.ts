@@ -11,6 +11,7 @@
  */
 import { AudiusRequestError } from '../../audius/client';
 import { ItunesRequestError } from '../../itunes/client';
+import { JamendoRequestError } from '../../jamendo/client';
 import { BackendError } from '../../../services/backend/client';
 import { InnertubeError } from '../../../services/audio/youtubeInnertube';
 
@@ -186,6 +187,78 @@ describe('classification des erreurs', () => {
     expect(classifySourceError(new ItunesRequestError('http', 'x', 400))).toBe(
       'benign'
     );
+  });
+
+  /**
+   * V48 — RÉGRESSION VERROUILLÉE. `JamendoRequestError` n'avait AUCUNE branche
+   * dans `classifySourceError` et tombait dans le repli « erreur non typée →
+   * prudence = panne ». Démontré par mesure avant correctif :
+   *   annulation → `failure` (au lieu de `aborted`)
+   *   HTTP 404   → `failure` (au lieu de `benign`)
+   * Conséquence réelle : chaque annulation de recherche (l'utilisateur
+   * continue de saisir) incrémentait le compteur de pannes Jamendo ; au bout
+   * de 3, le disjoncteur s'ouvrait 5 min et la source se désactivait
+   * SILENCIEUSEMENT sans avoir jamais échoué.
+   */
+  it('Jamendo (V48) : réseau/timeout/débit/5xx = panne ; 4xx autoritaire = bénin', () => {
+    expect(classifySourceError(new JamendoRequestError('network', 'x'))).toBe(
+      'failure'
+    );
+    expect(classifySourceError(new JamendoRequestError('timeout', 'x'))).toBe(
+      'failure'
+    );
+    expect(
+      classifySourceError(new JamendoRequestError('rate-limited', 'x', 429))
+    ).toBe('failure');
+    expect(classifySourceError(new JamendoRequestError('http', 'x', 503))).toBe(
+      'failure'
+    );
+    expect(classifySourceError(new JamendoRequestError('http', 'x', 404))).toBe(
+      'benign'
+    );
+    expect(classifySourceError(new JamendoRequestError('http', 'x', 401))).toBe(
+      'benign'
+    );
+  });
+
+  it('Jamendo (V48) : une ANNULATION n’est JAMAIS comptée comme une panne', () => {
+    expect(classifySourceError(new JamendoRequestError('aborted', 'x'))).toBe(
+      'aborted'
+    );
+  });
+
+  it('Jamendo (V48) : source non configurée = bénigne (jamais de disjoncteur)', () => {
+    expect(
+      classifySourceError(new JamendoRequestError('unconfigured', 'x'))
+    ).toBe('benign');
+  });
+
+  it('Jamendo (V48) : des annulations répétées ne disjonctent PAS la source', () => {
+    // Reproduit le scénario utilisateur réel : saisir plusieurs fois de suite
+    // annule la recherche en vol à chaque frappe.
+    for (let i = 0; i < SOURCE_CIRCUIT_MAX_FAILURES + 2; i += 1) {
+      const verdict = classifySourceError(
+        new JamendoRequestError('aborted', 'cancelled')
+      );
+      if (verdict === 'failure') {
+        recordSourceFailure('jamendo', NOW);
+      }
+    }
+
+    const states = getSourceCircuitStates(NOW);
+
+    expect(states.jamendo.failures).toBe(0);
+    expect(isSourceCircuitOpen('jamendo', NOW)).toBe(false);
+  });
+
+  it('Jamendo (V48) : de VRAIES pannes répétées disjonctent bien la source', () => {
+    // Contre-partie : le correctif ne doit pas avoir rendu la source
+    // indisjonctable.
+    for (let i = 0; i < SOURCE_CIRCUIT_MAX_FAILURES; i += 1) {
+      recordSourceFailure('jamendo', NOW);
+    }
+
+    expect(isSourceCircuitOpen('jamendo', NOW)).toBe(true);
   });
 });
 

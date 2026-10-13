@@ -313,6 +313,23 @@ describe('V47 — Jamendo : erreurs, quota et annulation (source isolée)', () =
     );
   });
 
+  /**
+   * V48 — RÉGRESSION VERROUILLÉE. Le commentaire du client annonçait
+   * « 401/403 = client_id refusé ou hors quota », mais seul le 403 était testé.
+   * Un 401 partait donc en `http`, que le disjoncteur juge BÉNIN : le compteur
+   * repartait à zéro à chaque recherche, le circuit ne s'ouvrait jamais, et
+   * Melodix réémettait indéfiniment une requête vouée à l'échec — brûlant le
+   * quota documenté de 35 000 requêtes/mois.
+   */
+  it('classe un HTTP 401 en `rate-limited`, COMME le 403 (identifiant refusé)', async () => {
+    setFetch(jest.fn(async () => jsonResponse([], 401)));
+
+    await expect(searchJamendoTracks('x')).rejects.toMatchObject({
+      kind: 'rate-limited',
+      status: 401,
+    });
+  });
+
   it('classe un autre HTTP en `http` avec son code', async () => {
     setFetch(jest.fn(async () => jsonResponse([], 503)));
 

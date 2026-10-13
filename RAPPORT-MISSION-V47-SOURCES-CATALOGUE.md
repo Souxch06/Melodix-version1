@@ -267,9 +267,20 @@ relancée après le reformatage Prettier et l'incrément de version.
 1. **Aucune mesure réseau réelle dans cet environnement** (egress limité à
    github/npm/pypi). Le gain de couverture réel de Jamendo reste **à mesurer**.
 2. **La source est dormante** tant qu'un `client_id` n'est pas fourni via
-   `vars.MELODIX_JAMENDO_CLIENT_ID` (banc) ou `EXPO_PUBLIC_JAMENDO_CLIENT_ID`
-   (build). C'est un comportement voulu, pas une régression : sans identifiant,
-   la recherche est strictement celle d'avant V47.
+   `vars.MELODIX_JAMENDO_CLIENT_ID`. C'est un comportement voulu, pas une
+   régression : sans identifiant, la recherche est strictement celle d'avant V47.
+
+   > **ERRATUM V48 — cette limite était FAUSSE telle que rédigée en V47.** Le
+   > texte affirmait que l'identifiant pouvait aussi être fourni par
+   > `EXPO_PUBLIC_JAMENDO_CLIENT_ID` « (build) ». C'était inexact : seule la
+   > voie du **banc** était câblée. Côté build APK, **aucune** des deux voies
+   > documentées par `api/jamendo/config.ts` n'était alimentée —
+   > `.github/workflows/android-apk.yml` n'exportait aucune variable Jamendo et
+   > `app.config.js` ne peuplait jamais `extra.jamendoClientId`. L'APK livré ne
+   > pouvait donc **jamais** être armé, quel que soit le réglage du dépôt.
+   > Défaut corrigé en V48 (deux canaux câblés + 7 tests de verrouillage) ; voir
+   > `RAPPORT-MISSION-V48-VALIDATION-JAMENDO.md`.
+
 3. **Quota 35 000 requêtes/mois** : correct pour un usage individuel, mais
    **insuffisant pour une base d'utilisateurs large**. Un déploiement à grande
    échelle exigerait un proxy serveur côté Melodix — donc un backend, à justifier

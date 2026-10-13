@@ -122,7 +122,16 @@ const jamendoGetJson = async (
     if (!response.ok) {
       throw new JamendoRequestError(
         // 429 = quota/rate-limit ; 401/403 = client_id refusé ou hors quota.
-        response.status === 429 || response.status === 403
+        // V48 — le 401 est traité COMME le 403 (l'intention était déjà écrite
+        // dans ce commentaire, mais seul le 403 était testé). Sans cela, un
+        // identifiant refusé en 401 était classé `http` puis jugé BÉNIN par le
+        // disjoncteur : le compteur repartait à zéro à chaque recherche, le
+        // circuit ne s'ouvrait JAMAIS, et Melodix réémettait indéfiniment une
+        // requête vouée à l'échec — brûlant le quota documenté de
+        // 35 000 requêtes/mois sur des appels impossibles à réussir.
+        response.status === 429 ||
+        response.status === 403 ||
+        response.status === 401
           ? 'rate-limited'
           : 'http',
         `Jamendo answered ${response.status}`,

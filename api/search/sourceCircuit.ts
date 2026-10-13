@@ -24,6 +24,7 @@
 import { AudiusRequestError } from '../audius/client';
 import { BackendError } from '../../services/backend/client';
 import { ItunesRequestError } from '../itunes/client';
+import { JamendoRequestError } from '../jamendo/client';
 import { InnertubeError } from '../../services/audio/youtubeInnertube';
 
 import type { SearchSourceId } from './searchRanking';
@@ -119,6 +120,40 @@ export const classifySourceError = (error: unknown): SourceErrorVerdict => {
     }
     if (error.kind === 'http') {
       return (error.status ?? 0) >= 500 ? 'failure' : 'benign';
+    }
+    return 'failure';
+  }
+
+  // V48 — API Jamendo : MÊME discipline qu'iTunes/Audius.
+  //
+  // Défaillance corrigée : `JamendoRequestError` n'avait AUCUNE branche ici et
+  // tombait dans le repli « erreur non typée → prudence = panne ». Deux
+  // conséquences démontrées par test :
+  //   1. une ANNULATION (l'utilisateur continue de saisir, la recherche en vol
+  //      est annulée) était comptée comme une PANNE → au bout de 3 annulations
+  //      le disjoncteur Jamendo s'ouvrait 5 min et la source se désactivait
+  //      SILENCIEUSEMENT sans avoir jamais échoué ;
+  //   2. un 4xx autoritaire (la source répond, la requête est en cause) était
+  //      compté comme une panne au lieu de remettre le compteur à zéro.
+  if (error instanceof JamendoRequestError) {
+    if (error.kind === 'aborted') {
+      return 'aborted';
+    }
+    if (
+      error.kind === 'network' ||
+      error.kind === 'timeout' ||
+      error.kind === 'rate-limited'
+    ) {
+      return 'failure';
+    }
+    if (error.kind === 'http') {
+      return (error.status ?? 0) >= 500 ? 'failure' : 'benign';
+    }
+    // 'unconfigured' : la source n'est pas armée — elle n'est jamais lancée,
+    // donc cette branche ne devrait pas être atteinte ; la traiter comme
+    // bénigne évite de disjoncter une source simplement non configurée.
+    if (error.kind === 'unconfigured') {
+      return 'benign';
     }
     return 'failure';
   }

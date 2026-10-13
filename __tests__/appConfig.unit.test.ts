@@ -125,3 +125,106 @@ describe('app.config.js — Client ID Spotify (source unique committée)', () =>
     expect(serialized).toContain(PRODUCTION_CLIENT_ID);
   });
 });
+
+/**
+ * V48 — RÉGRESSION VERROUILLÉE : câblage du Client ID Jamendo.
+ *
+ * Défaillance démontrée en V48 : `api/jamendo/config.ts` documentait DEUX voies
+ * de configuration —
+ *   1. `EXPO_PUBLIC_JAMENDO_CLIENT_ID` (inlinage Metro),
+ *   2. `JAMENDO_CLIENT_ID` → `extra.jamendoClientId` (asset natif) —
+ * mais AUCUNE des deux n'était réellement câblée pour un build APK :
+ *   - `app.config.js` ne peuplait JAMAIS `extra.jamendoClientId` (voie 2 morte) ;
+ *   - `.github/workflows/android-apk.yml` n'exportait AUCUNE variable Jamendo
+ *     (voie 1 morte), alors que le banc réseau, lui, la recevait.
+ *
+ * Conséquence : le banc pouvait être armé, mais l'APK livré ne pouvait JAMAIS
+ * l'être, quel que soit le réglage du dépôt. Le rapport V47 affirmait pourtant
+ * qu'un `client_id` pouvait être fourni « (build) » — affirmation fausse.
+ *
+ * Ces tests verrouillent les deux canaux pour que la source ne redevienne pas
+ * silencieusement inarmable.
+ */
+describe('V48 — Jamendo : les deux canaux de configuration sont réellement câblés', () => {
+  const OLD_ENV = process.env;
+
+  beforeEach(() => {
+    process.env = { ...OLD_ENV };
+    delete process.env.JAMENDO_CLIENT_ID;
+    jest.resetModules();
+  });
+
+  afterEach(() => {
+    process.env = OLD_ENV;
+    jest.resetModules();
+  });
+
+  const readSource = (relative: string): string =>
+    readFileSync(join(__dirname, '..', relative), 'utf8');
+
+  it('voie « asset natif » : JAMENDO_CLIENT_ID atteint extra.jamendoClientId', () => {
+    process.env.JAMENDO_CLIENT_ID = '  identifiant-jamendo-de-test  ';
+
+    // La valeur est trimée (robustesse build CI), comme pour Spotify.
+    expect(loadAppConfig().expo.extra.jamendoClientId).toBe(
+      'identifiant-jamendo-de-test'
+    );
+  });
+
+  it('sans variable : extra.jamendoClientId est VIDE (source dormante, jamais de clé obligatoire)', () => {
+    expect(loadAppConfig().expo.extra.jamendoClientId).toBe('');
+  });
+
+  it('variable blanche → vide (jamais une configuration cassée)', () => {
+    process.env.JAMENDO_CLIENT_ID = '   ';
+    expect(loadAppConfig().expo.extra.jamendoClientId).toBe('');
+  });
+
+  it('voie « inlinage Metro » : le build APK exporte EXPO_PUBLIC_JAMENDO_CLIENT_ID', () => {
+    const workflow = readSource('.github/workflows/android-apk.yml');
+
+    expect(workflow).toContain(
+      "EXPO_PUBLIC_JAMENDO_CLIENT_ID: ${{ vars.MELODIX_JAMENDO_CLIENT_ID || '' }}"
+    );
+    // Les DEUX canaux sont alimentés par la MÊME variable de dépôt (unicité de
+    // source, comme pour Spotify).
+    expect(workflow).toContain(
+      "JAMENDO_CLIENT_ID: ${{ vars.MELODIX_JAMENDO_CLIENT_ID || '' }}"
+    );
+  });
+
+  it('le banc réseau reste câblé sur la même variable de dépôt', () => {
+    const bench = readSource('.github/workflows/melodix-online-benchmark.yml');
+
+    expect(bench).toContain(
+      'EXPO_PUBLIC_JAMENDO_CLIENT_ID: ${{ vars.MELODIX_JAMENDO_CLIENT_ID }}'
+    );
+  });
+
+  it('AUCUN Client ID Jamendo n’est codé en dur dans le dépôt', () => {
+    // Contrairement à Spotify (identifiant public du projet, committé à dessein),
+    // Jamendo n’a AUCUNE valeur par défaut embarquée : sans variable de dépôt,
+    // la source est simplement inactive.
+    expect(readSource('app.config.js')).not.toMatch(
+      /jamendoClientId\s*=\s*[^;]*['"][A-Za-z0-9]{8,}['"]/
+    );
+    expect(readSource('api/jamendo/config.ts')).not.toMatch(
+      /['"][A-Za-z0-9]{16,}['"]/
+    );
+  });
+
+  it('les deux voies documentées par config.ts correspondent au câblage réel', () => {
+    // Garde anti-dérive : si l’une des deux voies documentées disparaît du
+    // câblage, ce test échoue au lieu de laisser une promesse morte.
+    const configSource = readSource('api/jamendo/config.ts');
+
+    expect(configSource).toContain('EXPO_PUBLIC_JAMENDO_CLIENT_ID');
+    expect(configSource).toContain('jamendoClientId');
+
+    // Et chacune est effectivement alimentée quelque part dans le build.
+    expect(readSource('app.config.js')).toContain('jamendoClientId');
+    expect(readSource('.github/workflows/android-apk.yml')).toContain(
+      'EXPO_PUBLIC_JAMENDO_CLIENT_ID'
+    );
+  });
+});

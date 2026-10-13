@@ -47,6 +47,20 @@ jobs:
       # conception, mais il n'existe que si le mainteneur l'a créé.
       SPOTIFY_CLIENT_ID: ${{ vars.SPOTIFY_CLIENT_ID || '' }}
       EXPO_PUBLIC_SPOTIFY_CLIENT_ID: ${{ vars.SPOTIFY_CLIENT_ID || '' }}
+      # ── V48 — Client ID Jamendo (API officielle v3.0) ──
+      # Variable de dépôt OPTIONNELLE. SANS ELLE, l'APK compile et la source
+      # Jamendo reste désactivée (`skipped`, aucune requête émise) : l'app se
+      # comporte exactement comme avant V47. Aucun backend payant obligatoire.
+      # Identifiant PUBLIC par conception (transmis en clair dans la
+      # querystring par l'API elle-même) — ce n'est pas un secret, et il n'est
+      # jamais saisi dans l'UI ni journalisé.
+      # MÊME double canal que Spotify : extra de app.config (asset natif) +
+      # inlinage Metro EXPO_PUBLIC_* (robuste en APK bare).
+      # Défaillance corrigée (V48) : le banc réseau recevait cette variable mais
+      # le build APK ne la transmettait pas — l'APK livré ne pouvait donc
+      # JAMAIS être armé, quel que soit le réglage du dépôt.
+      JAMENDO_CLIENT_ID: ${{ vars.MELODIX_JAMENDO_CLIENT_ID || '' }}
+      EXPO_PUBLIC_JAMENDO_CLIENT_ID: ${{ vars.MELODIX_JAMENDO_CLIENT_ID || '' }}
       # ── Redirect URI OAuth — CANONIQUE DE L'APPLICATION ──
       # L'application « Melodix » (scheme natif `melodix`, package
       # com.souxch06.melodix) déclare EXACTEMENT melodix://callback dans le

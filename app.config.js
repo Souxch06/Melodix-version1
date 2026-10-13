@@ -41,6 +41,15 @@
  */
 const melodixBackendUrl = process.env.MELODIX_BACKEND_URL || '';
 const audiusApiKey = process.env.AUDIUS_API_KEY || '';
+// ▸ V48 — Client ID Jamendo (API officielle v3.0). Identifiant PUBLIC par
+//   conception : l'API l'exige en clair dans la querystring de chaque requête
+//   GET (`?client_id=…`), ce n'est donc PAS un secret. Variable de dépôt
+//   OPTIONNELLE : sans elle, la source Jamendo reste désactivée et l'app
+//   fonctionne exactement comme avant (aucun backend payant obligatoire).
+//   Jamais saisie ni affichée par l'utilisateur, jamais journalisée.
+//   Défaillance corrigée (V48) : api/jamendo/config.ts documentait cette voie
+//   `extra.jamendoClientId`, mais rien ne la peuplait — elle était morte.
+const jamendoClientId = (process.env.JAMENDO_CLIENT_ID || '').trim();
 // ▸ Client ID : application Spotify « Melodix » du projet. Information
 //   PUBLIQUE par conception (client public OAuth — PKCE exclut tout
 //   Client Secret). SOURCE UNIQUE COMMITTÉE ci-dessous ; la variable
@@ -166,6 +175,9 @@ module.exports = {
       spotifyClientId,
       spotifyRedirectUri,
       audiusApiKey,
+      // V48 — voir `jamendoClientId` ci-dessus : voie « asset natif » lue par
+      // api/jamendo/config.ts (l'autre voie est l'inlinage Metro EXPO_PUBLIC_*).
+      jamendoClientId,
       router: {
         origin: false,
       },
