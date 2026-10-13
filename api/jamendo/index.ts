@@ -32,6 +32,13 @@ export type { JamendoRequestErrorKind } from './client';
 export { getJamendoClientIdInfo, isJamendoConfigured } from './config';
 export type { JamendoClientIdInfo, JamendoClientIdSource } from './config';
 export {
+  getRenderableJamendoAttribution,
+  jamendoTrackIdOf,
+  sanitizeJamendoLicenseUrl,
+  sanitizeJamendoShareUrl,
+} from './attribution';
+export type { RenderableJamendoAttribution } from './attribution';
+export {
   JAMENDO_SEARCH_LIMIT,
   getJamendoAttribution,
   jamendoResultToMatch,

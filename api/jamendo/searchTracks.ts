@@ -26,6 +26,15 @@ import {
  * - la durée affichée est celle publiée par l'API (`duration`, en secondes).
  */
 
+/**
+ * Libellé de repli quand l'API ne publie aucun `artist_name`.
+ *
+ * Ce n'est PAS un créateur : `api/jamendo/attribution.ts` s'appuie sur cette
+ * constante pour ne jamais l'afficher comme crédit (clause 4.1 — on crédite
+ * les membres Jamendo réels, jamais un nom de substitution).
+ */
+export const JAMENDO_UNKNOWN_ARTIST = 'Artiste inconnu';
+
 export const JAMENDO_SEARCH_LIMIT = 50;
 
 type JamendoTrackResult = {
@@ -204,7 +213,7 @@ export const jamendoResultToMatch = (
     artistName:
       typeof result.artist_name === 'string' && result.artist_name.trim()
         ? result.artist_name.trim()
-        : 'Artiste inconnu',
+        : JAMENDO_UNKNOWN_ARTIST,
     albumName:
       typeof result.album_name === 'string' && result.album_name.trim()
         ? result.album_name.trim()

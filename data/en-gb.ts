@@ -247,6 +247,14 @@ export const EN_GB_PLAYER = {
   playerExpand: 'Expand player',
   playerClose: 'Collapse player',
   playerStreamedWith: (provider: string) => `Playing via ${provider}`,
+  // V50 — Jamendo attribution (required by clause 4.1 of the Jamendo API
+  // Terms of Use): credit the creator, credit Jamendo as the content
+  // provider, and offer a direct link back to the original content page.
+  jamendoAttributionCredit: (artist: string) =>
+    `Content provided by Jamendo · ${artist}`,
+  jamendoAttributionProvider: 'Content provided by Jamendo',
+  jamendoAttributionOriginal: 'View original page',
+  jamendoAttributionLicense: 'License',
   playerTrackUnavailable: (title: string) =>
     `"${title}" is not available on Audius.`,
   playerMatchUncertain: (title: string) =>

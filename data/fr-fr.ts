@@ -117,6 +117,14 @@ export const FR_FR_PLAYER = {
   playerExpand: 'Agrandir le lecteur',
   playerClose: 'Réduire le lecteur',
   playerStreamedWith: (provider: string) => `Lu via ${provider}`,
+  // V50 — Attribution Jamendo (obligation de la clause 4.1 des conditions
+  // d'utilisation de l'API) : créditer le créateur, créditer Jamendo comme
+  // fournisseur, et proposer un lien direct vers la page d'origine du contenu.
+  jamendoAttributionCredit: (artist: string) =>
+    `Contenu fourni par Jamendo · ${artist}`,
+  jamendoAttributionProvider: 'Contenu fourni par Jamendo',
+  jamendoAttributionOriginal: 'Voir la page d’origine',
+  jamendoAttributionLicense: 'Licence',
   playerTrackUnavailable: (title: string) =>
     `« ${title} » n'est pas disponible sur Audius.`,
   playerMatchUncertain: (title: string) =>

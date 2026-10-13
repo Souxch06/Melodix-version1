@@ -20,6 +20,7 @@ import { getFallbackImage } from '@utils';
 import type { PlayerTrack } from '@services';
 
 import { DragSlider } from './DragSlider';
+import { JamendoAttribution } from './JamendoAttribution';
 import { QueueActionMenu } from './QueueActionMenu';
 import { QueueRow } from './QueueRow';
 import { styles } from './fullStyles';
@@ -284,6 +285,12 @@ export const FullPlayer = () => {
             {translations.playerStreamedWith(providerName)}
           </Text>
         ) : null}
+        {/* V50 — Attribution Jamendo (clause 4.1 des conditions d'utilisation
+            de l'API) : crédit du créateur, mention de Jamendo comme
+            fournisseur et lien vers la page d'origine. Rendu UNIQUEMENT pour
+            une piste Jamendo dont l'attribution est connue : `null` pour
+            Audius, YouTube, iTunes et Spotify — jamais de faux crédit. */}
+        <JamendoAttribution trackId={current.id} />
         {notice ? (
           <Text numberOfLines={2} style={styles.noticeText}>
             {notice.kind === 'not-available'

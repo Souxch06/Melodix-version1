@@ -106,10 +106,14 @@ export {
   JAMENDO_SEARCH_LIMIT,
   JamendoRequestError,
   getJamendoClientIdInfo,
+  getRenderableJamendoAttribution,
   isJamendoConfigured,
   resolveJamendoStreamUrl,
+  sanitizeJamendoLicenseUrl,
+  sanitizeJamendoShareUrl,
   searchJamendoTracks,
 } from './jamendo';
+export type { RenderableJamendoAttribution } from './jamendo';
 
 export { SEE_ALL_KINDS, SEE_ALL_SOURCES, isSeeAllKind } from './seeAll';
 export type {
