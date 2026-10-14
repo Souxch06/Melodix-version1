@@ -134,12 +134,23 @@ const describeForbiddenEvidence = (
   }
   const headers = diagnostics.headers ?? {};
   const parts: string[] = [`corps=${diagnostics.bodyShape}`];
+  // V59 — `essais` passe en DEUXIÈME position. `description` est tronquée à
+  // 120 caractères à l'affichage : placé en dernier, il était effacé dès que
+  // `via` était long (mesuré : 133 caractères bruts → « essais » perdu).
+  // Or c'est, selon la documentation de `apiClient` lui-même, LA donnée qui
+  // distingue une instabilité edge passagère (la retentative aurait réussi,
+  // aucune erreur exposée) d'un refus DÉTERMINISTE à vérifier dans le
+  // tableau de bord. La perdre en premier était exactement l'inverse de
+  // l'ordre utile.
+  if (typeof diagnostics.attempts === 'number') {
+    parts.push(`essais=${diagnostics.attempts}`);
+  }
   if (diagnostics.contentType) {
     parts.push(`ct=${diagnostics.contentType}`);
   }
-  // Ordre choisi par pouvoir discriminant : `server`/`via` identifient QUI
-  // répond (edge Spotify vs intermédiaire), `www-authenticate` indique si la
-  // réponse vient d'une couche qui négocie une authentification.
+  // Puis les en-têtes, par pouvoir discriminant : `server`/`via` identifient
+  // QUI répond (edge Spotify vs intermédiaire), `www-authenticate` indique si
+  // la réponse vient d'une couche qui négocie une authentification.
   for (const name of [
     'server',
     'via',
@@ -150,9 +161,6 @@ const describeForbiddenEvidence = (
     if (value) {
       parts.push(`${name}=${value}`);
     }
-  }
-  if (typeof diagnostics.attempts === 'number') {
-    parts.push(`essais=${diagnostics.attempts}`);
   }
   const text = parts.join(' · ');
   return text.length > 120 ? `${text.slice(0, 117)}…` : text;

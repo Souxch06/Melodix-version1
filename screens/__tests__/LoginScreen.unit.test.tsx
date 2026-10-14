@@ -257,23 +257,46 @@ describe('LoginScreen — parcours humain, connexion FACULTATIVE (V29)', () => {
     expect(hasTextContaining(root, 'client_secret')).toBe(false);
   });
 
-  it('V39 — 403 NON JSON sur /me : diagnostic « couche réseau intermédiaire », jamais la config Spotify', () => {
+  /**
+   * V59 — le libellé V39 AFFIRMAIT une cause non prouvée.
+   *
+   * Il disait « une couche intermédiaire du réseau (opérateur, filtre, proxy)
+   * a renvoyé un refus HTTP 403 » et ajoutait « Ce n'est ni un problème de
+   * compte ni de configuration ». Or la documentation officielle Spotify
+   * (« Quota modes ») prévoit précisément un 403 sur les appels API pour un
+   * utilisateur absent de « Users and Access » en mode Development. Un corps
+   * non JSON est un INDICE, pas une preuve : l'application n'a pas à trancher
+   * à la place de la preuve, ni à écarter les causes les plus probables.
+   *
+   * Ce test remplace l'ancien test V39, qui verrouillait le texte fautif.
+   */
+  it('V59 — 403 NON JSON sur /me : aucune cause affirmée, les DEUX vérifications utiles proposées', () => {
     mockAuthState = {
       status: 'error',
       outcome: { kind: 'network-blocked', cause: 'me:http·403' },
     };
     const root = render(<LoginScreen />);
+    // Le titre n'accuse plus le réseau d'être LA cause.
     expect(
-      root.getByText('Le réseau bloque la requête vers Spotify.')
-    ).toBeTruthy();
-    // Le corps dit EXACTEMENT la cause (couche intermédiaire) et l'action
-    // utile (changer de réseau) — jamais le message dev-mode/Premium, car ce
-    // 403 n'est PAS un refus de configuration de l'API Spotify.
-    expect(hasTextContaining(root, 'couche intermédiaire')).toBe(true);
+      root.queryByText('Le réseau bloque la requête vers Spotify.')
+    ).toBeNull();
+    // Le fait ÉTABLI reste dit : un refus 403.
+    expect(hasTextContaining(root, '403')).toBe(true);
+    // Aucune cause non prouvée n'est affirmée...
+    expect(hasTextContaining(root, 'couche intermédiaire')).toBe(false);
+    // ...et les causes probables ne sont plus ÉCARTÉES.
+    expect(hasTextContaining(root, 'problème de compte')).toBe(false);
+    // Les DEUX vérifications utiles sont proposées : tableau de bord ET
+    // essai sur un autre réseau (pour écarter un intermédiaire).
+    expect(hasTextContaining(root, 'Users and Access')).toBe(true);
     expect(hasTextContaining(root, 'autre réseau')).toBe(true);
-    expect(hasTextContaining(root, 'Users and Access')).toBe(false);
+    // La preuve réellement discriminante (détails) est signalée.
+    expect(hasTextContaining(root, 'Description')).toBe(true);
     // Réessai manuel autorisé (jamais de boucle automatique) :
     expect(root.getByTestId(TEST_IDS.RETRY_BUTTON)).toBeTruthy();
+    // Aucun credential demandé à l'utilisateur.
+    expect(hasTextContaining(root, 'Client ID')).toBe(false);
+    expect(hasTextContaining(root, 'client_secret')).toBe(false);
   });
 
   it.each(['network', 'callback-failed', 'unknown', 'not-configured-typo'])(

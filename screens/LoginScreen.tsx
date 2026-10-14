@@ -208,10 +208,14 @@ export const LoginScreen = () => {
           retryable: true,
         };
       case 'network-blocked':
-        // V39 — HTTP 403 au corps NON JSON : le refus vient d'une couche
-        // réseau intermédiaire (CDN, filtre opérateur, proxy), pas de
-        // l'API Spotify ni de la configuration développeur. Le message le
-        // dit exactement et propose l'action utile : changer de réseau.
+        // V59 — HTTP 403 au corps NON JSON. ÉTABLI : la connexion a réussi et
+        // /v1/me a renvoyé un 403 dont la réponse n'a pas le format Spotify.
+        // NON ÉTABLI : l'origine du refus. Le commentaire V39 affirmait une
+        // couche intermédiaire et écartait l'API Spotify comme la
+        // configuration — conclusion non prouvée, et contraire à la doc
+        // officielle (« Quota modes » : 403 attendu pour un utilisateur
+        // absent de « Users and Access »). Le message oriente désormais vers
+        // les DEUX vérifications utiles et vers la preuve des détails.
         return {
           title: translations.loginNetworkBlockedTitle,
           body: translations.loginNetworkBlockedBody,

@@ -514,6 +514,54 @@ describe('useSpotifyAuth — taxonomie du diagnostic OAuth', () => {
       expect((diag?.description ?? '').length).toBeLessThanOrEqual(120);
     });
 
+    /**
+     * V59 — `description` est tronquée à 120 caractères à l'affichage.
+     *
+     * Avec l'ordre V58 (`essais` en dernier), un en-tête `via` réaliste
+     * suffisait à faire disparaître « essais » : mesuré à 133 caractères
+     * bruts, la chaîne affichée s'arrêtait au milieu de `via`. Or c'est,
+     * selon la documentation de `apiClient` lui-même, LA donnée qui
+     * distingue une instabilité edge passagère d'un refus DÉTERMINISTE à
+     * vérifier dans le tableau de bord — donc la plus actionable, et la
+     * dernière à devoir être sacrifiée.
+     */
+    it('V59 — un « via » long ne fait plus perdre « essais » (donnée la plus actionable)', async () => {
+      (getCurrentUser as jest.Mock).mockRejectedValueOnce(
+        new SpotifyApiError(
+          'http',
+          'Réponse Spotify non valide (403).',
+          403,
+          '',
+          {
+            bodyShape: 'non-json',
+            contentType: 'text/html; charset=utf-8',
+            headers: {
+              server: 'envoy',
+              via: 'HTTP/2 edgeproxy-prod-iad-abc123.example.com, 1.1 google',
+            },
+            attempts: 3,
+          }
+        )
+      );
+
+      const { result } = renderHook(() => useSpotifyAuth());
+      await act(async () => {
+        await result.current.startLogin();
+      });
+
+      if (result.current.state.status !== 'error') return;
+      const description =
+        result.current.state.outcome.diagnostic?.description ?? '';
+      // LA régression : avec l'ordre V58, « essais » était tronqué ici.
+      expect(description).toContain('essais=3');
+      // « essais » doit PRÉCÉDER les en-têtes, potentiellement longs.
+      expect(description.indexOf('essais=3')).toBeLessThan(
+        description.indexOf('server=envoy')
+      );
+      // La borne d'affichage reste respectée.
+      expect(description.length).toBeLessThanOrEqual(120);
+    });
+
     it('403 NON JSON : le message N’AFFIRME plus une cause non prouvée', async () => {
       (getCurrentUser as jest.Mock).mockRejectedValueOnce(
         new SpotifyApiError(

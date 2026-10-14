@@ -192,11 +192,18 @@ export const FR_FR_LOGIN = {
   loginProfileForbiddenTitle: 'Spotify a refusé l’accès à cette application.',
   loginProfileForbiddenBody:
     'La connexion en elle-même a réussi, mais Spotify rejette les requêtes de cette application (HTTP 403). En mode développement, l’application exige un abonnement Premium actif pour son propriétaire et que ton compte figure dans « Users and Access ». Rien n’a été supprimé — réessaie après vérification dans le tableau de bord développeur Spotify.',
-  // V39 — HTTP 403 au corps NON JSON : une couche réseau intermédiaire
-  // (CDN, filtre opérateur, proxy) bloque la requête — pas l’API Spotify.
-  loginNetworkBlockedTitle: 'Le réseau bloque la requête vers Spotify.',
+  // V59 — HTTP 403 au corps NON JSON. Ce qui est ÉTABLI : la connexion a
+  // réussi et /v1/me a renvoyé un 403 dont la réponse n'a pas le format
+  // Spotify. Ce qui ne l'est PAS : l'origine du refus. L'ancien texte
+  // affirmait une couche intermédiaire et écartait explicitement le compte et
+  // la configuration — or la documentation officielle Spotify (« Quota
+  // modes ») prévoit un 403 sur les appels API pour un utilisateur absent de
+  // « Users and Access ». On n'affirme donc plus rien, on oriente vers les
+  // DEUX vérifications utiles et vers la preuve affichée dans les détails.
+  loginNetworkBlockedTitle:
+    'Connexion réussie, mais la requête a été refusée (403).',
   loginNetworkBlockedBody:
-    'La connexion a réussi, mais une couche intermédiaire du réseau (opérateur, filtre, proxy) a renvoyé un refus HTTP 403 sans réponse Spotify valide. Ce n’est ni un problème de compte ni de configuration : essaie sur un autre réseau (données mobiles ou autre Wi-Fi), puis réessaie.',
+    'La connexion a réussi, mais la demande de profil a reçu un refus HTTP 403 dont la réponse n’a pas le format attendu de Spotify — l’origine du refus n’est pas encore déterminée. Ouvre « Voir les détails » et note la ligne Description. Vérifie ensuite dans le tableau de bord développeur Spotify que ton compte figure bien dans « Users and Access » et que l’abonnement Premium du propriétaire de l’application est actif. Un essai sur un autre réseau (données mobiles ou autre Wi-Fi) permet d’écarter un intermédiaire. Rien n’a été supprimé.',
   loginNotConfigured:
     "La connexion Spotify n'est pas disponible pour le moment.",
   loginNotConfiguredBody: 'Réessaie plus tard.',

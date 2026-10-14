@@ -128,11 +128,16 @@ export const EN_GB_LOGIN = {
   loginProfileForbiddenTitle: 'Spotify denied access to this app.',
   loginProfileForbiddenBody:
     'Sign-in itself worked, but Spotify is rejecting this app’s requests (HTTP 403). In development mode, the app requires an active Premium subscription for its owner, and your account must be listed under “Users and Access”. Nothing has been deleted — try again after checking the Spotify developer dashboard.',
-  // V39 — NON-JSON 403 body: an intermediate network layer blocks the
-  // request (CDN, carrier filter, proxy) — not the Spotify API itself.
-  loginNetworkBlockedTitle: 'Your network is blocking the request to Spotify.',
+  // V59 — NON-JSON 403 body. ESTABLISHED: sign-in worked and /v1/me returned
+  // a 403 whose response is not in Spotify’s format. NOT established: where
+  // the refusal came from. The previous copy asserted an intermediate network
+  // layer and explicitly ruled out account and configuration — yet Spotify’s
+  // own documentation (“Quota modes”) specifies a 403 on API calls for a user
+  // missing from “Users and Access”. Nothing is asserted here; the user is
+  // pointed at BOTH useful checks and at the evidence shown in the details.
+  loginNetworkBlockedTitle: 'Signed in, but the request was refused (403).',
   loginNetworkBlockedBody:
-    'Sign-in worked, but an intermediate network layer (carrier, filter, proxy) returned an HTTP 403 without a valid Spotify response. This is not an account or configuration problem: try another network (mobile data or a different Wi-Fi), then retry.',
+    'Sign-in worked, but the profile request received an HTTP 403 whose response is not in the expected Spotify format — the origin of the refusal is not yet determined. Open “View details” and note the Description line. Then check in the Spotify developer dashboard that your account is listed under “Users and Access” and that the app owner has an active Premium subscription. Trying another network (mobile data or a different Wi-Fi) helps rule out an intermediary. Nothing has been deleted.',
   loginNotConfigured: 'Spotify sign-in is unavailable right now.',
   loginNotConfiguredBody: 'Please try again later.',
   // TEMPORARY DIAGNOSTIC MODE: non-sensitive technical details, hidden by
