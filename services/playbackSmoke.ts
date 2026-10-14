@@ -366,26 +366,53 @@ export const runPlaybackSmoke = async (
   deps.log(`route:received src=${source}`);
 
   // 1) RECHERCHE RÉELLE (le vrai moteur progressif, sources réelles).
+  //
+  // `timer` et `handle` sont déclarés AVANT tout appel à `deps.search()` :
+  // le moteur progressif peut rappeler SYNCHRONEMENT avec `pending === false`
+  // (api/search/progressiveSearch.ts:888 — entrée de cache, et :876 —
+  // consommateur rejoignant une recherche en vol). `finish()` s'exécute alors
+  // pendant l'appel à `deps.search()` ; avec les anciennes déclarations
+  // `const` placées après, `handle.cancel()` lisait une variable pas encore
+  // initialisée et levait, `finished` valant déjà `true`. Selon que le moteur
+  // propage l'exception (cache) ou l'avale (try/catch de la jonction en vol),
+  // la promesse était REJETÉE ou ne se réglait JAMAIS — dans les deux cas
+  // aucun verdict n'était produit. Reproduit par test avant correction.
   const settledUpdate = await new Promise<ProgressiveSearchUpdate | null>(
     (resolve) => {
       let finished = false;
+      // Initialisés explicitement à `undefined` : `finish()` peut tourner
+      // pendant l'appel à `deps.search()` ci-dessous, donc ces deux variables
+      // doivent exister — et rester réassignables — avant cet appel.
+      let timer: ReturnType<typeof setTimeout> | undefined = undefined;
+      let handle: ReturnType<PlaybackSmokeDeps['search']> | undefined =
+        undefined;
+
       const finish = (update: ProgressiveSearchUpdate | null) => {
         if (finished) {
           return;
         }
         finished = true;
-        clearTimeout(timer);
-        handle.cancel();
+        if (timer !== undefined) {
+          clearTimeout(timer);
+        }
+        handle?.cancel();
         resolve(update);
       };
-      const handle = deps.search(SMOKE_QUERY, (update) => {
+
+      timer = setTimeout(() => {
+        finish(null);
+      }, deps.searchTimeoutMs);
+      handle = deps.search(SMOKE_QUERY, (update) => {
         if (!update.pending) {
           finish(update);
         }
       });
-      const timer = setTimeout(() => {
-        finish(null);
-      }, deps.searchTimeoutMs);
+      // Rappel synchrone : `finish()` a déjà tourné alors que `handle`
+      // n'existait pas encore — le handle rendu doit tout de même être annulé,
+      // exactement une fois.
+      if (finished) {
+        handle.cancel();
+      }
     }
   );
 

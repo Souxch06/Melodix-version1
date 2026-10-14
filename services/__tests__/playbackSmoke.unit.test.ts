@@ -552,3 +552,105 @@ describe('V35 — phase 2 : changement de piste et commandes après lecture', ()
     expect(player.playCalls).toHaveLength(1); // la piste 2 n'est jamais tentée
   });
 });
+
+/**
+ * DÉFAUT reproduit — accès en zone morte temporelle (TDZ) dans
+ * `runPlaybackSmoke` (services/playbackSmoke.ts).
+ *
+ * `finish()` référence `timer` et `handle`, or `const handle = deps.search(…)`
+ * puis `const timer = setTimeout(…)` sont déclarés APRÈS l'appel à
+ * `deps.search()`. Si `deps.search` rappelle SYNCHRONEMENT avec
+ * `pending === false`, `finish()` s'exécute pendant cet appel :
+ * `clearTimeout(timer)` lit `timer` avant son initialisation → ReferenceError,
+ * alors que `finished` vaut déjà `true`.
+ *
+ * Conséquence : la promesse ne livre AUCUN résultat — rejet si l'exception
+ * remonte jusqu'à l'exécuteur, blocage définitif si un moteur l'avale (le
+ * minuteur rappelle alors `finish(null)`, qui retourne aussitôt). Dans les
+ * deux cas le smoke ne produit aucun verdict : c'est le silence observé en CI
+ * après la seule ligne `[PlaybackSmoke] route:received`.
+ *
+ * Ces tests décrivent le comportement ATTENDU : ils échouent sur le code
+ * fautif et passent une fois `timer` et `handle` déclarés avant `deps.search`.
+ */
+describe('runPlaybackSmoke — rappel SYNCHRONE du callback de recherche (TDZ)', () => {
+  /** Échoue explicitement, et vite, si la promesse ne se règle jamais. */
+  const withDeadline = <T>(promise: Promise<T>, ms: number): Promise<T> =>
+    Promise.race([
+      promise,
+      new Promise<never>((_resolve, reject) => {
+        setTimeout(
+          () => reject(new Error('promesse jamais réglée (blocage)')),
+          ms
+        );
+      }),
+    ]);
+
+  it('rappel SYNCHRONE pending:false → promesse résolue, recherche soldée, cancel ×1', async () => {
+    const player = fakePlayer();
+    let cancelCalls = 0;
+    const { deps, logs } = makeDeps(
+      player,
+      { tracks: [] },
+      {
+        search: (query, onUpdate) => {
+          expect(query.length).toBeGreaterThan(0);
+          // Rappel IMMÉDIAT : pendant l'appel à deps.search, donc avant que
+          // `handle` et `timer` n'existent dans runPlaybackSmoke.
+          onUpdate(settledUpdate([track('audius:sync', 'Piste synchrone')]));
+          return {
+            cancel: () => {
+              cancelCalls += 1;
+            },
+          } as ProgressiveSearchHandle;
+        },
+      }
+    );
+
+    const report = await withDeadline(runPlaybackSmoke('auto', deps), 1_000);
+
+    expect(report.searchSettled).toBe(true);
+    expect(logs.join(' ')).toContain('search:settled total=1');
+    // Ni zéro (fuite du handle), ni deux (double annulation).
+    expect(cancelCalls).toBe(1);
+  });
+
+  it('rappel ASYNCHRONE pending:false → résolution UNIQUE, cancel ×1', async () => {
+    const player = fakePlayer();
+    let cancelCalls = 0;
+    const { deps } = makeDeps(
+      player,
+      { tracks: [] },
+      {
+        search: (query, onUpdate) => {
+          expect(query.length).toBeGreaterThan(0);
+          setTimeout(() => {
+            onUpdate(
+              settledUpdate([track('audius:async', 'Piste asynchrone')])
+            );
+            // Second rappel soldé, volontairement plus fourni : si la promesse
+            // se réglait deux fois, totalResults vaudrait 2 et non 1.
+            onUpdate(
+              settledUpdate([
+                track('audius:late-1', 'Rappel tardif 1'),
+                track('audius:late-2', 'Rappel tardif 2'),
+              ])
+            );
+          }, 5);
+          return {
+            cancel: () => {
+              cancelCalls += 1;
+            },
+          } as ProgressiveSearchHandle;
+        },
+      }
+    );
+
+    const report = await withDeadline(runPlaybackSmoke('auto', deps), 1_000);
+
+    expect(report.searchSettled).toBe(true);
+    // Une seule résolution : c'est le PREMIER snapshot soldé qui compte.
+    expect(report.totalResults).toBe(1);
+    expect(cancelCalls).toBe(1);
+  });
+});
