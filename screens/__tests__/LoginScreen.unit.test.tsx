@@ -299,6 +299,37 @@ describe('LoginScreen — parcours humain, connexion FACULTATIVE (V29)', () => {
     expect(hasTextContaining(root, 'client_secret')).toBe(false);
   });
 
+  /**
+   * V60 — un 403 SANS corps correspond aussi à des incidents intermittents
+   * documentés côté Spotify (Spotify Community, 27-28 juillet et 11 août 2026 :
+   * PKCE réussi, jeton émis, allowlist exacte, scopes et Client ID conformes,
+   * puis « HTTP 403 with no useful response reason », auto-résolu en minutes).
+   *
+   * Le défaut concret : l'orientation omettait cette possibilité ET le conseil
+   * « réessayer plus tard », alors que la session est conservée. Le
+   * mainteneur était donc envoyé vers une recherche infructueuse au tableau de
+   * bord. Le test verrouille la mention de cette piste sans jamais exiger
+   * qu'une cause soit affirmée.
+   */
+  it('V60 — 403 NON JSON : la piste « incident Spotify intermittent » et la session conservée sont énoncées', () => {
+    mockAuthState = {
+      status: 'error',
+      outcome: { kind: 'network-blocked', cause: 'me:http·403' },
+    };
+    const root = render(<LoginScreen />);
+    // La piste documentée est énoncée — comme possibilité, pas comme cause.
+    expect(hasTextContaining(root, 'incidents intermittents')).toBe(true);
+    // Le conseil utile associé : la session est conservée, réessayer plus tard.
+    expect(hasTextContaining(root, 'session est conservée')).toBe(true);
+    expect(hasTextContaining(root, 'réessaie plus tard')).toBe(true);
+    // Aucune cause n'est affirmée pour autant.
+    expect(hasTextContaining(root, 'couche intermédiaire')).toBe(false);
+    expect(hasTextContaining(root, 'problème de compte')).toBe(false);
+    // Les vérifications de tableau de bord restent proposées, APRÈS le rejeu.
+    expect(hasTextContaining(root, 'Users and Access')).toBe(true);
+    expect(root.getByTestId(TEST_IDS.RETRY_BUTTON)).toBeTruthy();
+  });
+
   it.each(['network', 'callback-failed', 'unknown', 'not-configured-typo'])(
     'erreur %s → message HUMAIN générique demandé, pas de poussière technique',
     (kind) => {

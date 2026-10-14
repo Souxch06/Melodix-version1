@@ -202,8 +202,17 @@ export const FR_FR_LOGIN = {
   // DEUX vérifications utiles et vers la preuve affichée dans les détails.
   loginNetworkBlockedTitle:
     'Connexion réussie, mais la requête a été refusée (403).',
+  // V60 — un 403 SANS corps de réponse correspond aussi à des incidents
+  // intermittents documentés côté Spotify sur les applications en mode
+  // Development (Spotify Community, 27-28 juillet et 11 août 2026 : PKCE
+  // réussi, jeton émis, allowlist exacte, scopes et Client ID conformes, puis
+  // « HTTP 403 with no useful response reason », auto-résolu en minutes).
+  // Omettre cette possibilité envoyait le mainteneur dans une recherche
+  // infructueuse au tableau de bord. On l'énonce comme une possibilité parmi
+  // d'autres — jamais comme la cause — et on rappelle que la session est
+  // conservée, donc que « réessayer plus tard » est une action valable.
   loginNetworkBlockedBody:
-    'La connexion a réussi, mais la demande de profil a reçu un refus HTTP 403 dont la réponse n’a pas le format attendu de Spotify — l’origine du refus n’est pas encore déterminée. Ouvre « Voir les détails » et note la ligne Description. Vérifie ensuite dans le tableau de bord développeur Spotify que ton compte figure bien dans « Users and Access » et que l’abonnement Premium du propriétaire de l’application est actif. Un essai sur un autre réseau (données mobiles ou autre Wi-Fi) permet d’écarter un intermédiaire. Rien n’a été supprimé.',
+    'La connexion a réussi, mais la demande de profil a reçu un refus HTTP 403 dont la réponse n’a pas le format attendu de Spotify — l’origine du refus n’est pas encore déterminée. Ouvre « Voir les détails » et note la ligne Description. Un 403 sans corps de réponse correspond aussi à des incidents intermittents déjà signalés côté Spotify sur les applications en mode développement : rien n’est perdu et ta session est conservée, réessaie plus tard avant toute autre investigation. Si l’échec persiste, vérifie dans le tableau de bord développeur Spotify que ton compte figure bien dans « Users and Access » et que l’abonnement Premium du propriétaire de l’application est actif. Un essai sur un autre réseau (données mobiles ou autre Wi-Fi) permet d’écarter un intermédiaire.',
   loginNotConfigured:
     "La connexion Spotify n'est pas disponible pour le moment.",
   loginNotConfiguredBody: 'Réessaie plus tard.',
