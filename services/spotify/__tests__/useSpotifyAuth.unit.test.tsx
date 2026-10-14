@@ -562,6 +562,50 @@ describe('useSpotifyAuth — taxonomie du diagnostic OAuth', () => {
       expect(description.length).toBeLessThanOrEqual(120);
     });
 
+    /**
+     * V61 — la preuve ne doit pas être réservée au 403.
+     *
+     * `apiClient` peuple `bodyShape` et `contentType` pour TOUT statut HTTP
+     * (apiClient.ts:319), les en-têtes n'étant ajoutés qu'au 403. Or la
+     * description n'emportait la preuve que si `forbidden` : un 502 renvoyé par
+     * une passerelle avec une page HTML était donc strictement indiscernable
+     * d'un 502 de Spotify — exactement ce que le diagnostic doit permettre de
+     * distinguer (refus Spotify vs erreur réseau/intermédiaire).
+     */
+    it('V61 — 502 au corps NON JSON : la forme du corps et le Content-Type remontent aussi', async () => {
+      (getCurrentUser as jest.Mock).mockRejectedValueOnce(
+        new SpotifyApiError(
+          'http',
+          'Réponse Spotify non valide (502).',
+          502,
+          '',
+          {
+            bodyShape: 'non-json',
+            contentType: 'text/html',
+          }
+        )
+      );
+
+      const { result } = renderHook(() => useSpotifyAuth());
+      await act(async () => {
+        await result.current.startLogin();
+      });
+
+      expect(result.current.state.status).toBe('error');
+      if (result.current.state.status !== 'error') return;
+      const diag = result.current.state.outcome.diagnostic;
+      // LA régression : avant V61, `description` était null hors 403.
+      expect(diag?.description).toContain('corps=non-json');
+      expect(diag?.description).toContain('ct=text/html');
+      // L'étape OAuth concernée reste portée.
+      expect(diag?.stage).toBe('profile');
+      expect(diag?.httpStatus).toBe(502);
+      // Aucune donnée sensible.
+      expect(JSON.stringify(diag)).not.toMatch(
+        /Bearer|verifier|refresh_token/i
+      );
+    });
+
     it('403 NON JSON : le message N’AFFIRME plus une cause non prouvée', async () => {
       (getCurrentUser as jest.Mock).mockRejectedValueOnce(
         new SpotifyApiError(

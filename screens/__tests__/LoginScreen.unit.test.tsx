@@ -330,6 +330,58 @@ describe('LoginScreen — parcours humain, connexion FACULTATIVE (V29)', () => {
     expect(root.getByTestId(TEST_IDS.RETRY_BUTTON)).toBeTruthy();
   });
 
+  /**
+   * V61 — le panneau de diagnostic doit être COPIABLE.
+   *
+   * Tout l'intérêt de ce panneau (V58) est de permettre au mainteneur de
+   * rapporter la ligne « Description » lue sur le téléphone afin de trancher
+   * l'origine du 403. Sur Android, un <Text> sans `selectable` ne peut être ni
+   * sélectionné ni copié : la preuve était donc lisible, mais impossible à
+   * transmettre autrement qu'en la recopiant à la main.
+   *
+   * Rendre le texte copiable n'expose aucun secret : les valeurs viennent de
+   * RESPONSE_HEADER_ALLOWLIST (Authorization/cookies exclus), sont sanitisées
+   * par sanitizeErrorDescription puis re-vérifiées par
+   * isSensitiveDiagnosticValue avant rendu.
+   */
+  it('V61 — la ligne de preuve du diagnostic est copiable (selectable), sans secret', () => {
+    mockAuthState = {
+      status: 'error',
+      outcome: {
+        kind: 'network-blocked',
+        cause: 'me:http·403',
+        diagnostic: {
+          stage: 'profile',
+          httpStatus: 403,
+          errorCode: 'http',
+          description:
+            'corps=non-json · essais=3 · ct=text/html · server=envoy',
+          message: 'Profil /me : HTTP 403 au corps NON JSON',
+        },
+      },
+    };
+    const root = render(<LoginScreen />);
+    // Les détails sont MASQUÉS par défaut (volontaire) : on les ouvre comme
+    // le ferait le mainteneur sur le téléphone.
+    fireEvent.press(root.getByTestId('login-diag-show'));
+    // On cible la ligne qui porte la preuve, quel que soit son libellé.
+    const proofNodes = root
+      .UNSAFE_queryAllByProps({})
+      .filter(
+        (node) =>
+          node.type === 'Text' &&
+          typeof node.props?.children === 'string' &&
+          node.props.children.includes('corps=non-json')
+      );
+    expect(proofNodes.length).toBeGreaterThan(0);
+    // LA régression : sans `selectable`, la preuve n'était pas copiable.
+    proofNodes.forEach((node) => {
+      expect(node.props.selectable).toBe(true);
+    });
+    // Et aucun secret n'est rendu — donc rien de sensible n'est copiable.
+    expect(root.queryByText(/Bearer|code_verifier|refresh_token/i)).toBeNull();
+  });
+
   it.each(['network', 'callback-failed', 'unknown', 'not-configured-typo'])(
     'erreur %s → message HUMAIN générique demandé, pas de poussière technique',
     (kind) => {

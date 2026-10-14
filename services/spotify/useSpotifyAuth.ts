@@ -126,7 +126,7 @@ const cleanDiagnosticField = (
  * derrière. La chaîne est volontairement courte : `description` est tronquée
  * à 120 caractères à l'affichage.
  */
-const describeForbiddenEvidence = (
+const describeHttpEvidence = (
   diagnostics: SpotifyApiHttpDiagnostics | undefined
 ): string | null => {
   if (!diagnostics) {
@@ -604,9 +604,18 @@ export const useSpotifyAuth = (): {
               // Le message Spotify reste prioritaire quand il existe (il est
               // la cause documentée, ex. utilisateur non autorisé en mode
               // Development) ; sinon on affiche la preuve brute sanitisée.
-              description: forbidden
-                ? spotifyMessage || describeForbiddenEvidence(httpDiagnostics)
-                : spotifyMessage || null,
+              //
+              // V61 — la preuve vaut pour TOUT statut HTTP, plus seulement le
+              // 403 : `apiClient` peuple `bodyShape` et `contentType` quel que
+              // soit le statut (apiClient.ts:319), les en-têtes n'étant ajoutés
+              // qu'au 403. Restreindre la preuve au 403 laissait un 502
+              // renvoyé par une passerelle avec une page HTML strictement
+              // indiscernable d'un 502 de Spotify — l'inverse de ce que le
+              // diagnostic doit permettre (refus Spotify vs erreur réseau).
+              description:
+                kind === 'http'
+                  ? spotifyMessage || describeHttpEvidence(httpDiagnostics)
+                  : spotifyMessage || null,
             }
           )
         );

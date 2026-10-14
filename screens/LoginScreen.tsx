@@ -358,7 +358,14 @@ export const LoginScreen = () => {
                       {translations.loginDetailsTitle}
                     </Text>
                     {diagLines.map((line) => (
-                      <Text key={line} style={styles.diagLine}>
+                      // V61 — `selectable` : sans lui, un <Text> Android ne
+                      // peut être NI sélectionné NI copié. Or tout l'intérêt de
+                      // ce panneau est de pouvoir rapporter la ligne
+                      // `Description` au mainteneur pour trancher l'origine du
+                      // 403 (V58). Les valeurs sont déjà sanitisées à la source
+                      // puis re-vérifiées par le garde ci-dessus : rendre le
+                      // texte copiable n'expose donc aucun secret.
+                      <Text key={line} selectable style={styles.diagLine}>
                         {line}
                       </Text>
                     ))}
