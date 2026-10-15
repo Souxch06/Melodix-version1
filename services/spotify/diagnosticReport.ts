@@ -25,7 +25,7 @@
  */
 import type { SessionStatus, SpotifyVerificationFailure } from '@context';
 import type { SpotifyDiagnosticEvent } from './diagnosticHistory';
-import { isSpotifyClientIdShape } from './authConfig';
+import { isSpotifyClientIdShape, SPOTIFY_SCOPES } from './authConfig';
 import { isSensitiveDiagnosticValue } from './devLog';
 
 /** Taille maximale du rapport (caractères) — au-delà : troncature. */
@@ -46,6 +46,16 @@ export type SpotifyDiagnosticReportInput = {
     connected: boolean;
     expiresInSeconds: number;
     canRefresh: boolean;
+    /**
+     * V77 — scopes EFFECTIVEMENT ACCORDÉS par Spotify (champ `scope` de la
+     * réponse de jeton, session.ts:344), séparés par des espaces.
+     *
+     * Non sensible : un nom de scope n'est ni un jeton ni une donnée de compte.
+     * C'est en revanche la seule donnée capable de distinguer un 403 dû à un
+     * scope manquant d'un 403 dû à la configuration de l'application — jusqu'ici
+     * le scope accordé était capturé mais n'apparaissait dans AUCUN diagnostic.
+     */
+    grantedScopes?: string | null;
   } | null;
   /** Dernier échec de vérification (classé, sans valeur sensible). */
   failure: SpotifyVerificationFailure | null;
@@ -128,6 +138,12 @@ const L = {
     sessionSavedNoRefresh: 'enregistrée (sans refresh)',
     sessionAbsent: 'absente',
     sessionChecking: 'vérification en cours',
+    // V77 — scopes accordés vs demandés : seule donnée qui distingue un 403
+    // dû à un scope manquant d'un 403 dû à la configuration de l'application.
+    scopes: 'Scopes accordés',
+    scopesUnknown: 'inconnus (non fournis par la réponse de jeton)',
+    scopesComplete: 'tous les scopes demandés sont accordés',
+    scopesMissingPrefix: 'MANQUANTS : ',
     configOk: 'présente',
     configMissing: 'ABSENTE (connexion impossible dans ce build)',
     clientIdFormatInvalid:
@@ -256,6 +272,12 @@ const L = {
     sessionSavedNoRefresh: 'saved (no refresh)',
     sessionAbsent: 'absent',
     sessionChecking: 'verification in progress',
+    // V77 — granted vs requested scopes: the only datum that tells a 403
+    // caused by a missing scope apart from a 403 caused by the app's config.
+    scopes: 'Granted scopes',
+    scopesUnknown: 'unknown (not provided by the token response)',
+    scopesComplete: 'all requested scopes granted',
+    scopesMissingPrefix: 'MISSING: ',
     configOk: 'present',
     configMissing: 'MISSING (sign-in impossible in this build)',
     clientIdFormatInvalid:
@@ -493,6 +515,45 @@ export const buildSpotifyDiagnosticReport = (
     return t.sessionAbsent;
   })();
   push(`${t.session} : ${sessionLine}`);
+  // V77 — Scopes accordés vs demandés. Jusqu'ici le scope accordé était capturé
+  // (session.ts:344) mais n'apparaissait dans AUCUN diagnostic : impossible de
+  // distinguer un 403 dû à un scope manquant d'un 403 dû à la configuration de
+  // l'application. Rendu seulement si la session est établie — sans session, la
+  // ligne n'apporte rien.
+  if (input.sessionInfo?.connected) {
+    const grantedRaw = input.sessionInfo.grantedScopes;
+    // Le contrôle de sensibilité porte sur la chaîne ENTIÈRE, AVANT tout
+    // découpage. Le découper d'abord casserait la détection : le motif
+    // reconnu est une PAIRE (« Bearer <valeur> », « refresh_token=… »), donc
+    // « Bearer » et sa valeur, séparés par le split, passeraient chacun le
+    // filtre et seraient recollés à l'affichage. En cas de doute on renonce :
+    // une chaîne de scopes qui contient un secret est de toute façon invalide.
+    if (
+      typeof grantedRaw !== 'string' ||
+      grantedRaw.trim() === '' ||
+      isSensitiveDiagnosticValue(grantedRaw)
+    ) {
+      push(`${t.scopes} : ${t.scopesUnknown}`);
+    } else {
+      const granted = grantedRaw
+        .split(/\s+/)
+        .map((scope) => scope.trim())
+        .filter((scope) => scope !== '')
+        .map((scope) => sanitizeReportValue(scope, 40));
+      const missing = SPOTIFY_SCOPES.filter(
+        (scope) => !granted.includes(scope)
+      );
+      const verdict =
+        missing.length > 0
+          ? `${t.scopesMissingPrefix}${missing.join(' ')}`
+          : `(${t.scopesComplete})`;
+      push(
+        `${t.scopes} : ${
+          granted.length > 0 ? granted.join(' ') : t.scopesUnknown
+        } — ${verdict}`
+      );
+    }
+  }
   const identityLine = (() => {
     switch (input.sessionStatus) {
       case 'spotify':

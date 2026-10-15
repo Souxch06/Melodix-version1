@@ -74,6 +74,24 @@ describe('services/spotify/session (SecureStore)', () => {
     expect(description?.expiresInSeconds).toBeGreaterThan(3000);
   });
 
+  /**
+   * V77 — les scopes EFFECTIVEMENT accordés remontent dans describeSession, et
+   * donc dans le rapport de diagnostic. Un nom de scope n'est ni un jeton, ni
+   * un secret, ni une donnée de compte ; les jetons, eux, ne sortent toujours
+   * pas.
+   */
+  it('V77 — describeSession remonte les scopes accordés, jamais les jetons', async () => {
+    await saveSession(freshSession());
+
+    const description = await describeSession();
+    expect(description?.grantedScopes).toBe(
+      'user-read-private playlist-read-private'
+    );
+    const serialized = JSON.stringify(description);
+    expect(serialized).not.toContain('access-new');
+    expect(serialized).not.toContain('refresh-new');
+  });
+
   it('save → load : access token LONG (~1500 car.) revenu INTACT (aucune troncature)', async () => {
     // Régression §4 : un token tronqué au stockage produirait un Bearer
     // invalide (401) — le round-trip doit être bit-perfect, y compris pour

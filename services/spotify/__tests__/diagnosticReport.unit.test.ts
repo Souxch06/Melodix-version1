@@ -421,3 +421,112 @@ describe('buildSpotifyDiagnosticReport — parité fr/en', () => {
     expect(r).toContain('Users and Access');
   });
 });
+
+/**
+ * V77 — scopes EFFECTIVEMENT accordés dans le diagnostic.
+ *
+ * Le scope accordé était capturé depuis toujours (session.ts:344, champ `scope`
+ * de la réponse de jeton) mais n'apparaissait dans AUCUN diagnostic : il était
+ * donc impossible de distinguer un 403 dû à un scope manquant d'un 403 dû à la
+ * configuration de l'application. Un nom de scope n'est ni un jeton, ni un
+ * secret, ni une donnée de compte — son affichage est sûr.
+ */
+describe('buildSpotifyDiagnosticReport — scopes accordés vs demandés (V77)', () => {
+  const ALL =
+    'user-read-private user-library-read playlist-read-private playlist-read-collaborative';
+
+  it('tous les scopes accordés : la liste est affichée et le verdict est complet', () => {
+    const r = buildSpotifyDiagnosticReport(
+      baseInput({
+        sessionInfo: {
+          connected: true,
+          expiresInSeconds: 2700,
+          canRefresh: true,
+          grantedScopes: ALL,
+        },
+      })
+    );
+    expect(r).toContain('Scopes accordés');
+    expect(r).toContain('user-read-private');
+    expect(r).toContain('playlist-read-collaborative');
+    expect(r).toContain('tous les scopes demandés sont accordés');
+    expect(r).not.toContain('MANQUANTS');
+  });
+
+  it('un scope manquant : il est NOMMÉ explicitement (cause démontrable d un 403)', () => {
+    const r = buildSpotifyDiagnosticReport(
+      baseInput({
+        sessionInfo: {
+          connected: true,
+          expiresInSeconds: 2700,
+          canRefresh: true,
+          grantedScopes: 'user-read-private playlist-read-private',
+        },
+      })
+    );
+    // LA régression : avant V77, aucune ligne ne permettait de le voir.
+    expect(r).toContain('MANQUANTS');
+    expect(r).toContain('user-library-read');
+    expect(r).toContain('playlist-read-collaborative');
+    expect(r).not.toContain('tous les scopes demandés sont accordés');
+  });
+
+  it('scopes absents de la réponse de jeton : dit « inconnus », jamais inventés', () => {
+    const r = buildSpotifyDiagnosticReport(
+      baseInput({
+        sessionInfo: {
+          connected: true,
+          expiresInSeconds: 2700,
+          canRefresh: true,
+          grantedScopes: '',
+        },
+      })
+    );
+    expect(r).toContain('inconnus');
+    expect(r).not.toContain('MANQUANTS');
+  });
+
+  it('sans session : aucune ligne de scope (rien à dire)', () => {
+    const r = buildSpotifyDiagnosticReport(baseInput({ sessionInfo: null }));
+    expect(r).not.toContain('Scopes accordés');
+  });
+
+  it('anglais : la section est traduite', () => {
+    const r = buildSpotifyDiagnosticReport(
+      baseInput({
+        lang: 'en',
+        locale: 'en',
+        sessionInfo: {
+          connected: true,
+          expiresInSeconds: 2700,
+          canRefresh: true,
+          grantedScopes: 'user-read-private',
+        },
+      })
+    );
+    expect(r).toContain('Granted scopes');
+    expect(r).toContain('MISSING:');
+  });
+
+  it('chaîne de scopes contenant un secret : RIEN n est rendu (contrôle avant découpage)', () => {
+    const r = buildSpotifyDiagnosticReport(
+      baseInput({
+        sessionInfo: {
+          connected: true,
+          expiresInSeconds: 2700,
+          canRefresh: true,
+          grantedScopes: `${ALL} Bearer abc.def.ghi refresh_token=secret`,
+        },
+      })
+    );
+    // LA régression : découper AVANT de contrôler séparait « Bearer » de sa
+    // valeur, et chacun passait le filtre — la paire était recollée à
+    // l'affichage. Le contrôle porte désormais sur la chaîne entière.
+    expect(r).not.toContain('Bearer abc.def.ghi');
+    expect(r).not.toContain('abc.def.ghi');
+    expect(r).not.toContain('refresh_token=secret');
+    expect(r).not.toContain('Bearer');
+    // On renonce plutôt que de trier : la ligne dit « inconnus ».
+    expect(r).toContain('Scopes accordés : inconnus');
+  });
+});

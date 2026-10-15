@@ -623,6 +623,11 @@ export const describeSession = async (): Promise<{
   connected: boolean;
   expiresInSeconds: number;
   canRefresh: boolean;
+  /**
+   * V77 — scopes EFFECTIVEMENT accordés par Spotify (champ `scope` de la
+   * réponse de jeton). Nom de scope : ni jeton, ni secret, ni donnée de compte.
+   */
+  grantedScopes: string;
 } | null> => {
   const session = await loadSession();
   if (!session) {
@@ -635,6 +640,7 @@ export const describeSession = async (): Promise<{
       Math.round((session.expiresAtMs - Date.now()) / 1000)
     ),
     canRefresh: !!session.refreshToken,
+    grantedScopes: session.scope ?? '',
   };
 };
 
