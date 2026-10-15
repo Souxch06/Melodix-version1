@@ -128,24 +128,24 @@ export const EN_GB_LOGIN = {
   loginProfileForbiddenTitle: 'Spotify denied access to this app.',
   loginProfileForbiddenBody:
     'Sign-in itself worked, but Spotify is rejecting this app’s requests (HTTP 403). In development mode, the app requires an active Premium subscription for its owner, and your account must be listed under “Users and Access”. Nothing has been deleted — try again after checking the Spotify developer dashboard.',
-  // V59 — NON-JSON 403 body. ESTABLISHED: sign-in worked and /v1/me returned
-  // a 403 whose response is not in Spotify’s format. NOT established: where
-  // the refusal came from. The previous copy asserted an intermediate network
-  // layer and explicitly ruled out account and configuration — yet Spotify’s
-  // own documentation (“Quota modes”) specifies a 403 on API calls for a user
-  // missing from “Users and Access”. Nothing is asserted here; the user is
-  // pointed at BOTH useful checks and at the evidence shown in the details.
-  loginNetworkBlockedTitle: 'Signed in, but the request was refused (403).',
-  // V60 — a 403 with NO response body also matches intermittent Spotify-side
-  // incidents documented for Development Mode apps (Spotify Community, 27-28
-  // July and 11 August 2026: PKCE succeeded, token issued, allowlist exact,
-  // scopes and Client ID conformant, then "HTTP 403 with no useful response
-  // reason", self-resolved within minutes). Omitting this sent the maintainer
-  // on a futile dashboard hunt. Stated as one possibility among others — never
-  // as the cause — plus a reminder that the session is kept, so "try again
-  // later" is a valid action.
+  // V75 — HTTP 403 on /v1/me. ESTABLISHED: the OAuth sign-in completed and
+  // Spotify refused the profile read. NOT established: the reason.
+  //
+  // The previous copy led with two unproven causes — “intermittent” incidents on
+  // Spotify’s side, and trying another network to “rule out an intermediary”.
+  // The second is disproved by the evidence: `server: envoy` +
+  // `via: HTTP/2 edgeproxy, 1.1 google` are the headers Spotify returns on its
+  // OWN responses, including 200 OK (Spotify Community #5193142, #5616143,
+  // #5233575). They do not identify an intermediary, and the 403 persists on 5G.
+  //
+  // The most likely causes are account or app restrictions in Development mode
+  // (official “Quota modes” documentation). They are stated as HYPOTHESES to
+  // check, and retrying does not fix them — hence no “try again later” as the
+  // main action, in favour of the dashboard and the “Continue without Spotify”
+  // path (that button is always present on this screen).
+  loginNetworkBlockedTitle: 'Spotify refused access to your profile (403).',
   loginNetworkBlockedBody:
-    'Sign-in worked, but the profile request received an HTTP 403 whose response is not in the expected Spotify format — the origin of the refusal is not yet determined. Open “View details” and note the Description line. A 403 with no response body also matches intermittent issues already reported on Spotify’s side for development mode apps: nothing is lost and your session is kept, so try again later before any further investigation. If it keeps failing, check in the Spotify developer dashboard that your account is listed under “Users and Access” and that the app owner has an active Premium subscription. Trying another network (mobile data or a different Wi-Fi) helps rule out an intermediary.',
+    'Spotify refused access to your account profile (HTTP 403): sign-in completed, but this app is not allowed to read the profile. Possible causes — none is confirmed here, these are hypotheses to check: your account is not listed under “Users and Access” in the Spotify developer dashboard, or the app owner does not have an active Premium subscription (required in Development mode). Retrying will not fix these restrictions: the check has to be made in the Spotify dashboard. Your session is kept and nothing was deleted. In the meantime Melodix remains usable without a Spotify connection — search and playback on iTunes, Audius, YouTube and Jamendo — via “Continue without Spotify”.',
   loginNotConfigured: 'Spotify sign-in is unavailable right now.',
   loginNotConfiguredBody: 'Please try again later.',
   // TEMPORARY DIAGNOSTIC MODE: non-sensitive technical details, hidden by

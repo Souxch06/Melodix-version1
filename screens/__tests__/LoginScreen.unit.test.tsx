@@ -89,6 +89,7 @@ const TEST_IDS = {
   SPOTIFY_BUTTON: 'login-spotify-button',
   ERROR_CARD: 'login-error-card',
   RETRY_BUTTON: 'login-retry-button',
+  SKIP_BUTTON: 'login-skip-button',
   STATUS: 'login-status-text',
   SUCCESS_TEXT: 'login-success-text',
 };
@@ -258,76 +259,64 @@ describe('LoginScreen — parcours humain, connexion FACULTATIVE (V29)', () => {
   });
 
   /**
-   * V59 — le libellé V39 AFFIRMAIT une cause non prouvée.
+   * V75 — le libellé V59/V60 avançait deux causes NON DÉMONTRÉES comme pistes
+   * principales : des « incidents intermittents » côté Spotify, et un essai sur
+   * un « autre réseau » pour écarter un intermédiaire.
    *
-   * Il disait « une couche intermédiaire du réseau (opérateur, filtre, proxy)
-   * a renvoyé un refus HTTP 403 » et ajoutait « Ce n'est ni un problème de
-   * compte ni de configuration ». Or la documentation officielle Spotify
-   * (« Quota modes ») prévoit précisément un 403 sur les appels API pour un
-   * utilisateur absent de « Users and Access » en mode Development. Un corps
-   * non JSON est un INDICE, pas une preuve : l'application n'a pas à trancher
-   * à la place de la preuve, ni à écarter les causes les plus probables.
+   * La seconde est infirmée par la preuve : `server: envoy` +
+   * `via: HTTP/2 edgeproxy, 1.1 google` sont les en-têtes que Spotify renvoie
+   * sur ses PROPRES réponses, y compris les 200 OK (Spotify Community
+   * #5193142, #5616143, #5233575). Ils ne désignent donc pas un intermédiaire —
+   * et le 403 persiste en 5G. La première n'est pas démontrée non plus.
    *
-   * Ce test remplace l'ancien test V39, qui verrouillait le texte fautif.
+   * Les causes les plus probables sont des restrictions de compte ou
+   * d'application en mode Development (documentation officielle « Quota
+   * modes »). Elles doivent être présentées comme des HYPOTHÈSES, et le réessai
+   * ne les corrige pas : il ne doit donc plus être la solution principale.
+   *
+   * Ces deux tests REMPLACENT les tests V59/V60, qui verrouillaient le texte
+   * fautif — ils ne sont pas supprimés, leurs exigences utiles sont conservées
+   * (aucune cause affirmée, aucune donnée d'identification demandée).
    */
-  it('V59 — 403 NON JSON sur /me : aucune cause affirmée, les DEUX vérifications utiles proposées', () => {
+  it('V75 — 403 sur /me : aucune cause réseau ni incident affirmés, les causes probables restent des hypothèses', () => {
     mockAuthState = {
       status: 'error',
       outcome: { kind: 'network-blocked', cause: 'me:http·403' },
     };
     const root = render(<LoginScreen />);
-    // Le titre n'accuse plus le réseau d'être LA cause.
-    expect(
-      root.queryByText('Le réseau bloque la requête vers Spotify.')
-    ).toBeNull();
-    // Le fait ÉTABLI reste dit : un refus 403.
+    // Le fait ÉTABLI reste dit : Spotify a refusé, HTTP 403.
     expect(hasTextContaining(root, '403')).toBe(true);
-    // Aucune cause non prouvée n'est affirmée...
+    // LA régression V75 : ni réseau, ni incident, ni intermédiaire.
+    expect(hasTextContaining(root, 'incidents intermittents')).toBe(false);
+    expect(hasTextContaining(root, 'autre réseau')).toBe(false);
     expect(hasTextContaining(root, 'couche intermédiaire')).toBe(false);
-    // ...et les causes probables ne sont plus ÉCARTÉES.
-    expect(hasTextContaining(root, 'problème de compte')).toBe(false);
-    // Les DEUX vérifications utiles sont proposées : tableau de bord ET
-    // essai sur un autre réseau (pour écarter un intermédiaire).
+    // Les causes probables sont présentes, MAIS annoncées comme hypothèses.
+    expect(hasTextContaining(root, 'hypothèses')).toBe(true);
     expect(hasTextContaining(root, 'Users and Access')).toBe(true);
-    expect(hasTextContaining(root, 'autre réseau')).toBe(true);
-    // La preuve réellement discriminante (détails) est signalée.
-    expect(hasTextContaining(root, 'Description')).toBe(true);
-    // Réessai manuel autorisé (jamais de boucle automatique) :
-    expect(root.getByTestId(TEST_IDS.RETRY_BUTTON)).toBeTruthy();
+    expect(hasTextContaining(root, 'Premium')).toBe(true);
+    // Aucune cause n'est affirmée pour autant.
+    expect(hasTextContaining(root, 'problème de compte')).toBe(false);
     // Aucun credential demandé à l'utilisateur.
     expect(hasTextContaining(root, 'Client ID')).toBe(false);
     expect(hasTextContaining(root, 'client_secret')).toBe(false);
   });
 
-  /**
-   * V60 — un 403 SANS corps correspond aussi à des incidents intermittents
-   * documentés côté Spotify (Spotify Community, 27-28 juillet et 11 août 2026 :
-   * PKCE réussi, jeton émis, allowlist exacte, scopes et Client ID conformes,
-   * puis « HTTP 403 with no useful response reason », auto-résolu en minutes).
-   *
-   * Le défaut concret : l'orientation omettait cette possibilité ET le conseil
-   * « réessayer plus tard », alors que la session est conservée. Le
-   * mainteneur était donc envoyé vers une recherche infructueuse au tableau de
-   * bord. Le test verrouille la mention de cette piste sans jamais exiger
-   * qu'une cause soit affirmée.
-   */
-  it('V60 — 403 NON JSON : la piste « incident Spotify intermittent » et la session conservée sont énoncées', () => {
+  it('V75 — 403 sur /me : session conservée, voie « sans Spotify » proposée, le réessai n est pas la solution principale', () => {
     mockAuthState = {
       status: 'error',
       outcome: { kind: 'network-blocked', cause: 'me:http·403' },
     };
     const root = render(<LoginScreen />);
-    // La piste documentée est énoncée — comme possibilité, pas comme cause.
-    expect(hasTextContaining(root, 'incidents intermittents')).toBe(true);
-    // Le conseil utile associé : la session est conservée, réessayer plus tard.
+    // La session est conservée — rien n'est supprimé sur un seul 403.
     expect(hasTextContaining(root, 'session est conservée')).toBe(true);
-    expect(hasTextContaining(root, 'réessaie plus tard')).toBe(true);
-    // Aucune cause n'est affirmée pour autant.
-    expect(hasTextContaining(root, 'couche intermédiaire')).toBe(false);
-    expect(hasTextContaining(root, 'problème de compte')).toBe(false);
-    // Les vérifications de tableau de bord restent proposées, APRÈS le rejeu.
-    expect(hasTextContaining(root, 'Users and Access')).toBe(true);
-    expect(root.getByTestId(TEST_IDS.RETRY_BUTTON)).toBeTruthy();
+    // LA régression V75 : « réessaie plus tard » n'est plus l'action conseillée,
+    // un réessai ne corrige pas une restriction de compte.
+    expect(hasTextContaining(root, 'réessaie plus tard')).toBe(false);
+    // La prochaine action utile : la vérification au tableau de bord.
+    expect(hasTextContaining(root, 'tableau de bord')).toBe(true);
+    // Et la voie utilisable immédiatement : continuer sans Spotify.
+    expect(hasTextContaining(root, 'Continuer sans Spotify')).toBe(true);
+    expect(root.getByTestId(TEST_IDS.SKIP_BUTTON)).toBeTruthy();
   });
 
   /**

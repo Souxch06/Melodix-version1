@@ -192,27 +192,26 @@ export const FR_FR_LOGIN = {
   loginProfileForbiddenTitle: 'Spotify a refusé l’accès à cette application.',
   loginProfileForbiddenBody:
     'La connexion en elle-même a réussi, mais Spotify rejette les requêtes de cette application (HTTP 403). En mode développement, l’application exige un abonnement Premium actif pour son propriétaire et que ton compte figure dans « Users and Access ». Rien n’a été supprimé — réessaie après vérification dans le tableau de bord développeur Spotify.',
-  // V59 — HTTP 403 au corps NON JSON. Ce qui est ÉTABLI : la connexion a
-  // réussi et /v1/me a renvoyé un 403 dont la réponse n'a pas le format
-  // Spotify. Ce qui ne l'est PAS : l'origine du refus. L'ancien texte
-  // affirmait une couche intermédiaire et écartait explicitement le compte et
-  // la configuration — or la documentation officielle Spotify (« Quota
-  // modes ») prévoit un 403 sur les appels API pour un utilisateur absent de
-  // « Users and Access ». On n'affirme donc plus rien, on oriente vers les
-  // DEUX vérifications utiles et vers la preuve affichée dans les détails.
-  loginNetworkBlockedTitle:
-    'Connexion réussie, mais la requête a été refusée (403).',
-  // V60 — un 403 SANS corps de réponse correspond aussi à des incidents
-  // intermittents documentés côté Spotify sur les applications en mode
-  // Development (Spotify Community, 27-28 juillet et 11 août 2026 : PKCE
-  // réussi, jeton émis, allowlist exacte, scopes et Client ID conformes, puis
-  // « HTTP 403 with no useful response reason », auto-résolu en minutes).
-  // Omettre cette possibilité envoyait le mainteneur dans une recherche
-  // infructueuse au tableau de bord. On l'énonce comme une possibilité parmi
-  // d'autres — jamais comme la cause — et on rappelle que la session est
-  // conservée, donc que « réessayer plus tard » est une action valable.
+  // V75 — HTTP 403 sur /v1/me. Ce qui est ÉTABLI : la connexion OAuth a abouti
+  // et Spotify a refusé la lecture du profil. Ce qui ne l'est PAS : la raison.
+  //
+  // Le texte précédent avançait deux causes non démontrées comme pistes
+  // principales — des « incidents intermittents » côté Spotify, et un essai sur
+  // un autre réseau pour « écarter un intermédiaire ». La seconde est infirmée
+  // par la preuve : `server: envoy` + `via: HTTP/2 edgeproxy, 1.1 google` sont
+  // les en-têtes que Spotify renvoie sur ses PROPRES réponses, y compris les
+  // 200 OK (Spotify Community #5193142, #5616143, #5233575). Ils ne désignent
+  // donc pas un intermédiaire, et le 403 persiste en 5G.
+  //
+  // Les causes les plus probables sont des restrictions de compte ou
+  // d'application en mode Development (documentation officielle « Quota
+  // modes ») : elles sont présentées comme des HYPOTHÈSES à vérifier, et
+  // surtout un réessai ne les corrige pas — d'où l'absence de « réessaie plus
+  // tard » comme action principale, au profit du tableau de bord et de la voie
+  // « Continuer sans Spotify » (bouton toujours présent sur cet écran).
+  loginNetworkBlockedTitle: 'Spotify a refusé l’accès au profil (403).',
   loginNetworkBlockedBody:
-    'La connexion a réussi, mais la demande de profil a reçu un refus HTTP 403 dont la réponse n’a pas le format attendu de Spotify — l’origine du refus n’est pas encore déterminée. Ouvre « Voir les détails » et note la ligne Description. Un 403 sans corps de réponse correspond aussi à des incidents intermittents déjà signalés côté Spotify sur les applications en mode développement : rien n’est perdu et ta session est conservée, réessaie plus tard avant toute autre investigation. Si l’échec persiste, vérifie dans le tableau de bord développeur Spotify que ton compte figure bien dans « Users and Access » et que l’abonnement Premium du propriétaire de l’application est actif. Un essai sur un autre réseau (données mobiles ou autre Wi-Fi) permet d’écarter un intermédiaire.',
+    'Spotify a refusé l’accès au profil de ton compte (HTTP 403) : la connexion a abouti, mais cette application n’est pas autorisée à lire le profil. Causes possibles — aucune n’est confirmée ici, ce sont des hypothèses à vérifier : ton compte n’est pas listé dans « Users and Access » du tableau de bord développeur Spotify, ou le propriétaire de l’application n’a pas d’abonnement Premium actif (exigé en mode Development). Un réessai ne corrige pas ces restrictions : la vérification se fait dans le tableau de bord Spotify. Ta session est conservée et rien n’a été supprimé. En attendant, Melodix reste utilisable sans connexion Spotify — recherche et lecture sur iTunes, Audius, YouTube et Jamendo — via « Continuer sans Spotify ».',
   loginNotConfigured:
     "La connexion Spotify n'est pas disponible pour le moment.",
   loginNotConfiguredBody: 'Réessaie plus tard.',
