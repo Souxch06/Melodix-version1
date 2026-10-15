@@ -23,6 +23,7 @@ import * as React from 'react';
 import { Animated, TextInput } from 'react-native';
 import { act, fireEvent, render } from '@testing-library/react-native';
 import { useRouter } from 'expo-router';
+import Constants from 'expo-constants';
 
 import { LoginScreen } from '../LoginScreen';
 
@@ -559,5 +560,114 @@ describe('LoginScreen — parcours humain, connexion FACULTATIVE (V29)', () => {
   it('navbar de version présente (identifie le binaire — non technique)', () => {
     const { getByTestId } = render(<LoginScreen />);
     expect(getByTestId('login-version-text')).toBeTruthy();
+  });
+
+  /**
+   * V75 — version du build et détection d'un APK ANCIEN.
+   *
+   * `expo.version` (4.5.0-test.37) et le versionCode (45037) sont quasi
+   * constants d'un APK à l'autre : seul le commit les discrimine. Sans cette
+   * ligne, un diagnostic incomplet est indiscernable d'un véritable bug — et le
+   * champ `edge=` ajouté en 9acdcae en est justement le marqueur.
+   */
+  it('V75 — la version du build est affichée dans le diagnostic', () => {
+    (Constants.default ?? Constants).__setExpoConfigExtra({
+      buildCommit: '1bef2da94c39',
+    });
+    try {
+      mockAuthState = {
+        status: 'error',
+        outcome: {
+          kind: 'network-blocked',
+          cause: 'me:http·403',
+          diagnostic: {
+            stage: 'profile',
+            httpStatus: 403,
+            errorCode: 'http',
+            description: 'corps=non-json · essais=3 · edge=spotify',
+            message: 'Profil /me : HTTP 403 au corps NON JSON',
+          },
+        },
+      };
+      const root = render(<LoginScreen />);
+      fireEvent.press(root.getByTestId('login-diag-show'));
+      // LA régression : aucune version de build n'était affichée.
+      expect(hasTextContaining(root, '1bef2da94c39')).toBe(true);
+      // Aucun secret rendu.
+      expect(
+        root.queryByText(/Bearer|code_verifier|refresh_token|client_secret/i)
+      ).toBeNull();
+    } finally {
+      (Constants.default ?? Constants).__setExpoConfigExtra({});
+    }
+  });
+
+  it('V75 — une preuve portant « corps= » mais pas « edge= » signale un APK ancien', () => {
+    mockAuthState = {
+      status: 'error',
+      outcome: {
+        kind: 'network-blocked',
+        cause: 'me:http·403',
+        diagnostic: {
+          stage: 'profile',
+          httpStatus: 403,
+          errorCode: 'http',
+          // Format ANTÉRIEUR à 9acdcae : `corps=` sans `edge=`.
+          description: 'corps=non-json · essais=3 · server=envoy',
+          message: 'Profil /me : HTTP 403 au corps NON JSON',
+        },
+      },
+    };
+    const root = render(<LoginScreen />);
+    fireEvent.press(root.getByTestId('login-diag-show'));
+    // LA régression : un APK périmé était pris pour un bug.
+    expect(hasTextContaining(root, 'Version ancienne')).toBe(true);
+  });
+
+  it('V75 — une preuve AVEC « edge= » ne signale PAS un APK ancien', () => {
+    mockAuthState = {
+      status: 'error',
+      outcome: {
+        kind: 'network-blocked',
+        cause: 'me:http·403',
+        diagnostic: {
+          stage: 'profile',
+          httpStatus: 403,
+          errorCode: 'http',
+          description: 'corps=non-json · essais=3 · edge=spotify',
+          message: 'Profil /me : HTTP 403 au corps NON JSON',
+        },
+      },
+    };
+    const root = render(<LoginScreen />);
+    fireEvent.press(root.getByTestId('login-diag-show'));
+    expect(hasTextContaining(root, 'Version ancienne')).toBe(false);
+  });
+
+  /**
+   * V75 — garde-fou du critère à DEUX champs. Un 403 JSON avec message Spotify
+   * affiche ce message à la place de la preuve brute : il n'y a donc ni
+   * `corps=` ni `edge=`, alors que le build est récent. Se fier à la seule
+   * absence de `edge=` produirait un faux « APK ancien » sur ces cas — d'où
+   * l'exigence que `corps=` soit présent.
+   */
+  it('V75 — un 403 JSON avec message Spotify ne déclenche PAS le faux positif', () => {
+    mockAuthState = {
+      status: 'error',
+      outcome: {
+        kind: 'profile-forbidden',
+        cause: 'me:http·403·User not approved for app',
+        diagnostic: {
+          stage: 'profile',
+          httpStatus: 403,
+          errorCode: 'http',
+          description: 'User not approved for app',
+          message: 'Profil /me : accès refusé par Spotify (HTTP 403)',
+        },
+      },
+    };
+    const root = render(<LoginScreen />);
+    fireEvent.press(root.getByTestId('login-diag-show'));
+    expect(hasTextContaining(root, 'Version ancienne')).toBe(false);
   });
 });

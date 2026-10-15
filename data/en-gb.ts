@@ -161,6 +161,14 @@ export const EN_GB_LOGIN = {
   loginDiagDescription: 'Description',
   loginDiagMessage: 'Message',
   loginDiagRedacted: '<redacted>',
+  // V75 — build version and stale-APK detection. `expo.version` and the
+  // versionCode are near-constant from one build to the next: only the commit
+  // discriminates two APKs. And the `edge=` field was added in 9acdcae — its
+  // absence in evidence that already carries `corps=` proves an older build,
+  // which keeps a stale APK from being mistaken for a bug.
+  loginDiagBuild: 'APK build',
+  loginDiagOldApk:
+    'Old build: reinstall the APK from the latest build (the “edge=” field is missing from the diagnostic).',
   loginPrivacyNote:
     'Secure sign-in with Spotify. You will never be asked for a key: you sign in on the official Spotify page, then return to Melodix.',
   loginSecureFootnote: 'Secure sign-in with Spotify',

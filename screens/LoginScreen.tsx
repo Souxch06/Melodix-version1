@@ -162,6 +162,30 @@ export const LoginScreen = () => {
           : text;
       return `${label} : ${safe}`;
     };
+    // V75 — Version du build. `expo.version` (4.5.0-test.37) et le versionCode
+    // (45037) sont quasi constants d'un APK à l'autre : SEUL le commit les
+    // discrimine. Sans cette ligne, un diagnostic incomplet est indiscernable
+    // d'un véritable bug. Valeur non sensible (SHA public), déjà bornée et
+    // filtrée à l'hexadécimal dans app.config.js, et re-vérifiée par `field`.
+    const extra = Constants.expoConfig?.extra as
+      | { buildCommit?: unknown }
+      | undefined;
+    const buildCommit =
+      typeof extra?.buildCommit === 'string' ? extra.buildCommit.trim() : '';
+
+    // V75 — Détection d'un APK ANCIEN. `describeHttpEvidence` émet `corps=` et
+    // `edge=` dans la MÊME chaîne ; `edge=` a été ajouté en 9acdcae. Une preuve
+    // qui porte `corps=` mais pas `edge=` vient donc d'un build antérieur.
+    //
+    // Le test porte sur les DEUX champs à dessein : un 403 JSON avec message
+    // Spotify affiche le message à la place de la preuve brute, donc sans
+    // `corps=` — exiger `edge=` seul condamnerait à tort ces builds récents.
+    // (`req=`, lui, est conditionnel à la présence de l'en-tête x-request-id :
+    // son absence ne prouve rien et n'est volontairement PAS utilisée ici.)
+    const description = typeof d.description === 'string' ? d.description : '';
+    const staleApk =
+      description.includes('corps=') && !description.includes('edge=');
+
     return [
       field(translations.loginDiagStage, d.stage),
       field(translations.loginDiagType, state.outcome.kind),
@@ -169,8 +193,10 @@ export const LoginScreen = () => {
       field(translations.loginDiagCode, d.errorCode),
       field(translations.loginDiagDescription, d.description),
       field(translations.loginDiagMessage, d.message),
+      field(translations.loginDiagBuild, buildCommit || null),
+      staleApk ? translations.loginDiagOldApk : null,
     ].filter((line): line is string => line !== null);
-  }, [state]);
+  }, [state, translations]);
 
   const errorCard: ErrorCard = React.useMemo(() => {
     if (!configured) {

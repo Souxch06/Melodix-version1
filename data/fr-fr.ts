@@ -228,6 +228,14 @@ export const FR_FR_LOGIN = {
   loginDiagDescription: 'Description',
   loginDiagMessage: 'Message',
   loginDiagRedacted: '<masqué>',
+  // V75 — version du build et détection d'un APK ANCIEN. `expo.version` et le
+  // versionCode sont quasi constants d'un build à l'autre : seul le commit
+  // discrimine deux APK. Et le champ `edge=` a été ajouté en 9acdcae — son
+  // absence dans une preuve qui porte déjà `corps=` prouve un build antérieur,
+  // ce qui évite de prendre un APK périmé pour un bug.
+  loginDiagBuild: 'Version APK',
+  loginDiagOldApk:
+    'Version ancienne : réinstallez l’APK du dernier build (le champ « edge= » manque au diagnostic).',
   loginPrivacyNote:
     'Connexion sécurisée avec Spotify. Aucune clé ne te sera demandée : tu te connectes sur la page officielle de Spotify, puis tu reviens à Melodix.',
   loginSecureFootnote: 'Connexion sécurisée avec Spotify',

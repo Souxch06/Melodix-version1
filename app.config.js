@@ -50,6 +50,26 @@ const audiusApiKey = process.env.AUDIUS_API_KEY || '';
 //   Défaillance corrigée (V48) : api/jamendo/config.ts documentait cette voie
 //   `extra.jamendoClientId`, mais rien ne la peuplait — elle était morte.
 const jamendoClientId = (process.env.JAMENDO_CLIENT_ID || '').trim();
+
+// V75 — Commit court du build, pour distinguer un APK ANCIEN d'un bug.
+// GITHUB_SHA est fourni automatiquement par GitHub Actions ; hors CI (build
+// local) la valeur reste vide et l'écran de diagnostic le dit tel quel au lieu
+// d'inventer une version.
+//
+// Pourquoi c'est nécessaire : `expo.version` (`4.5.0-test.37`) et le
+// `versionCode` (45037) sont quasi constants d'un build à l'autre — SEUL le
+// commit discrimine deux APK. Sans lui, un diagnostic incomplet (par exemple
+// l'absence du champ `edge=` ajouté en 9acdcae) est indiscernable d'un
+// véritable bug.
+//
+// Non sensible : un SHA de commit public n'est ni un secret ni une donnée
+// personnelle. Borné à 12 caractères et restreint à l'hexadécimal pour
+// qu'aucune valeur arbitraire ne puisse être inlinée dans le bundle.
+const buildCommit = (process.env.GITHUB_SHA || '')
+  .trim()
+  .toLowerCase()
+  .replace(/[^0-9a-f]/g, '')
+  .slice(0, 12);
 // ▸ Client ID : application Spotify « Melodix » du projet. Information
 //   PUBLIQUE par conception (client public OAuth — PKCE exclut tout
 //   Client Secret). SOURCE UNIQUE COMMITTÉE ci-dessous ; la variable
@@ -184,6 +204,9 @@ module.exports = {
       // V48 — voir `jamendoClientId` ci-dessus : voie « asset natif » lue par
       // api/jamendo/config.ts (l'autre voie est l'inlinage Metro EXPO_PUBLIC_*).
       jamendoClientId,
+      // V75 — commit court du build (voir ci-dessus) : seul discriminant fiable
+      // entre deux APK, `expo.version` et `versionCode` étant quasi constants.
+      buildCommit,
       router: {
         origin: false,
       },
