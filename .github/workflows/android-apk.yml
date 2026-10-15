@@ -190,6 +190,24 @@ jobs:
             fi
             exit 1
           fi
+          # V76 — Client ID de l'application d'EXEMPLE du SDK Spotify refusé.
+          #
+          # 089d841c…1d54 est le Client ID de auth-sample/app-remote-sample
+          # (spotify/android-auth, MainActivity.java). Il appartient à Spotify,
+          # pas au projet : son tableau de bord ne déclare ni notre redirect URI
+          # ni notre compte dans « Users and Access », et cet exemple exige le
+          # nom de paquet et l'empreinte SHA-1 de SON propre certificat. Un build
+          # portant cet identifiant s'authentifierait comme une AUTRE application
+          # Spotify — la cause même de « redirect_uri: Not matching
+          # configuration » puis du HTTP 403 sur /v1/me. Retiré en a6760df
+          # (« zéro identifiant tiers embarqué »), classé « CAS C — non
+          # réutilisable » par l'audit V30. Le redirect qui l'accompagnait
+          # (comspotifytestsdk://callback) est déjà refusé plus haut ; ce garde
+          # ferme le volet Client ID, qui ne l'était pas.
+          if [ "$CID" = "089d841ccc194c10a77afad9e1c11d54" ]; then
+            echo "::error title=Client ID tiers refusé::089d841c… est le Client ID de l'application d'exemple du SDK Spotify (spotify/android-auth) — il appartient à un tiers et ne peut pas authentifier Melodix. Attendu : le Client ID de l'application « Melodix » du projet (empreinte 97a6…b3ed)."
+            exit 1
+          fi
           # V70 — empreinte NON sensible du Client ID effectif.
           #
           # Un Client ID Spotify est un identifiant PUBLIC (client PKCE public,

@@ -76,6 +76,43 @@ describe('app.config.js — Client ID Spotify (source unique committée)', () =>
     expect(JSON.stringify(config.expo.extra)).not.toMatch(/client_?secret/i);
   });
 
+  /**
+   * V76 — l'identifiant de l'application d'EXEMPLE du SDK Spotify ne doit
+   * JAMAIS être embarqué.
+   *
+   * `089d841c…1d54` est le Client ID de `auth-sample`/`app-remote-sample`
+   * (spotify/android-auth, MainActivity.java) : il appartient à Spotify, pas au
+   * projet. Il a été retiré en a6760df (« zéro identifiant tiers embarqué ») et
+   * l'audit V30 l'a classé « CAS C — non réutilisable ».
+   *
+   * Le risque est concret et déjà observé : un APK construit avec le Client ID
+   * d'une AUTRE application Spotify s'authentifie comme elle, donc Spotify
+   * valide le redirect URI et l'allowlist « Users and Access » contre UN AUTRE
+   * tableau de bord — d'où « redirect_uri: Not matching configuration » puis
+   * HTTP 403 sur /v1/me. L'ancienne application retirée (`7c5af4cd…`) était
+   * déjà gardée par trois tests ; celle-ci ne l'était par AUCUN.
+   */
+  it('V76 — le Client ID tiers du SDK Spotify n est jamais embarqué, ni par défaut ni dans la source', () => {
+    const SDK_SAMPLE_CLIENT_ID = '089d841ccc194c10a77afad9e1c11d54';
+
+    // 1) La valeur par défaut n'est pas celle de l'exemple du SDK.
+    const config = loadAppConfig();
+    expect(config.expo.extra.spotifyClientId).toBe(PRODUCTION_CLIENT_ID);
+    expect(config.expo.extra.spotifyClientId).not.toBe(SDK_SAMPLE_CLIENT_ID);
+
+    // 2) L'identifiant tiers n'apparaît NULLE PART dans la source de
+    //    configuration — pas même en commentaire utilisable comme valeur.
+    const source = readFileSync(join(__dirname, '..', 'app.config.js'), 'utf8');
+    expect(source).not.toContain(SDK_SAMPLE_CLIENT_ID);
+
+    // 3) Le redirect URI de l'exemple du SDK n'est pas la valeur embarquée :
+    //    son tableau de bord est périmé et ne déclare pas notre scheme.
+    expect(config.expo.extra.spotifyRedirectUri).toBe('melodix://callback');
+    expect(config.expo.extra.spotifyRedirectUri).not.toBe(
+      'comspotifytestsdk://callback'
+    );
+  });
+
   it('SPOTIFY_CLIENT_ID (env de build) prime sur la valeur par défaut', () => {
     process.env.SPOTIFY_CLIENT_ID = '1234567890abcdef1234567890abcdef  ';
     const config = loadAppConfig();
