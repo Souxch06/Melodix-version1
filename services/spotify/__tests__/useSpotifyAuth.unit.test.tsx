@@ -427,7 +427,7 @@ describe('useSpotifyAuth — taxonomie du diagnostic OAuth', () => {
     logSpy.mockRestore();
   });
 
-  it('V39 — /me 403 au corps NON JSON → network-blocked (couche réseau intermédiaire, pas la config Spotify)', async () => {
+  it('V39 — /me 403 au corps NON JSON → network-blocked (V73 : nom HISTORIQUE du kind, la cause reste non établie — voir la preuve)', async () => {
     (getCurrentUser as jest.Mock).mockRejectedValueOnce(
       new SpotifyApiError(
         'http',
@@ -560,6 +560,181 @@ describe('useSpotifyAuth — taxonomie du diagnostic OAuth', () => {
       );
       // La borne d'affichage reste respectée.
       expect(description.length).toBeLessThanOrEqual(120);
+    });
+
+    /**
+     * V73 — `x-request-id` était dans RESPONSE_HEADER_ALLOWLIST
+     * (apiClient.ts:59) et donc COLLECTÉ dans `diagnostics.headers`, mais la
+     * boucle d'affichage ne parcourait que server/via/www-authenticate/x-cache :
+     * la donnée la plus actionnable d'un 403 (celle qu'on transmet au support
+     * Spotify pour faire tracer la requête) n'arrivait jamais à l'écran.
+     */
+    it('V73 — x-request-id collecté par l apiClient est enfin VISIBLE dans la preuve', async () => {
+      (getCurrentUser as jest.Mock).mockRejectedValueOnce(
+        new SpotifyApiError(
+          'http',
+          'Réponse Spotify non valide (403).',
+          403,
+          '',
+          {
+            bodyShape: 'non-json',
+            contentType: 'text/html',
+            headers: {
+              server: 'envoy',
+              via: 'HTTP/2 edgeproxy, 1.1 google',
+              'x-request-id': 'a1b2c3d4-5678-9abc-def0-123456789abc',
+            },
+            attempts: 3,
+          }
+        )
+      );
+
+      const { result } = renderHook(() => useSpotifyAuth());
+      await act(async () => {
+        await result.current.startLogin();
+      });
+
+      if (result.current.state.status !== 'error') return;
+      const description =
+        result.current.state.outcome.diagnostic?.description ?? '';
+      // LA régression : `req=` n'apparaissait jamais avant V73.
+      expect(description).toContain('req=a1b2c3d4-5678-9abc-def0-123456789abc');
+      expect(description.length).toBeLessThanOrEqual(120);
+      // Non sensible : ni jeton, ni code, ni donnée de compte.
+      expect(description).not.toMatch(/Bearer|token|code_verifier/i);
+    });
+
+    /**
+     * V73 — `server: envoy` + `via: HTTP/2 edgeproxy, 1.1 google` sont les
+     * en-têtes de l'edge de SPOTIFY LUI-MÊME (présents sur ses 200 OK, 202,
+     * 304, 429 et 403 — relevés publics Spotify Community #5193142, #5616143,
+     * #5233575, Stack Overflow 78779411). Les exposer bruts faisait lire « un
+     * intermédiaire bloque », ce qui est faux et oriente vers un changement de
+     * réseau inutile. La preuve dit maintenant explicitement que la réponse
+     * vient de l'edge de Spotify.
+     */
+    it('V73 — la signature envoy+google est lue comme l edge de SPOTIFY, pas comme un intermédiaire', async () => {
+      (getCurrentUser as jest.Mock).mockRejectedValueOnce(
+        new SpotifyApiError(
+          'http',
+          'Réponse Spotify non valide (403).',
+          403,
+          '',
+          {
+            bodyShape: 'non-json',
+            contentType: 'text/html',
+            headers: {
+              server: 'envoy',
+              via: 'HTTP/2 edgeproxy, 1.1 google',
+            },
+            attempts: 3,
+          }
+        )
+      );
+
+      const { result } = renderHook(() => useSpotifyAuth());
+      await act(async () => {
+        await result.current.startLogin();
+      });
+
+      if (result.current.state.status !== 'error') return;
+      const description =
+        result.current.state.outcome.diagnostic?.description ?? '';
+      expect(description).toContain('edge=spotify');
+      expect(description).not.toContain('edge=autre');
+    });
+
+    /**
+     * V73 — seul cas où un intermédiaire reste plausible : une signature
+     * d'en-tête DIFFÉRENTE de celle de Spotify (CDN, proxy filtrant…). Le
+     * diagnostic le signale explicitement au lieu de laisser le mainteneur
+     * deviner.
+     */
+    it('V73 — une signature d en-tête différente est signalée edge=autre', async () => {
+      (getCurrentUser as jest.Mock).mockRejectedValueOnce(
+        new SpotifyApiError(
+          'http',
+          'Réponse Spotify non valide (403).',
+          403,
+          '',
+          {
+            bodyShape: 'non-json',
+            contentType: 'text/html',
+            headers: {
+              server: 'cloudflare',
+              via: '1.1 proxy-filtrant.local',
+              'cf-ray': '8f0a1b2c3d4e5f60-CDG',
+            },
+            attempts: 1,
+          }
+        )
+      );
+
+      const { result } = renderHook(() => useSpotifyAuth());
+      await act(async () => {
+        await result.current.startLogin();
+      });
+
+      if (result.current.state.status !== 'error') return;
+      const description =
+        result.current.state.outcome.diagnostic?.description ?? '';
+      expect(description).toContain('edge=autre');
+      expect(description).not.toContain('edge=spotify');
+    });
+
+    /**
+     * V73 — l'ancienne troncature coupait au caractère 117, donc en plein
+     * milieu d'une paire `clé=valeur` : la valeur affichée n'était plus celle
+     * reçue (un `via` tronqué peut ressembler à un autre hôte). On remplit
+     * désormais par blocs entiers : les éléments les moins discriminants
+     * sautent, jamais une valeur n'est coupée.
+     */
+    it('V73 — la preuve n est jamais coupée au milieu d une paire clé=valeur', async () => {
+      const longVia =
+        'HTTP/2 edgeproxy-prod-iad-abc123.spotify-edge.example.com, 1.1 google-gfe-par';
+      (getCurrentUser as jest.Mock).mockRejectedValueOnce(
+        new SpotifyApiError(
+          'http',
+          'Réponse Spotify non valide (403).',
+          403,
+          '',
+          {
+            bodyShape: 'non-json',
+            contentType: 'text/html; charset=utf-8',
+            headers: {
+              server: 'envoy',
+              via: longVia,
+              'x-request-id': 'ffffffff-1111-2222-3333-444455556666',
+            },
+            attempts: 3,
+          }
+        )
+      );
+
+      const { result } = renderHook(() => useSpotifyAuth());
+      await act(async () => {
+        await result.current.startLogin();
+      });
+
+      if (result.current.state.status !== 'error') return;
+      const description =
+        result.current.state.outcome.diagnostic?.description ?? '';
+      expect(description.length).toBeLessThanOrEqual(120);
+      // Aucune coupure : soit la valeur est entière, soit l'élément est absent.
+      for (const value of [
+        'text/html; charset=utf-8',
+        'envoy',
+        longVia,
+        'ffffffff-1111-2222-3333-444455556666',
+      ]) {
+        expect(
+          description.includes(value) ||
+            !description.includes(value.slice(0, 12))
+        ).toBe(true);
+      }
+      // Le plus discriminant survit toujours.
+      expect(description).toContain('corps=non-json');
+      expect(description).toContain('essais=3');
     });
 
     /**

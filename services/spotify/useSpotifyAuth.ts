@@ -126,6 +126,44 @@ const cleanDiagnosticField = (
  * derrière. La chaîne est volontairement courte : `description` est tronquée
  * à 120 caractères à l'affichage.
  */
+/**
+ * V73 — Origine de la réponse, d'après la signature d'en-têtes.
+ *
+ * `server: envoy` et `via: HTTP/2 edgeproxy, 1.1 google` **ne désignent pas un
+ * intermédiaire sur le réseau de l'utilisateur** : ce sont les en-têtes que
+ * Spotify renvoie sur ses PROPRES réponses, y compris les succès. Relevés
+ * publics : HTTP 200 (Spotify Community #5193142), HTTP 202 (#5616143),
+ * HTTP 304 (#5193142), HTTP 429 (Stack Overflow 78779411, Yooooomi/your_spotify
+ * #411) et HTTP 403 (Spotify Community #5233575). Spotify sert son API derrière
+ * Envoy sur Google Cloud ; `1.1 google` est le front-end Google, pas un proxy
+ * local.
+ *
+ * Conséquence pour le diagnostic : ces en-têtes n'ont AUCUN pouvoir
+ * discriminant entre « refus de Spotify » et « réseau de l'utilisateur ». Les
+ * présenter bruts invitait à conclure à un blocage réseau et à changer de
+ * connexion — piste infirmée par le terrain (le 403 persiste en 5G). On
+ * résume donc la signature, et on ne parle d'origine « autre » que si un
+ * en-tête DIFFÉRENT de celui de Spotify est présent.
+ */
+const describeEdgeOrigin = (
+  headers: Record<string, string>
+): 'spotify' | 'autre' | 'inconnu' => {
+  const server = (headers['server'] ?? '').toLowerCase();
+  const via = (headers['via'] ?? '').toLowerCase();
+  const envoy = server.includes('envoy');
+  const googleEdge = via.includes('edgeproxy') || via.includes('google');
+  if (envoy && googleEdge) {
+    return 'spotify';
+  }
+  return envoy || googleEdge || server !== '' || via !== ''
+    ? 'autre'
+    : 'inconnu';
+};
+
+/** Borne d'affichage de `description` (appliquée aussi par le rapport). */
+const EVIDENCE_MAX_LENGTH = 120;
+const EVIDENCE_SEPARATOR = ' · ';
+
 const describeHttpEvidence = (
   diagnostics: SpotifyApiHttpDiagnostics | undefined
 ): string | null => {
@@ -145,12 +183,24 @@ const describeHttpEvidence = (
   if (typeof diagnostics.attempts === 'number') {
     parts.push(`essais=${diagnostics.attempts}`);
   }
+  // V73 — `edge` passe AVANT les en-têtes bruts : c'est la lecture utile de
+  // `server`/`via` (voir `describeEdgeOrigin`), et elle est courte.
+  parts.push(`edge=${describeEdgeOrigin(headers)}`);
+  // V73 — `x-request-id` était collecté par `apiClient` (RESPONSE_HEADER_
+  // ALLOWLIST) mais JAMAIS affiché : la boucle ci-dessous ne parcourait que
+  // server/via/www-authenticate/x-cache. C'est pourtant LA donnée à transmettre
+  // au support Spotify pour faire tracer une requête précise — non sensible
+  // (identifiant de requête, ni jeton ni donnée de compte).
+  if (headers['x-request-id']) {
+    parts.push(`req=${headers['x-request-id']}`);
+  }
   if (diagnostics.contentType) {
     parts.push(`ct=${diagnostics.contentType}`);
   }
-  // Puis les en-têtes, par pouvoir discriminant : `server`/`via` identifient
-  // QUI répond (edge Spotify vs intermédiaire), `www-authenticate` indique si
-  // la réponse vient d'une couche qui négocie une authentification.
+  // Puis les en-têtes bruts, par pouvoir discriminant résiduel : `server`/`via`
+  // restent utiles quand `edge=autre` (signature différente de celle de
+  // Spotify), `www-authenticate` indique si la réponse vient d'une couche qui
+  // négocie une authentification.
   for (const name of [
     'server',
     'via',
@@ -162,8 +212,32 @@ const describeHttpEvidence = (
       parts.push(`${name}=${value}`);
     }
   }
-  const text = parts.join(' · ');
-  return text.length > 120 ? `${text.slice(0, 117)}…` : text;
+  /**
+   * V73 — Remplissage par blocs ENTIERS. L'ancienne troncature coupait au
+   * caractère 117, donc en plein milieu d'une paire `clé=valeur` : la valeur
+   * affichée était alors fausse (un `via` tronqué n'est plus le `via` reçu).
+   * On ajoute les éléments dans l'ordre jusqu'à la borne, sans jamais en
+   * couper un ; les moins discriminants (en-têtes bruts) sautent en premier.
+   */
+  let text = '';
+  for (const part of parts) {
+    const candidate =
+      text === '' ? part : `${text}${EVIDENCE_SEPARATOR}${part}`;
+    if (candidate.length > EVIDENCE_MAX_LENGTH) {
+      break;
+    }
+    text = candidate;
+  }
+  if (text === '') {
+    // Un premier élément déjà hors borne : on le tronque plutôt que de
+    // renvoyer une preuve vide.
+    const first = parts[0] ?? '';
+    text =
+      first.length > EVIDENCE_MAX_LENGTH
+        ? `${first.slice(0, EVIDENCE_MAX_LENGTH - 1)}…`
+        : first;
+  }
+  return text;
 };
 
 const buildDiagnostic = (
