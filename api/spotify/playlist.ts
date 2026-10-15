@@ -216,7 +216,34 @@ const collectAllPages = async (startPath: string): Promise<TrackModel[]> => {
 
   while (nextPath) {
     page += 1;
-    const paged: PagedItems = await spotifyApiGet<PagedItems>(nextPath);
+
+    // V65 — une page qui échoue ne doit PAS détruire ce qui a déjà été reçu.
+    // Sans ce garde, un 429 transitoire ou une coupure réseau à la page N
+    // faisait remonter l'exception et l'écran affichait ZÉRO titre alors que
+    // N-1 pages étaient valides. On conserve donc le partiel, on journalise la
+    // troncature, et on ne propage l'erreur QUE si rien n'a été collecté
+    // (auquel cas l'erreur est la seule information utile pour l'écran).
+    let paged: PagedItems;
+    try {
+      paged = await spotifyApiGet<PagedItems>(nextPath);
+    } catch (error) {
+      if (collected.length === 0) {
+        throw error;
+      }
+      spotifyLog('playlist.items.truncated', {
+        page,
+        tracksCollected: collected.length,
+        reason: error instanceof Error ? error.name : 'unknown',
+      });
+      logCounts('truncated', {
+        itemsReceived: receivedTotal,
+        tracksValid: validTotal,
+        tracksCreated: collected.length,
+        sentToScreen: collected.length,
+      });
+      return collected;
+    }
+
     const { tracks, itemsReceived, tracksValid } = pageToTracks(paged);
     collected.push(...tracks);
     receivedTotal += itemsReceived;
