@@ -56,7 +56,13 @@ const jamendoClientId = (process.env.JAMENDO_CLIENT_ID || '').trim();
 //   d'environnement SPOTIFY_CLIENT_ID (env de build / variable de dépôt
 //   CI) reste l'OVERRIDE pour éprouver une autre application Spotify
 //   sans modifier le code. Jamais saisi ni affiché par l'utilisateur.
-const DEFAULT_SPOTIFY_CLIENT_ID = '7c5af4cd57e646c49a6266222c2ed9d6';
+// V67 — Client ID de l'application Spotify « Melodix » à utiliser. C'est un
+// identifiant PUBLIC (client PKCE public : aucun Client Secret dans l'app),
+// jamais saisi ni affiché par l'utilisateur. Valeur fournie et confirmée par
+// le mainteneur ; elle remplace l'ancienne `7c5af4cd…` qui pointait vers une
+// application différente — avec elle, l'allowlist « Users and Access » et le
+// redirect URI configurés au tableau de bord ne s'appliquaient pas au build.
+const DEFAULT_SPOTIFY_CLIENT_ID = '97a67c9433454489837ba5a1d680b3ed';
 const spotifyClientId =
   (process.env.SPOTIFY_CLIENT_ID || '').trim() || DEFAULT_SPOTIFY_CLIENT_ID;
 // ▸ Redirect OAuth PAR DÉFAUT : celui de production de Melodix

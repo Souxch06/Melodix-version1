@@ -303,7 +303,7 @@ describe('taille bornée', () => {
 });
 
 describe('buildSpotifyDiagnosticReport — Client ID du build (mission V25)', () => {
-  const VALID_ID = '7c5af4cd57e646c49a6266222c2ed9d6';
+  const VALID_ID = '97a67c9433454489837ba5a1d680b3ed';
 
   it('Client ID valide (32 hex) → la valeur réelle est affichée + source lisible (jamais le libellé brut)', () => {
     const r = buildSpotifyDiagnosticReport(

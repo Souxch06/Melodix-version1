@@ -1944,4 +1944,98 @@ describe('useSpotifyAuth — taxonomie du diagnostic OAuth', () => {
       logSpy.mockRestore();
     });
   });
+
+  /**
+   * V67 — valeurs OAuth officielles de Melodix.
+   *
+   * Le Client ID PUBLIC de l'application Spotify « Melodix » est
+   * `97a67c9433454489837ba5a1d680b3ed` et le redirect URI est
+   * `melodix://callback`. Ces deux valeurs doivent arriver EXACTEMENT dans la
+   * requête d'autorisation : un Client ID différent (l'ancienne application
+   * `7c5af4cd…`) fait que l'allowlist « Users and Access » et le redirect URI
+   * configurés au tableau de bord ne s'appliquent pas au build — l'OAuth
+   * réussit puis l'API refuse l'accès.
+   *
+   * Aucun Client Secret n'existe dans l'app (client public PKCE) et aucun
+   * champ de saisie du Client ID n'est offert à l'utilisateur.
+   */
+  describe('V67 — valeurs OAuth officielles (Client ID + redirect URI)', () => {
+    const PRODUCTION_CLIENT_ID = '97a67c9433454489837ba5a1d680b3ed';
+    const PRODUCTION_REDIRECT_URI = 'melodix://callback';
+
+    beforeEach(() => {
+      // Canal du build physique réel : la valeur vient de app.config.js
+      // (extra), pas de l'inlining Metro EXPO_PUBLIC_*.
+      delete process.env.EXPO_PUBLIC_SPOTIFY_CLIENT_ID;
+      delete process.env.EXPO_PUBLIC_SPOTIFY_REDIRECT_URI;
+      setExtra({
+        spotifyClientId: PRODUCTION_CLIENT_ID,
+        spotifyRedirectUri: PRODUCTION_REDIRECT_URI,
+      });
+    });
+
+    afterEach(() => {
+      delete process.env.EXPO_PUBLIC_SPOTIFY_CLIENT_ID;
+      delete process.env.EXPO_PUBLIC_SPOTIFY_REDIRECT_URI;
+    });
+
+    it('la requête /authorize porte EXACTEMENT le Client ID et le redirect URI officiels', () => {
+      renderHook(() => useSpotifyAuth());
+
+      const options = (AuthSession.useAuthRequest as jest.Mock).mock
+        .calls[0][0];
+
+      // Les deux valeurs critiques, telles qu'elles partent vers Spotify.
+      expect(options.clientId).toBe(PRODUCTION_CLIENT_ID);
+      expect(options.redirectUri).toBe(PRODUCTION_REDIRECT_URI);
+
+      // L'ancienne application ne doit plus jamais être demandée.
+      expect(options.clientId).not.toBe('7c5af4cd57e646c49a6266222c2ed9d6');
+      // Ni l'URI de test historique du SDK Spotify.
+      expect(options.redirectUri).not.toBe('comspotifytestsdk://callback');
+
+      // Forme d'un Client ID Spotify : 32 hexadécimaux, sans tiret ni espace.
+      expect(options.clientId).toMatch(/^[0-9a-f]{32}$/);
+    });
+
+    it('PKCE activé, code d autorisation, scopes dont user-read-private, AUCUN secret', () => {
+      renderHook(() => useSpotifyAuth());
+
+      const options = (AuthSession.useAuthRequest as jest.Mock).mock
+        .calls[0][0];
+
+      // Client PUBLIC : PKCE obligatoire, jamais de client_secret.
+      expect(options.usePKCE).toBe(true);
+      expect(options.responseType).toBe(AuthSession.ResponseType.Code);
+      expect(JSON.stringify(options)).not.toMatch(/client_?secret/i);
+      expect(options).not.toHaveProperty('clientSecret');
+
+      // /v1/me exige user-read-private : son absence produirait un refus.
+      expect(options.scopes).toEqual(
+        expect.arrayContaining([
+          'user-read-private',
+          'user-library-read',
+          'playlist-read-private',
+          'playlist-read-collaborative',
+        ])
+      );
+    });
+
+    it('Client ID absent du build → aucune valeur de repli silencieuse', () => {
+      // Une config cassée ne doit PAS retomber sur une autre application :
+      // elle doit rendre la connexion indisponible, explicitement.
+      setExtra({
+        spotifyClientId: '',
+        spotifyRedirectUri: PRODUCTION_REDIRECT_URI,
+      });
+
+      renderHook(() => useSpotifyAuth());
+
+      const options = (AuthSession.useAuthRequest as jest.Mock).mock.calls.at(
+        -1
+      )?.[0];
+      expect(options.clientId).toBe('');
+      expect(options.clientId).not.toBe('7c5af4cd57e646c49a6266222c2ed9d6');
+    });
+  });
 });

@@ -130,10 +130,10 @@ describe('authConfig — Client ID configurable', () => {
 
 describe('isSpotifyClientIdShape — forme d’un Client ID Spotify (32 hex)', () => {
   it('accepte 32 chiffres hexadécimaux (minuscules ET majuscules)', () => {
-    expect(isSpotifyClientIdShape('7c5af4cd57e646c49a6266222c2ed9d6')).toBe(
+    expect(isSpotifyClientIdShape('97a67c9433454489837ba5a1d680b3ed')).toBe(
       true
     );
-    expect(isSpotifyClientIdShape('7C5AF4CD57E646C49A6266222C2ED9D6')).toBe(
+    expect(isSpotifyClientIdShape('97A67C9433454489837BA5A1D680B3ED')).toBe(
       true
     );
   });
@@ -142,17 +142,17 @@ describe('isSpotifyClientIdShape — forme d’un Client ID Spotify (32 hex)', (
     // Libellé de source (le défaut corrigé en V25 — il n’est JAMAIS un ID).
     expect(isSpotifyClientIdShape('expo-public-env')).toBe(false);
     // Longueurs / caractères invalides.
-    expect(isSpotifyClientIdShape('7c5af4cd57e646c49a6266222c2ed9d')).toBe(
+    expect(isSpotifyClientIdShape('97a67c9433454489837ba5a1d680b3e')).toBe(
       false
     ); // 31
-    expect(isSpotifyClientIdShape('7c5af4cd57e646c49a6266222c2ed9d6a')).toBe(
+    expect(isSpotifyClientIdShape('97a67c9433454489837ba5a1d680b3eda')).toBe(
       false
     ); // 33
-    expect(isSpotifyClientIdShape('7c5af4cd-57e6-46c4-9a62-66222c2ed9d6')).toBe(
+    expect(isSpotifyClientIdShape('97a67c94-3345-4489-837b-a5a1d680b3ed')).toBe(
       false
     ); // tirets
     expect(isSpotifyClientIdShape('')).toBe(false);
-    expect(isSpotifyClientIdShape('  7c5af4cd57e646c49a6266222c2ed9d6  ')).toBe(
+    expect(isSpotifyClientIdShape('  97a67c9433454489837ba5a1d680b3ed  ')).toBe(
       false
     ); // espaces
     // Valeurs SENSIBLES collées par erreur dans la variable de build.

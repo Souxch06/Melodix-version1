@@ -24,7 +24,12 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
 
-const PRODUCTION_CLIENT_ID = '7c5af4cd57e646c49a6266222c2ed9d6';
+// V67 — Client ID PUBLIC de l'application Spotify « Melodix » (pas un secret).
+const PRODUCTION_CLIENT_ID = '97a67c9433454489837ba5a1d680b3ed';
+// Ancienne application : ne doit plus JAMAIS être embarquée par défaut, sinon
+// l'allowlist et le redirect URI du tableau de bord ne correspondent pas au
+// build et Spotify refuse l'accès après l'OAuth.
+const RETIRED_CLIENT_ID = '7c5af4cd57e646c49a6266222c2ed9d6';
 
 type AppConfig = {
   expo: {
@@ -63,6 +68,12 @@ describe('app.config.js — Client ID Spotify (source unique committée)', () =>
     const config = loadAppConfig();
     expect(config.expo.extra.spotifyClientId).toBe(PRODUCTION_CLIENT_ID);
     expect(config.expo.extra.spotifyClientId).toMatch(/^[0-9a-f]{32}$/);
+    // V67 — l'ancienne application ne doit plus être la valeur embarquée.
+    expect(config.expo.extra.spotifyClientId).not.toBe(RETIRED_CLIENT_ID);
+    // Le redirect URI embarqué est celui déclaré au tableau de bord Spotify.
+    expect(config.expo.extra.spotifyRedirectUri).toBe('melodix://callback');
+    // Aucun Client Secret ne doit jamais être embarqué.
+    expect(JSON.stringify(config.expo.extra)).not.toMatch(/client_?secret/i);
   });
 
   it('SPOTIFY_CLIENT_ID (env de build) prime sur la valeur par défaut', () => {
