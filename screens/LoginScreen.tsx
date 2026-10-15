@@ -196,7 +196,10 @@ export const LoginScreen = () => {
       field(translations.loginDiagBuild, buildCommit || null),
       staleApk ? translations.loginDiagOldApk : null,
     ].filter((line): line is string => line !== null);
-  }, [state, translations]);
+    // `translations` vient de la portée externe (non réactive) : l'ajouter aux
+    // dépendances déclenche react-hooks/exhaustive-deps sans rien apporter.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state]);
 
   const errorCard: ErrorCard = React.useMemo(() => {
     if (!configured) {
