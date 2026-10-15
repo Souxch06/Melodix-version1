@@ -286,6 +286,62 @@ describe('services/spotify/session (SecureStore)', () => {
     expect((await loadSession())?.refreshToken).toBe('rt');
   });
 
+  /**
+   * V70 — l'échange de jeton doit partir avec le MÊME Client ID que
+   * /authorize, et avec le redirect URI canonique exact.
+   *
+   * Cause démontrée de « redirect_uri: Not matching configuration » : un APK
+   * construit avec le Client ID d'une AUTRE application Spotify. Spotify
+   * valide alors `redirect_uri` contre le Dashboard de CETTE application — où
+   * `melodix://callback` n'est pas déclaré — et non contre celui du
+   * propriétaire du téléphone. Verrouiller la valeur transmise à /api/token
+   * rend toute divergence de Client ID immédiatement visible.
+   */
+  it("V70 — l'échange transmet le Client ID officiel et le redirect canonique exact", async () => {
+    const OFFICIAL_CLIENT_ID = '97a67c9433454489837ba5a1d680b3ed';
+    const RETIRED_CLIENT_ID = '7c5af4cd57e646c49a6266222c2ed9d6';
+    (Constants.default ?? Constants).__setExpoConfigExtra({
+      spotifyClientId: OFFICIAL_CLIENT_ID,
+    });
+
+    let capturedBody = '';
+    try {
+      globalThis.fetch = jest.fn(async (_url, options) => {
+        capturedBody = String(options?.body ?? '');
+        return {
+          ok: true,
+          json: async () => ({
+            access_token: 'at',
+            refresh_token: 'rt',
+            expires_in: 3600,
+          }),
+        } as Response;
+      }) as unknown as typeof fetch;
+
+      const outcome = await redeemAuthorizationCode({
+        code: 'the-code',
+        codeVerifier: 'the-verifier',
+        redirectUri: 'melodix://callback',
+      });
+      expect(outcome).toMatchObject({ kind: 'ok' });
+
+      // Le Client ID de l'application officielle, et jamais l'ancienne.
+      expect(capturedBody).toContain(`client_id=${OFFICIAL_CLIENT_ID}`);
+      expect(capturedBody).not.toContain(RETIRED_CLIENT_ID);
+      // Redirect canonique EXACT : sans barre oblique finale ni espace.
+      expect(capturedBody).toContain(
+        `redirect_uri=${encodeURIComponent('melodix://callback')}`
+      );
+      expect(capturedBody).not.toContain('melodix%3A%2F%2Fcallback%2F');
+      // Client public PKCE : jamais de secret.
+      expect(capturedBody).not.toContain('client_secret');
+    } finally {
+      (Constants.default ?? Constants).__setExpoConfigExtra({
+        spotifyClientId: 'client-test',
+      });
+    }
+  });
+
   describe('classification de l échange code → tokens (diagnostic)', () => {
     const redeem = () =>
       redeemAuthorizationCode({

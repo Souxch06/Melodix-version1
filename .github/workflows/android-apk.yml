@@ -190,12 +190,29 @@ jobs:
             fi
             exit 1
           fi
-          echo "::notice title=Config Spotify du build::Redirect URI = $RU (canonique — Dashboard Spotify du client, les deux canaux cohérents) · Client ID = présent (32 hex, valeur non affichée) · PKCE sans secret"
+          # V70 — empreinte NON sensible du Client ID effectif.
+          #
+          # Un Client ID Spotify est un identifiant PUBLIC (client PKCE public,
+          # aucun secret), mais on n'en affiche que 4+4 caractères et 12 hex de
+          # son SHA-256. C'est exactement ce qui a manqué pour diagnostiquer
+          # « redirect_uri: Not matching configuration » : les annotations ne
+          # disaient que « <défini> », donc un APK construit avec le Client ID
+          # d'une AUTRE application Spotify était indiscernable d'un build
+          # correct — alors que Spotify valide le redirect URI contre le
+          # Dashboard de l'application qui s'authentifie, pas contre celui du
+          # propriétaire du téléphone. Assez pour recouper avec le Dashboard,
+          # trop court pour reconstituer la valeur dans des logs publics.
+          CID_FP="${CID:0:4}…${CID: -4}"
+          CID_SHA12="$(printf '%s' "$CID" | sha256sum | cut -c1-12)"
+          echo "::notice title=Config Spotify du build::Redirect URI = $RU (canonique — Dashboard Spotify du client, les deux canaux cohérents) · Client ID = $CID_FP (sha256:$CID_SHA12, 32 hex, valeur complète non affichée) · PKCE sans secret"
           {
             echo "SPOTIFY_CLIENT_ID=$CID"
             echo "EXPO_PUBLIC_SPOTIFY_CLIENT_ID=$CID"
             echo "SPOTIFY_REDIRECT_URI=$RU"
             echo "EXPO_PUBLIC_SPOTIFY_REDIRECT_URI=$RU"
+            # Empreintes seules — jamais la valeur complète.
+            echo "SPOTIFY_CLIENT_ID_FP=$CID_FP"
+            echo "SPOTIFY_CLIENT_ID_SHA12=$CID_SHA12"
           } >> "$GITHUB_ENV"
 
       # ------------------------------------------------------------------
@@ -563,7 +580,7 @@ jobs:
           #  la valeur ne quitte jamais le workflow — présence uniquement).
           if [ -n "${SPOTIFY_CLIENT_ID:-}" ]; then
             if unzip -p "$APK" assets/index.android.bundle 2>/dev/null | grep -aqF "$SPOTIFY_CLIENT_ID"; then
-              echo "::notice title=SPOTIFY-DIAG 1/7 client_id::vars=$(state "$VAR_CID") | effectif=$(state "$SPOTIFY_CLIENT_ID") | inliné dans le bundle: OUI"
+              echo "::notice title=SPOTIFY-DIAG 1/7 client_id::vars=$(state "$VAR_CID") | effectif=$SPOTIFY_CLIENT_ID_FP (sha256:$SPOTIFY_CLIENT_ID_SHA12) | inliné dans le bundle: OUI"
             else
               echo "::error title=SPOTIFY-DIAG 1/7 client_id::Client ID présent en env mais ABSENT du bundle — inlining Metro inopérant, l'app affichera « non configurée » malgré la config CI"
               exit 1

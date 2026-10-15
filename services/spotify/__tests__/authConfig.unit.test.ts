@@ -94,6 +94,45 @@ describe('authConfig — Client ID configurable', () => {
       expect(DEFAULT_SPOTIFY_REDIRECT_URI).toBe('melodix://callback');
     });
 
+    /**
+     * V70 — conformité de `melodix://callback` aux règles OAuth ACTUELLES de
+     * Spotify. Documenté pour qu'aucune « correction » ne remplace cette URI
+     * sans justification :
+     *  - Spotify, blog 2025-02-12 « Increasing the security requirements » :
+     *    « Redirects using a custom scheme will still be supported » et
+     *    « com.example://callback can still be used as before » ;
+     *  - Spotify, blog 2025-10-14 « Reminder: OAuth Migration - 27 November
+     *    2025 » : ce qui est supprimé est le flux implicite, les redirect URI
+     *    HTTP et les alias `localhost` — les schémas personnalisés n'y sont
+     *    PAS ;
+     *  - doc « Apps » : tout en minuscules, préfixe propre à l'application
+     *    (pas un préfixe générique comme `http`), et un chemin après la
+     *    première paire de barres obliques.
+     */
+    it('V70 — melodix://callback respecte les règles Spotify sur les schémas personnalisés', () => {
+      const uri = getSpotifyRedirectUri();
+
+      // 1. Entièrement en minuscules.
+      expect(uri).toBe(uri.toLowerCase());
+      // 2. Schéma personnalisé, ni http ni https ni localhost.
+      const scheme = uri.split('://')[0];
+      expect(scheme).toBe('melodix');
+      expect(['http', 'https']).not.toContain(scheme);
+      expect(uri).not.toMatch(/localhost/i);
+      // 3. Préfixe propre à l'application (pas un préfixe générique).
+      expect(scheme.length).toBeGreaterThan(3);
+      // 4. Un segment après la première paire de barres obliques. La doc
+      //    Spotify parle de « chemin » mais son propre exemple
+      //    (`my-awesome-app-login://callback`) place ce segment en position
+      //    d'autorité : `melodix://callback` suit donc l'exemple exactement.
+      expect(uri).toMatch(/^[a-z][a-z0-9+.-]*:\/\/[^/\s]+$/);
+      // 5. Ni barre oblique finale, ni espace, ni caractère encodé d'avance.
+      expect(uri.endsWith('/')).toBe(false);
+      expect(uri).not.toMatch(/\s|%[0-9a-f]{2}/i);
+      // 6. Forme exacte attendue par le Dashboard Spotify du client.
+      expect(uri).toBe('melodix://callback');
+    });
+
     it('extra.spotifyRedirectUri prime sur le défaut', () => {
       setExtra({ spotifyRedirectUri: 'myapp://retour-test' });
       expect(getSpotifyRedirectUri()).toBe('myapp://retour-test');
