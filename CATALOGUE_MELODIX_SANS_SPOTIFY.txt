@@ -1,0 +1,187 @@
+=====================================================================
+CATALOGUE MELODIX SANS SPOTIFY PREMIUM — CAHIER DES CHARGES CORRIGÉ
+=====================================================================
+
+Document créé le 2026-10-15. Aucune version antérieure de ce fichier
+n'existait dans le dépôt : il est créé ici pour porter les valeurs
+VÉRIFIÉES, et non pour en remplacer une.
+
+Toutes les valeurs et tous les numéros de ligne ci-dessous ont été
+relevés dans le code au commit 1bef2da
+(« search(catalogue): marge suffisante pour les sources lentes +
+YouTube 40→50 »), branche arena/5ef0ee6a-melodix.
+
+---------------------------------------------------------------------
+LIMITE FONDAMENTALE — À LIRE AVANT TOUT LE RESTE
+---------------------------------------------------------------------
+Aucune combinaison de ces sources ne reproduit le catalogue de Spotify.
+Ce document décrit une amélioration de COUVERTURE. Le catalogue n'est
+pas exhaustif et ne le sera pas par ces moyens.
+
+Aucune amélioration de couverture n'est affirmée dans ce document :
+elle exige une mesure avant/après sur le banc en ligne
+(npm run test:online), qui requiert un réseau réel. Voir §5.
+
+---------------------------------------------------------------------
+1. SOURCES — IL Y EN A SIX, PAS CINQ
+---------------------------------------------------------------------
+Les versions précédentes de ce cahier des charges en listaient cinq et
+omettaient Jamendo. Tableau relevé dans le code :
+
+  Source     Plafond  Constante (fichier:ligne)                    Budget
+  ---------  -------  -------------------------------------------  -------
+  itunes     200      ITUNES_SEARCH_LIMIT                          10 000 ms
+                      api/itunes/searchTracks.ts:26
+  audius     100      AUDIUS_SEARCH_LIMIT                          7 500 ms
+                      api/search/progressiveSearch.ts:93
+  youtube     50      YOUTUBE_CATALOG_LIMIT                        10 000 ms
+                      api/search/progressiveSearch.ts:104
+  backend     50      BACKEND_SEARCH_LIMIT                         6 000 ms
+                      api/search/progressiveSearch.ts:94
+  jamendo     50      JAMENDO_SEARCH_LIMIT                         8 000 ms
+                      api/jamendo/searchTracks.ts:38
+  spotify      -      (recherche catalogue du compte connecté)     6 000 ms
+
+  Borne dure de la recherche : SEARCH_HARD_LIMIT_MS = 12 000 ms
+  (api/search/progressiveSearch.ts:141).
+
+Notes vérifiées :
+  - Jamendo est DORMANTE : sans clé configurée elle est écartée sans
+    requête, sans latence et sans quota consommé (mission V47).
+  - Le backend Melodix est inactif par défaut : sans
+    MELODIX_BACKEND_URL il est sauté volontairement — son « 0 résultat »
+    est un saut, pas une panne masquée.
+  - Spotify n'est pas une source sans Premium : sans session valide,
+    elle est écartée immédiatement (voir §3).
+
+---------------------------------------------------------------------
+2. NUMÉROS DE LIGNE — CORRECTION
+---------------------------------------------------------------------
+Les numéros cités dans le cahier des charges d'origine étaient faux, et
+ceux donnés lors de l'audit suivant étaient déjà périmés : les blocs de
+commentaires ajoutés par la correction ont décalé les lignes. Valeurs
+réelles au commit 1bef2da :
+
+  YOUTUBE_CATALOG_LIMIT ........ ligne 104  (cité : 94, puis 99)
+  SEARCH_HARD_LIMIT_MS ......... ligne 141  (cité : 114, puis 122)
+  SOURCE_TIMEOUTS_MS ........... lignes 115 à 130
+
+Un numéro de ligne n'est pas une référence stable. Pour citer ces
+réglages, nommer la CONSTANTE et vérifier la ligne au moment de la
+lecture :
+
+  grep -n "YOUTUBE_CATALOG_LIMIT = \|SEARCH_HARD_LIMIT_MS = " \
+    api/search/progressiveSearch.ts
+
+---------------------------------------------------------------------
+3. CONTRAINTE PRINCIPALE — LE BUDGET PAR SOURCE, PAS LA BORNE DURE
+---------------------------------------------------------------------
+Correction de fond du diagnostic d'origine.
+
+Le cahier des charges d'origine attribuait la perte des résultats
+lents à la borne dure (9 s). C'est inexact : la contrainte qui échoit
+en premier est le BUDGET PAR SOURCE, appliqué par withSourceTimeout
+(api/search/progressiveSearch.ts:228). Chaque source est rejetée dès
+que SON budget expire, indépendamment de la borne dure.
+
+Conséquence : relever SEARCH_HARD_LIMIT_MS seul ne change rien. Les
+deux réglages sont solidaires :
+
+  - le budget par source décide du moment où une source lente est
+    déclarée en échec ;
+  - la borne dure est une ceinture de sécurité qui solde la course si
+    une source ignorait son propre budget ;
+  - INVARIANT : tout budget par source doit rester STRICTEMENT
+    inférieur à SEARCH_HARD_LIMIT_MS. Un garde-fou de test le vérifie
+    pour toutes les sources, y compris futures
+    (api/search/__tests__/progressiveSearchCatalogV40.unit.test.ts,
+    « AUCUNE source ne dépasse la borne dure »).
+
+État avant / après la correction (valeurs vérifiées dans l'historique) :
+
+  Réglage                        Avant      Après
+  -----------------------------  ---------  ---------
+  SEARCH_HARD_LIMIT_MS            9 000 ms   12 000 ms
+  SOURCE_TIMEOUTS_MS.youtube      8 000 ms   10 000 ms
+  SOURCE_TIMEOUTS_MS.itunes       8 000 ms   10 000 ms
+  YOUTUBE_CATALOG_LIMIT                  40         50
+
+La marge entre le budget le plus long et la borne dure était d'UNE
+seconde (8 s pour 9 s) : sur réseau mobile lent, la source échouait de
+justesse et ses résultats étaient perdus alors qu'elle répondait.
+
+---------------------------------------------------------------------
+4. AFFICHAGE PROGRESSIF — LA BORNE PLUS LONGUE NE RETARDE PAS L'ÉCRAN
+---------------------------------------------------------------------
+Vérifié dans le code : settleSource émet à chaque règlement de source
+(progressiveSearch.ts, appel à emit) et le minuteur de borne dure ne
+déclenche que si la course n'est pas déjà soldée. Le premier affichage
+n'est donc pas retardé par le relèvement de la borne ; seules les
+sources lentes cessent d'être coupées.
+
+Verrouillé par le test existant « Audius lent n'efface pas les résultats
+iTunes déjà affichés (progressif) ».
+
+---------------------------------------------------------------------
+5. MESURE — CE QUI EST EXIGÉ AVANT TOUTE AFFIRMATION
+---------------------------------------------------------------------
+Le banc en ligne est la seule mesure admise :
+
+  npm run test:online          (api/search/__tests__/coverage.online.test.ts)
+
+Il exige un réseau réel. Sans accès sortant, il ÉCHOUE explicitement
+avec le statut « network-unavailable » et le message « Couverture NON
+MESURÉE — aucune valeur inventée » : il ne produit jamais de faux
+succès. Les rapports sont écrits dans artifacts/online-benchmark/
+(répertoire ignoré par Git).
+
+Les compteurs par source (perSourceCounts) ne sont PAS affichés dans
+l'interface : ils alimentent ce banc. Une comparaison avant/après sur
+téléphone ne peut donc pas se faire à l'œil ; il faut le banc, sur une
+machine connectée.
+
+Jeu de requêtes déjà présent dans le banc (constante CASES) et couvrant
+les catégories attendues : artiste connu (Daft Punk, Queen, Coldplay),
+titre courant (Miley Cyrus Flowers), artiste peu connu (Adrienne
+Lenker, Ludovico Einaudi), langue non anglaise (Édith Piaf, Jacques
+Brel, Stromae).
+
+---------------------------------------------------------------------
+6. SOURCE SPOTIFY — COMPORTEMENT VÉRIFIÉ
+---------------------------------------------------------------------
+Sans session Spotify valide, la source est écartée IMMÉDIATEMENT, sans
+attendre son budget de 6 s :
+
+  api/search/progressiveSearch.ts:515-518
+    if (!run.spotifySessionActive) {
+      settleSource(run, 'spotify', 'skipped');
+      return;
+    }
+
+La fonction réelle est isSpotifySessionActive
+(services/spotify/session.ts:393) — et non « hasSpotifySession », nom
+indicatif qui n'existe pas dans le dépôt. Les cinq autres sources
+partent avant même la lecture de session, afin qu'un stockage sécurisé
+lent ne retarde pas le premier résultat.
+
+Cette modification était DÉJÀ en place : elle n'a pas été réécrite.
+
+---------------------------------------------------------------------
+7. CE QUI N'EST PAS FAIT
+---------------------------------------------------------------------
+  - Balayage iTunes par album ou par artiste : non implémenté.
+    api/itunes/searchTracks.ts est déjà au maximum d'une requête
+    iTunes (entity=song, limit 200, clamp à 200). Un balayage est une
+    NOUVELLE fonction (N requêtes à borner, dédoublonnage par trackId,
+    pas de rafale), pas un réglage.
+  - Source MusicBrainz : non implémentée. Métadonnées uniquement, aucun
+    audio ; exige User-Agent identifiant l'application, une requête par
+    seconde, timeout explicite, et ne doit jamais devenir une source de
+    lecture.
+
+Aucune API interne Spotify (pathfinder, spclient, …), aucun jeton lu
+dans le navigateur ou le stockage local, aucun contournement d'accès.
+
+=====================================================================
+FIN
+=====================================================================
