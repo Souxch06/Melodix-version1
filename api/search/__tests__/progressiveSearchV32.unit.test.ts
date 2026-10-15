@@ -25,6 +25,7 @@ import { resetSourceCircuits } from '../sourceCircuit';
 import {
   resetProgressiveSearchEngine,
   searchCatalogProgressive,
+  SEARCH_HARD_LIMIT_MS,
 } from '../progressiveSearch';
 import type { ProgressiveSearchUpdate } from '../progressiveSearch';
 
@@ -281,7 +282,10 @@ describe('V32 — ceinture de sécurité effacée au règlement', () => {
     await jest.advanceTimersByTimeAsync(300); // les autres sources soldent
     expect(jest.getTimerCount()).toBeGreaterThan(0); // la borne pend encore
 
-    await jest.advanceTimersByTimeAsync(9_000);
+    // V74 — la borne dure est passée de 9 s à 12 s : on avance jusqu'à la
+    // CONSTANTE plutôt qu'un littéral figé, sinon ce test casserait à chaque
+    // recalibrage sans rien dire de l'invariant qu'il protège.
+    await jest.advanceTimersByTimeAsync(SEARCH_HARD_LIMIT_MS);
     const last = updates[updates.length - 1];
     expect(last.pending).toBe(false);
     expect(last.failedSources).toContain('youtube');

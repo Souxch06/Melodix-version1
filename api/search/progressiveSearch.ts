@@ -92,34 +92,53 @@ export {
  * (continuation) quand la première page ne suffit pas. */
 export const AUDIUS_SEARCH_LIMIT = 100;
 export const BACKEND_SEARCH_LIMIT = 50;
-/** V40 — recherche catalogue YouTube : 40 morceaux (première page +
- * continuation). Le relèvement reste borné : la continuation n'est suivie
- * que si la première page rend moins que demandé, et son échec ne
- * transforme jamais une recherche fructueuse en panne. */
-export const YOUTUBE_CATALOG_LIMIT = 40;
+/** V40 — recherche catalogue YouTube : première page + continuation.
+ * V74 — 40 → 50. Ce relèvement ne coûte AUCUNE requête réseau supplémentaire :
+ * `fetchContinuationPage` (youtubeInnertube.ts:738) émet au plus UN appel de
+ * continuation, déjà effectué aujourd'hui, et `limit` ne fait que borner la
+ * collecte (`if (collected.length >= limit)`). Comme `searchYouTubeTracks`
+ * filtre ensuite par qualité (`youtubeContentQuality > 0.3`), demander plus de
+ * candidats est le seul moyen d'obtenir plus de résultats UTILISABLES.
+ * InnerTube n'est pas une API officielle : ne pas dépasser quelques dizaines
+ * par requête, au risque de refus. */
+export const YOUTUBE_CATALOG_LIMIT = 50;
 
 /** Budget par source (ms) : au-delà, la source est déclarée en échec POUR
  * CETTE recherche et ses résultats tardifs sont ignorés — les résultats des
  * autres sources, eux, sont déjà affichés. Bornes choisies au-dessus d'une
- * latence réseau normale, bien en dessous des 12 s internes des clients. */
+ * latence réseau normale, bien en dessous des 12 s internes des clients.
+ *
+ * V74 — INVARIANT : chaque budget doit rester STRICTEMENT inférieur à
+ * SEARCH_HARD_LIMIT_MS. Sinon la borne dure solde la course avant que la
+ * source n'ait pu échoir elle-même, et son échec est attribué à la coupure
+ * globale au lieu de son propre budget. */
 export const SOURCE_TIMEOUTS_MS: Record<SearchSourceId, number> = {
   spotify: 6_000,
   backend: 6_000,
   audius: 7_500,
-  youtube: 8_000,
+  // V74 — 8 s → 10 s. À 8 s, le budget n'était qu'à 1 s de la borne dure
+  // (9 s) : sur réseau mobile lent, la source échouait de justesse et ses
+  // résultats étaient perdus alors que la source répondait.
+  youtube: 10_000,
   // V37 : l'API iTunes répond vite (CDN mondial) ; 6 s comme Spotify.
-  // V40 : la page passe de 50 à 200 résultats — le payload quadruple ;
-  // 8 s absorbent la taille de réponse sur réseau réel (le budget reste
-  // sous la borne dure de la course, 9 s).
-  itunes: 8_000,
+  // V40 : la page passe de 50 à 200 résultats — le payload quadruple.
+  // V74 : 8 s → 10 s, même marge insuffisante que YouTube face à la borne dure.
+  itunes: 10_000,
   // V47 : l'API Jamendo répond depuis l'Europe avec des latences comparables
-  // à iTunes ; 8 s restent sous la borne dure de la course (9 s).
+  // à iTunes ; 8 s restent sous la borne dure de la course.
   jamendo: 8_000,
 };
 
 /** Borne absolue d'une recherche : après cela, tout ce qui pend encore est
- * soldé (ceinture de sécurité — chaque source a déjà son propre budget). */
-export const SEARCH_HARD_LIMIT_MS = 9_000;
+ * soldé (ceinture de sécurité — chaque source a déjà son propre budget).
+ *
+ * V74 — 9 s → 12 s. La recherche est PROGRESSIVE (`settleSource` émet à chaque
+ * règlement de source, progressiveSearch.ts:420) : relever cette borne ne
+ * retarde PAS le premier affichage, elle laisse seulement les sources lentes
+ * finir au lieu d'être coupées. Elle reste alignée sur le timeout interne du
+ * client InnerTube (REQUEST_TIMEOUT_MS = 12_000, youtubeInnertube.ts:158) —
+ * les budgets par source (10 s max) échoient bien avant les deux. */
+export const SEARCH_HARD_LIMIT_MS = 12_000;
 
 /** Au-delà de cet âge, une entrée en cache est rafraîchie en arrière-plan
  * (stale-while-revalidate) tout en restant affichée immédiatement. */

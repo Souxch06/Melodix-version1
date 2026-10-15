@@ -10,6 +10,7 @@ import type { ProgressiveSearchUpdate } from '../progressiveSearch';
 import {
   resetProgressiveSearchEngine,
   searchCatalogProgressive,
+  SEARCH_HARD_LIMIT_MS,
   SOURCE_TIMEOUTS_MS,
   YOUTUBE_CATALOG_LIMIT,
 } from '../progressiveSearch';
@@ -151,22 +152,40 @@ describe('V40 — couverture du catalogue : plafonds relevés aux points d appel
     );
   });
 
-  it('YouTube catalogue demande 40 morceaux (première page + continuation)', async () => {
+  it('YouTube catalogue demande 50 morceaux (première page + continuation)', async () => {
     searchCatalogProgressive('daft punk', () => undefined);
     await jest.advanceTimersByTimeAsync(1);
 
-    expect(YOUTUBE_CATALOG_LIMIT).toBe(40);
+    // V74 — 40 → 50. Le plafond est relevé SANS requête réseau supplémentaire :
+    // la continuation est unique et `limit` ne fait que borner la collecte.
+    // Comme les candidats sont ensuite filtrés par qualité, demander plus est
+    // le seul moyen d'obtenir plus de résultats utilisables.
+    expect(YOUTUBE_CATALOG_LIMIT).toBe(50);
     expect(mockedYouTubeSearch).toHaveBeenCalledWith(
       'daft punk',
-      40,
+      YOUTUBE_CATALOG_LIMIT,
       expect.objectContaining({ signal: expect.anything() })
     );
   });
 
-  it('le budget iTunes (8 s) absorbe le payload 4x sous la borne dure (9 s)', () => {
-    expect(SOURCE_TIMEOUTS_MS.itunes).toBe(8_000);
-    expect(SOURCE_TIMEOUTS_MS.itunes).toBeGreaterThanOrEqual(8_000);
-    expect(SOURCE_TIMEOUTS_MS.itunes).toBeLessThan(9_000);
+  it('V74 — les budgets iTunes et YouTube restent STRICTEMENT sous la borne dure', () => {
+    // LA régression visée : à 8 s pour 9 s de borne dure, la marge n'était que
+    // d'une seconde — sur réseau mobile lent la source échouait de justesse et
+    // ses résultats étaient perdus alors qu'elle répondait.
+    expect(SOURCE_TIMEOUTS_MS.itunes).toBe(10_000);
+    expect(SOURCE_TIMEOUTS_MS.youtube).toBe(10_000);
+    expect(SOURCE_TIMEOUTS_MS.itunes).toBeLessThan(SEARCH_HARD_LIMIT_MS);
+    expect(SOURCE_TIMEOUTS_MS.youtube).toBeLessThan(SEARCH_HARD_LIMIT_MS);
+    expect(SEARCH_HARD_LIMIT_MS).toBe(12_000);
+  });
+
+  it('V74 — AUCUNE source ne dépasse la borne dure (invariant général)', () => {
+    // Garde-fou pour toute source future : un budget >= borne dure ferait
+    // attribuer l'échec à la coupure globale au lieu du budget de la source.
+    for (const [source, budget] of Object.entries(SOURCE_TIMEOUTS_MS)) {
+      expect(budget).toBeLessThan(SEARCH_HARD_LIMIT_MS);
+      expect(source.length).toBeGreaterThan(0);
+    }
   });
 
   it('200 résultats iTunes sont fusionnés et comptés (pas de plafond aval)', async () => {

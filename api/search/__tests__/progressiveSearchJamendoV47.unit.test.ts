@@ -22,6 +22,7 @@ import { getSourceCircuitStates, resetSourceCircuits } from '../sourceCircuit';
 import {
   resetProgressiveSearchEngine,
   searchCatalogProgressive,
+  SEARCH_HARD_LIMIT_MS,
   SOURCE_TIMEOUTS_MS,
 } from '../progressiveSearch';
 import type { ProgressiveSearchUpdate } from '../progressiveSearch';
@@ -215,7 +216,10 @@ describe('V47 — Jamendo non armée : dégradation STRICTEMENT identique à ava
 
   it('a un budget dédié borné, sous la borne dure de la course', () => {
     expect(SOURCE_TIMEOUTS_MS.jamendo).toBe(8_000);
-    expect(SOURCE_TIMEOUTS_MS.jamendo).toBeLessThan(9_000);
+    // V74 — comparé à la constante réelle plutôt qu'à un littéral : la borne
+    // dure est passée de 9 s à 12 s, un `toBeLessThan(9_000)` figé aurait
+    // continué de passer en vérifiant la mauvaise borne.
+    expect(SOURCE_TIMEOUTS_MS.jamendo).toBeLessThan(SEARCH_HARD_LIMIT_MS);
   });
 });
 
