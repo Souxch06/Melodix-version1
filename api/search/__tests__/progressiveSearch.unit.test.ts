@@ -670,4 +670,71 @@ describe('config du cache', () => {
     expect(getSearchCacheTtlMs()).toBe(DEFAULT_SEARCH_CACHE_TTL_MS);
     expect(DEFAULT_SEARCH_CACHE_TTL_MS).toBe(5 * 60 * 1000);
   });
+
+  /**
+   * V75 — Spotify est une connexion FACULTATIVE.
+   *
+   * Sans session valide, la source est écartée dès la lecture de session
+   * (progressiveSearch.ts:515-518) au lieu d'attendre son budget de 6 s. La
+   * preuve porte sur trois points mesurables : aucune requête Spotify n'est
+   * émise (ni latence ni quota), la course se solde bien avant 6 s, et Spotify
+   * n'est pas comptée comme une source en ÉCHEC — elle est écartée.
+   */
+  describe('V75 — recherche sans session Spotify (connexion facultative)', () => {
+    it('source écartée IMMÉDIATEMENT, les autres sources restent servies', async () => {
+      mockedSessionActive.mockResolvedValue(false);
+      mockedAudiusSearch.mockImplementation(() =>
+        after(300, [track('audius:a1', 'Song', 'Artist')])
+      );
+      mockedYouTubeSearch.mockImplementation(() =>
+        after(400, [track('youtube:v1', 'Song B', 'Artist B')])
+      );
+
+      const { updates, onUpdate } = collectUpdates();
+      startEngine('song', onUpdate);
+
+      // La lecture de session est asynchrone : on laisse passer le microtask,
+      // très loin du budget Spotify de 6 s.
+      await jest.advanceTimersByTimeAsync(50);
+      expect(mockedSpotifyQuick).not.toHaveBeenCalled();
+
+      // LA régression : si Spotify attendait son budget, la course pendrait
+      // encore ici (6 s) au lieu d'être soldée.
+      await jest.advanceTimersByTimeAsync(400);
+      const final = updates[updates.length - 1];
+      expect(final.pending).toBe(false);
+
+      // Les autres sources sont servies normalement.
+      expect(final.results.tracks.map((t) => t.id)).toEqual([
+        'audius:a1',
+        'youtube:v1',
+      ]);
+      expect(final.failed).toBe(false);
+      // Écartée, pas en échec : ni disjoncteur ouvert, ni promesse non tenue.
+      expect(final.failedSources).not.toContain('spotify');
+      expect(final.perSourceCounts?.spotify ?? 0).toBe(0);
+      // Aucune requête Spotify : ni latence ajoutée, ni quota consommé.
+      expect(mockedSpotifyQuick).not.toHaveBeenCalled();
+    });
+
+    it('avec session active, la source Spotify est bien interrogée (le saut n est pas systématique)', async () => {
+      mockedSessionActive.mockResolvedValue(true);
+      mockedSpotifyQuick.mockImplementation(() =>
+        after(100, {
+          tracks: [track('spotify:s1', 'Song C', 'Artist C')],
+          artists: [],
+          albums: [],
+          playlists: [],
+        })
+      );
+
+      const { updates, onUpdate } = collectUpdates();
+      startEngine('song', onUpdate);
+      await jest.advanceTimersByTimeAsync(300);
+
+      expect(mockedSpotifyQuick).toHaveBeenCalledTimes(1);
+      const final = updates[updates.length - 1];
+      expect(final.results.tracks.map((t) => t.id)).toContain('spotify:s1');
+    });
+  });
 });

@@ -449,6 +449,75 @@ describe('services/spotify/apiClient (API Web Spotify officielle)', () => {
     expect(serialized).not.toContain('Bearer');
   });
 
+  /**
+   * V75 — la session OAuth valide n'est JAMAIS supprimée à cause d'un seul 403.
+   *
+   * Précision sur ce que fait réellement le code, mesurée ici plutôt que
+   * supposée : `clearSessionAccessOnly` (session.ts:403) ne supprime PAS la
+   * session — il met `expiresAtMs` à 0, ce qui invalide l'access token tout en
+   * CONSERVANT le refresh token. Un 401 ne fait donc pas perdre la connexion :
+   * le prochain appel rafraîchit. La purge n'intervient que lorsque le refresh
+   * est lui-même refusé (invalid_grant), et elle est faite par le contexte, pas
+   * par ce client.
+   *
+   * Le test existant « 403 → reste un 403 » vérifiait seulement que la session
+   * n'est pas nulle ; celui-ci verrouille en plus qu'elle est INTACTE.
+   */
+  it('V75 — 403 : session INTACTE ; 401 : refresh token CONSERVÉ (seul l access token est invalidé)', async () => {
+    // 1) 403 avec message Spotify (cause API définitive : aucune retentative).
+    await saveSession(validSession());
+    const before = await loadSession();
+    globalThis.fetch = jest.fn(async (url) => {
+      if (String(url).includes('accounts.spotify.com')) {
+        return { ok: false, status: 400 } as Response;
+      }
+      return {
+        status: 403,
+        ok: false,
+        headers: {
+          get: (name: string) =>
+            name === 'Content-Type' ? 'application/json' : null,
+        },
+        text: async () =>
+          JSON.stringify({
+            error: { status: 403, message: 'User not approved for app' },
+          }),
+      } as unknown as Response;
+    }) as unknown as typeof fetch;
+
+    await expect(spotifyApiGet('/me')).rejects.toMatchObject({
+      kind: 'http',
+      status: 403,
+    });
+
+    // LA régression : un 403 seul ne doit RIEN changer à la session.
+    const after403 = await loadSession();
+    expect(after403?.refreshToken).toBe('rt');
+    expect(after403?.expiresAtMs).toBe(before?.expiresAtMs);
+
+    // 2) 401 dont le refresh est refusé : l'access token est invalidé, mais le
+    //    refresh token survit — la connexion n'est pas perdue.
+    await saveSession(validSession());
+    globalThis.fetch = jest.fn(async (url) => {
+      if (String(url).includes('accounts.spotify.com')) {
+        return { ok: false, status: 400 } as Response;
+      }
+      return {
+        status: 401,
+        ok: false,
+        headers: { get: () => null },
+      } as unknown as Response;
+    }) as unknown as typeof fetch;
+
+    await expect(spotifyApiGet('/me')).rejects.toMatchObject({
+      kind: 'unauthenticated',
+    });
+
+    const after401 = await loadSession();
+    expect(after401?.refreshToken).toBe('rt');
+    expect(after401?.expiresAtMs).toBe(0);
+  });
+
   it("403 + corps d'erreur Spotify → statut ET message consignés (jamais le token)", async () => {
     await saveSession(validSession());
     const body = JSON.stringify({
