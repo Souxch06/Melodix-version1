@@ -17,7 +17,11 @@ import { isBackendConfigured, isSpotifySessionActive } from '@services';
 import { searchAudiusTracks } from '../../audius';
 import { backendSearchCatalog } from '../../backend';
 import { searchSpotifyCatalogQuick } from '../../spotify/search';
-import { searchItunesTracks } from '../../itunes';
+import {
+  searchItunesAlbums,
+  searchItunesArtists,
+  searchItunesTracks,
+} from '../../itunes';
 import { searchYouTubeTracks } from '../../youtube';
 import {
   resetProgressiveSearchEngine,
@@ -157,5 +161,69 @@ describe('V34 — source backend NON configurée : saut volontaire, pas de panne
     await settle();
 
     expect(mockedBackendSearch).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('V69 — Spotify écartée + backend absent : les 3 catégories arrivent', () => {
+  const mockedItunesAlbums = searchItunesAlbums as jest.MockedFunction<
+    typeof searchItunesAlbums
+  >;
+  const mockedItunesArtists = searchItunesArtists as jest.MockedFunction<
+    typeof searchItunesArtists
+  >;
+
+  // EXIGENCE DE MISSION : quand Spotify renvoie 403 (session inactive ici) et
+  // que le backend n'est pas configuré, la recherche unifiée doit quand même
+  // servir titres, albums ET artistes. Avant V68/V69 seuls les titres
+  // l'étaient.
+  it('titres, albums et artistes sont servis sans Spotify ni backend', async () => {
+    mockedSessionActive.mockResolvedValue(false);
+    mockedBackendConfigured.mockReturnValue(false);
+    mockedSpotifyQuick.mockResolvedValue(emptyResults());
+    mockedItunesSearch.mockResolvedValue([
+      {
+        id: 'itunes:4000000001',
+        type: 'track',
+        title: 'Titre iTunes',
+        subtitle: 'Artiste iTunes',
+        imageURL: '',
+      },
+    ]);
+    mockedItunesAlbums.mockResolvedValue([
+      {
+        id: 'itunes-album:944132355',
+        type: 'album',
+        title: 'Album iTunes',
+        subtitle: 'Artiste iTunes',
+        imageURL: 'https://art.example/600x600bb.jpg',
+      },
+    ]);
+    mockedItunesArtists.mockResolvedValue([
+      {
+        id: 'itunes-artist:5869117',
+        type: 'artist',
+        title: 'Artiste iTunes',
+        subtitle: 'Hip-Hop / Rap',
+        imageURL: '',
+      },
+    ]);
+
+    const final = await settle();
+
+    expect(final.results.tracks.map((t) => t.id)).toContain(
+      'itunes:4000000001'
+    );
+    expect(final.results.albums.map((a) => a.id)).toContain(
+      'itunes-album:944132355'
+    );
+    expect(final.results.artists.map((a) => a.id)).toContain(
+      'itunes-artist:5869117'
+    );
+    // Aucune des trois provenances n'est masquée par une panne.
+    expect(final.failedSources).not.toContain('itunes');
+    // Le compteur n'est pas gonflé : une entrée par catégorie, pas davantage.
+    expect(final.results.tracks).toHaveLength(1);
+    expect(final.results.albums).toHaveLength(1);
+    expect(final.results.artists).toHaveLength(1);
   });
 });
