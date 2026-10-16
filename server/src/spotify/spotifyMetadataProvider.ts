@@ -20,8 +20,10 @@
  * - chaque appel passe par le service guard (budget + circuit breaker) :
  *   en cas de refus ou d'échec → ApiError PROVIDER_UNAVAILABLE (503) ;
  * - cache TTL (recherche + métadonnées) pour limiter l'empreinte réseau ;
- * - DTO triés de manière DÉTERMINISTE (score de pertinence de la requête,
- *   puis id) : une même requête renvoie toujours le même ordre.
+ * - aucun tri de pertinence n'est appliqué : le classement par score de
+ *   requête (`byQueryRelevance`) a été retiré avec la recherche en V79, car il
+ *   n'avait plus aucun appelant. Les DTO conservent l'ordre renvoyé par la
+ *   source.
  */
 
 import { env } from '../config/env';
@@ -43,11 +45,6 @@ import {
   subtitleToArtists,
 } from './embedEntity';
 import type { SpotifyEmbedTrackListItem } from './types';
-import {
-  normalizeArtist,
-  normalizeTitle,
-  tokenSimilarity,
-} from './normalization';
 
 const logger = createLogger('SpotifyProvider');
 
@@ -126,46 +123,6 @@ const embedTrackListToDTOs = (
     });
   }
   return tracks;
-};
-
-/**
- * Pertinence vs requête (titre + artistes), ordre déterministe.
- *
- * V79 — Plus aucun appelant dans ce fichier depuis le retrait de la
- * recherche : conservé volontairement car c'est un classement PUREMENT
- * textuel (aucun réseau, aucun accès Spotify) et qu'il reste couvert par
- * `normalization.test.ts`. À réutiliser si une recherche officielle est
- * un jour branchée.
- */
-const byQueryRelevance = <
-  T extends { id: string; title: string; artists: string[] },
->(
-  query: string
-): ((a: T, b: T) => number) => {
-  const normalizedQuery = normalizeTitle(query).base;
-  const queryArtists = normalizeArtist(query);
-  const score = (candidate: T): number => {
-    const titleScore = tokenSimilarity(
-      normalizedQuery,
-      normalizeTitle(candidate.title).base
-    );
-    const artistScore = candidate.artists.length
-      ? Math.max(
-          ...candidate.artists.map((artist) =>
-            tokenSimilarity(queryArtists, normalizeArtist(artist))
-          ),
-          0
-        )
-      : 0;
-    return 0.7 * titleScore + 0.3 * artistScore;
-  };
-  return (a, b) => {
-    const diff = score(b) - score(a);
-    if (Math.abs(diff) > 1e-9) {
-      return diff;
-    }
-    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
-  };
 };
 
 export type SpotifyProviderDeps = {
