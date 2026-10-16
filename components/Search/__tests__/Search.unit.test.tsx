@@ -640,14 +640,38 @@ describe('Search — « Parcourir » lance une VRAIE recherche', () => {
       await new Promise((resolve) => setTimeout(resolve, SEARCH_DELAY_MS + 30));
     });
 
-    // Même chemin qu'une saisie manuelle : une vraie requête catalogue.
+    // V70 (Bug 3) — une catégorie n'est PLUS une recherche textuelle sur son
+    // libellé : l'id du genre est transporté jusqu'au moteur, qui confronte
+    // alors le terme à l'index de genre. L'ancien contrat (`expect.anything()`)
+    // laissait passer le comportement fautif à l'origine du morceau intitulé
+    // littéralement « Jazz » en tête de la catégorie.
     expect(searchProgressiveMock).toHaveBeenCalledWith(
       'Jazz',
       expect.any(Function),
-      expect.anything()
+      expect.objectContaining({ genre: { id: 'jazz', label: 'Jazz' } })
     );
     // La section disparaît une fois la recherche lancée.
     expect(() => getByText('Électronique')).toThrow();
+  });
+
+  it('une SAISIE manuelle reste une recherche libre, sans genre', async () => {
+    const { getByTestId } = render(<Search />);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    await act(async () => {
+      fireEvent.changeText(getByTestId('search-input'), 'jazz');
+      await new Promise((resolve) => setTimeout(resolve, SEARCH_DELAY_MS + 30));
+    });
+
+    // Aucun genre : saisir « jazz » ne doit pas être interprété comme la
+    // catégorie Jazz (contrat de requête différent, cache distinct).
+    expect(searchProgressiveMock).toHaveBeenCalledWith(
+      'jazz',
+      expect.any(Function),
+      expect.objectContaining({ genre: undefined })
+    );
   });
 
   it('masque la section si le catalogue de genres est indisponible', async () => {

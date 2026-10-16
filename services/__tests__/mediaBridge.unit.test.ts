@@ -1123,4 +1123,74 @@ describe('mediaBridge — projection MediaSession (phase 5A)', () => {
       expect(mockStopSession).not.toHaveBeenCalled();
     });
   });
+
+  describe('V70 (Bug 2) — une projection native ratée est RETENTÉE', () => {
+    const emitEngineState = (partial: Partial<PlayerState>): void => {
+      (
+        melodixPlayer as unknown as {
+          emit: (next: Partial<PlayerState>) => void;
+        }
+      ).emit(partial);
+    };
+
+    const playing = (track: PlayerTrack): Partial<PlayerState> => ({
+      queue: [track],
+      index: 0,
+      current: track,
+      status: 'playing',
+      positionMillis: 0,
+      durationMillis: track.durationMillis ?? 0,
+      resolved: null,
+    });
+
+    it('la notification n’est PAS figée sur l’ancien morceau après un échec', () => {
+      const morceauA = morceau('a', 'Morceau A');
+      const morceauB = morceau('b', 'Morceau B');
+
+      // 1) Lecture normale : la projection A passe.
+      emitEngineState(playing(morceauA));
+      expect(mockUpdateSession).toHaveBeenCalledTimes(1);
+
+      // 2) Android jette sur la projection du morceau B (exception tolérée
+      //    par callNative — c'est le comportement voulu, le moteur ne doit
+      //    jamais crasher à cause d'une couche de contrôle).
+      mockUpdateSession.mockImplementationOnce(() => {
+        throw new Error('native projection failed');
+      });
+      emitEngineState(playing(morceauB));
+      expect(mockUpdateSession).toHaveBeenCalledTimes(2);
+
+      // 3) Tick suivant sur le MÊME état : la projection doit être RETENTÉE.
+      //    Avant V70 la signature était gravée AVANT l'appel natif, donc cet
+      //    appel était dédupliqué et la notification restait sur « Morceau A ».
+      emitEngineState(playing(morceauB));
+      expect(mockUpdateSession).toHaveBeenCalledTimes(3);
+
+      // 4) Une projection réussie est bien dédupliquée ensuite (anti-spam
+      //    sur les ticks 500 ms conservé).
+      emitEngineState(playing(morceauB));
+      expect(mockUpdateSession).toHaveBeenCalledTimes(3);
+    });
+
+    it('la dernière projection RÉUSSIE porte bien le morceau courant', () => {
+      const morceauA = morceau('a', 'Morceau A');
+      const morceauB = morceau('b', 'Morceau B');
+
+      emitEngineState(playing(morceauA));
+      mockUpdateSession.mockImplementationOnce(() => {
+        throw new Error('native projection failed');
+      });
+      emitEngineState(playing(morceauB));
+      // Retentative réussie.
+      emitEngineState(playing(morceauB));
+
+      const lastCall =
+        mockUpdateSession.mock.calls[mockUpdateSession.mock.calls.length - 1];
+      expect(lastCall[0]).toMatchObject({
+        trackId: morceauB.id,
+        title: 'Morceau B',
+        isPlaying: true,
+      });
+    });
+  });
 });

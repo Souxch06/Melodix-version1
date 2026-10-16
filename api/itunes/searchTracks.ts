@@ -1,6 +1,7 @@
 import type { LibraryItemModel } from '@models';
 
 import { itunesSearchGet } from './client';
+import { matchesItunesGenre } from './genres';
 
 /**
  * V37 — recherche iTunes Search API comme SOURCE DE CATALOGUE de Melodix.
@@ -37,6 +38,9 @@ type ItunesSongResult = {
   previewUrl?: string;
   trackTimeMillis?: number;
   trackExplicitness?: string;
+  // V70 (Bug 3) — genre réellement renvoyé par Apple. Sert au CLASSEMENT des
+  // résultats d'une catégorie, jamais à la suppression d'un résultat.
+  primaryGenreName?: string;
 };
 
 type ItunesSearchResponse = {
@@ -53,6 +57,8 @@ export type ItunesTrackMatch = {
   previewUrl: string;
   durationMs: number | null;
   explicit: boolean | null;
+  // V70 (Bug 3) — genre réellement renvoyé par Apple, ou null si absent.
+  primaryGenreName: string | null;
 };
 
 const hasPlayableIdentity = (
@@ -108,6 +114,11 @@ export const itunesResultToMatch = (
         ? result.trackTimeMillis
         : null,
     explicit: explicitOf(result.trackExplicitness),
+    primaryGenreName:
+      typeof result.primaryGenreName === 'string' &&
+      result.primaryGenreName.trim()
+        ? result.primaryGenreName.trim()
+        : null,
   };
 };
 
@@ -134,7 +145,7 @@ export const itunesTrackToLibraryItem = (
 export const searchItunesTracks = async (
   query: string,
   limit = ITUNES_SEARCH_LIMIT,
-  options?: { signal?: AbortSignal }
+  options?: { signal?: AbortSignal; genreId?: string }
 ): Promise<LibraryItemModel[]> => {
   const q = query.trim();
 
@@ -142,12 +153,20 @@ export const searchItunesTracks = async (
     return [];
   }
 
+  const genreId = options?.genreId?.trim();
+  const genreScoped = Boolean(genreId);
+
   const response = await itunesSearchGet<ItunesSearchResponse>(
     {
       term: q,
       media: 'music',
       entity: 'song',
       limit: String(Math.min(Math.max(limit, 1), 200)),
+      // V70 (Bug 3) — pour une CATÉGORIE, le libellé est confronté à l'index
+      // de genre (`attribute=genreIndex`, paramètre documenté par Apple pour
+      // `media=music`) au lieu d'être cherché dans les titres. Sans cela,
+      // « Jazz » renvoyait d'abord un morceau intitulé « Jazz ».
+      ...(genreScoped ? { attribute: 'genreIndex' } : {}),
     },
     options
   );
@@ -155,6 +174,9 @@ export const searchItunesTracks = async (
   const results = Array.isArray(response?.results) ? response.results : [];
   const seen = new Set<number>();
   const items: LibraryItemModel[] = [];
+  // Titres dont le genre renvoyé ne correspond pas à la catégorie demandée :
+  // conservés, mais affichés APRÈS les correspondances réelles.
+  const offGenre: LibraryItemModel[] = [];
 
   for (const result of results) {
     const match = itunesResultToMatch(result);
@@ -164,8 +186,20 @@ export const searchItunesTracks = async (
     }
 
     seen.add(match.trackId);
-    items.push(itunesTrackToLibraryItem(match));
+
+    const item = itunesTrackToLibraryItem(match);
+    const verdict = genreScoped
+      ? matchesItunesGenre(genreId, match.primaryGenreName)
+      : null;
+
+    // `verdict === false` : genre connu et DIFFÉRENT. `null` : information
+    // absente → on ne pénalise pas, le titre garde sa place d'origine.
+    if (verdict === false) {
+      offGenre.push(item);
+    } else {
+      items.push(item);
+    }
   }
 
-  return items;
+  return genreScoped ? [...items, ...offGenre] : items;
 };

@@ -145,6 +145,19 @@ describe('recherche — pas de résultat périmé', () => {
     // c'est le bug auto-infligé de la mission 4 (onChangeText câblé sur le
     // clear effaçait tout à chaque caractère).
     expect(search).toContain('onClear={handleClearField}');
-    expect(search).toContain('onChangeText={setQuery}');
+    // V70 — la saisie passe par `handleQueryChange` (setQuery + annulation de
+    // la catégorie sélectionnée). La GARDE d'origine est conservée : ce
+    // gestionnaire ne doit jamais être celui de l'effacement, sinon chaque
+    // caractère viderait les résultats.
+    expect(search).toContain('onChangeText={handleQueryChange}');
+    expect(search).not.toContain('onChangeText={handleClearField}');
+    // Et `handleQueryChange` ne touche ni aux résultats ni au statut.
+    const handler = search.slice(
+      search.indexOf('const handleQueryChange'),
+      search.indexOf('const handleQueryChange') + 220
+    );
+    expect(handler).toContain('setQuery(text)');
+    expect(handler).not.toContain('setResults(null)');
+    expect(handler).not.toContain("setStatus('idle')");
   });
 });

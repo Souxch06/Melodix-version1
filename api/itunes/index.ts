@@ -27,7 +27,7 @@ export {
   searchItunesTracks,
 } from './searchTracks';
 export type { ItunesTrackMatch } from './searchTracks';
-export { getItunesPreviewUrl } from './lookupStream';
+export { clearItunesPreviewCache, getItunesPreviewUrl } from './lookupStream';
 // V68 — albums : recherche (`entity=album`) + résolution (`lookup`).
 export {
   ITUNES_ALBUM_LIMIT,

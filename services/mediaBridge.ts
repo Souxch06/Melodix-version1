@@ -48,11 +48,13 @@ let notificationPermissionRequested = false;
 
 /** Appel natif blindé : une couche de CONTRÔLE ne fait jamais crasher le
  * moteur audio même si Android jette (§11 résilience). */
-const callNative = (fn: () => void): void => {
+const callNative = (fn: () => void): boolean => {
   try {
     fn();
+    return true;
   } catch (error) {
     console.warn('MelodixMedia native error (tolerated):', error);
+    return false;
   }
 };
 
@@ -344,9 +346,27 @@ const projectState = (state: PlayerState): void => {
   ensureNotificationPermissionRequested();
 
   sessionActivated = true;
+
+  // V70 (Bug 2) — la signature n'est gravée QUE si la projection native a
+  // réellement abouti. L'ancien ordre gravait AVANT l'appel : comme
+  // `callNative` avale toute exception Android, une projection ratée était
+  // considérée comme réussie et le tick suivant la dédupliquait — la
+  // notification restait alors figée sur l'ANCIEN morceau jusqu'à ce qu'un
+  // autre champ change par hasard. En cas d'échec la signature reste intacte :
+  // le prochain tick (500 ms) retente la projection.
+  const pushedOk = callNative(() => updateSession(payload));
+
+  if (!pushedOk) {
+    appendDiagLog(
+      `[MEDIA_DIAG] NATIVE_UPDATE_FAILED state=${
+        payload.isPlaying ? 'PLAYING' : 'PAUSED'
+      } trackId=${payload.trackId} (retenté au prochain tick)`
+    );
+    return;
+  }
+
   lastPushedSignature = pushed;
 
-  callNative(() => updateSession(payload));
   appendDiagLog(
     `[MEDIA_DIAG] NATIVE_UPDATE_REQUESTED state=${payload.isPlaying ? 'PLAYING' : 'PAUSED'} ` +
       `trackId=${payload.trackId}`

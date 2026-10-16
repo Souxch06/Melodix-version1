@@ -22,9 +22,12 @@ import * as SecureStore from 'expo-secure-store';
 import { useSpotifyAuth } from '../useSpotifyAuth';
 import type { SpotifyAuthState } from '../useSpotifyAuth';
 import {
+  isSpotifySessionActive,
   loadPendingOAuthTransaction,
+  loadSession,
   redeemAuthorizationCode,
   savePendingOAuthTransaction,
+  saveSession,
 } from '../session';
 import { SpotifyApiError } from '../apiClient';
 import { getCurrentUser } from '@api';
@@ -2211,6 +2214,91 @@ describe('useSpotifyAuth — taxonomie du diagnostic OAuth', () => {
       )?.[0];
       expect(options.clientId).toBe('');
       expect(options.clientId).not.toBe('7c5af4cd57e646c49a6266222c2ed9d6');
+    });
+  });
+
+  describe('V70 (Bug 1) — un 403 sur /v1/me ne détruit PAS la connexion', () => {
+    /**
+     * Ce que ces tests verrouillent, et que la classification seule ne
+     * prouvait pas : la session est enregistrée AVANT l'appel /v1/me. Dans le
+     * code réel c'est `redeemAuthorizationCode` qui persiste
+     * (services/spotify/session.ts:739, juste avant `return { kind: 'ok' }`),
+     * puis useSpotifyAuth.ts:569 appelle /v1/me. Un refus du PROFIL ne doit
+     * donc ni effacer la session ni interdire le catalogue :
+     * `isSpotifySessionActive` ne teste que la PRÉSENCE d'une session
+     * (services/spotify/session.ts:398), jamais le succès de /v1/me.
+     *
+     * Le mock ci-dessous reproduit EXACTEMENT ce contrat (persistance réelle
+     * dans le coffre simulé) : sans cela le banc ne sauvegardait rien et la
+     * session apparaissait nulle pour une raison purement artificielle.
+     *
+     * ⚠️ Ce n'est PAS la preuve que l'API Spotify répond : le 403 lui-même
+     * dépend de la liste « Users and Access » du Dashboard et ne peut pas être
+     * levé depuis le code.
+     */
+    const exchangeWithRealPersistence = () => {
+      const session = {
+        accessToken: 'acc',
+        refreshToken: 'ref',
+        expiresAtMs: Date.now() + 3_600_000,
+        scope: 'user-read-private',
+      };
+      (redeemAuthorizationCode as jest.Mock).mockImplementation(async () => {
+        // session.ts:739 — c'est l'échange qui persiste, avant tout /v1/me.
+        await saveSession(session);
+        return { kind: 'ok', session };
+      });
+    };
+
+    it('session conservée après un 403 de profil → catalogue toujours utilisable', async () => {
+      exchangeWithRealPersistence();
+      (getCurrentUser as jest.Mock).mockRejectedValueOnce(
+        new SpotifyApiError(
+          'http',
+          'Réponse Spotify non valide (403).',
+          403,
+          '{"error":"User not registered"}'
+        )
+      );
+
+      const { result } = renderHook(() => useSpotifyAuth());
+      await act(async () => {
+        await result.current.startLogin();
+      });
+
+      // Le refus est bien classé côté UI…
+      if (result.current.state.status !== 'error') return;
+      expect(result.current.state.outcome.kind).toBe('profile-forbidden');
+
+      // …mais la session OBTENUE par l'échange PKCE est toujours en place.
+      const session = await loadSession();
+      expect(session).not.toBeNull();
+      expect(session?.accessToken).toBe('acc');
+      // C'est CE booléen qui autorise les appels catalogue : il reste vrai.
+      expect(await isSpotifySessionActive()).toBe(true);
+    });
+
+    it('un 403 de profil ne déconnecte PAS le compte', async () => {
+      exchangeWithRealPersistence();
+      (getCurrentUser as jest.Mock).mockRejectedValueOnce(
+        new SpotifyApiError(
+          'http',
+          'Réponse Spotify non valide (403).',
+          403,
+          ''
+        )
+      );
+
+      const { result } = renderHook(() => useSpotifyAuth());
+      await act(async () => {
+        await result.current.startLogin();
+      });
+
+      if (result.current.state.status !== 'error') return;
+      expect(result.current.state.outcome.kind).toBe('profile-forbidden');
+      // Aucune purge : un incident Spotify ne doit pas déconnecter le compte.
+      expect(await loadSession()).not.toBeNull();
+      expect(await isSpotifySessionActive()).toBe(true);
     });
   });
 });

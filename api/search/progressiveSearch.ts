@@ -268,6 +268,9 @@ type Run = {
   cancelled: boolean;
   /** V31 : réessai explicite (« Réessayer ») — ignore les disjoncteurs. */
   bypassCache: boolean;
+  /** V70 (Bug 3) — id de la catégorie « Parcourir », null pour une saisie
+   *  libre. Une catégorie n'est PAS une recherche textuelle sur son nom. */
+  genreId: string | null;
   /** V31 : annulation RÉELLE — propagée jusqu'aux fetch des clients. */
   controller: AbortController;
   startedAtMs: number;
@@ -715,6 +718,9 @@ const itunesSource =
         Promise.all([
           searchItunesTracks(run.query, ITUNES_SEARCH_LIMIT, {
             signal: controller.signal,
+            // V70 (Bug 3) — une catégorie confronte le terme à l'index de
+            // genre ; une saisie libre reste une recherche plein texte.
+            genreId: run.genreId ?? undefined,
           }),
           searchItunesAlbums(run.query, ITUNES_ALBUM_LIMIT, {
             signal: controller.signal,
@@ -852,6 +858,12 @@ const startRun = (run: Run, nowMs: number): void => {
 export type ProgressiveSearchOptions = {
   /** Ignore le cache (bouton « Réessayer », revalidation forcée). */
   bypassCache?: boolean;
+  /**
+   * V70 (Bug 3) — catégorie « Parcourir » sélectionnée. Présente, la
+   * recherche devient une recherche PAR GENRE (le terme est confronté à
+   * l'index de genre) au lieu d'une recherche textuelle sur le libellé.
+   */
+  genre?: { id: string; label: string };
 };
 
 export type ProgressiveSearchHandle = {
@@ -899,7 +911,13 @@ export const searchCatalogProgressive = (
   options: ProgressiveSearchOptions = {}
 ): ProgressiveSearchHandle => {
   const q = query.trim();
-  const cacheKey = searchIdentityKeyOf(q);
+  const genreId = options.genre?.id?.trim() || null;
+  // V70 (Bug 3) — la clé de cache DOIT distinguer « jazz » saisi à la main de
+  // la catégorie « Jazz » : mêmes mots, contrat de requête différent. Sans ce
+  // suffixe les deux partageaient la même entrée et se contaminaient.
+  const cacheKey = genreId
+    ? `genre:${genreId}:${searchIdentityKeyOf(q)}`
+    : searchIdentityKeyOf(q);
   const nowMs = Date.now();
 
   let run: Run | null = null;
@@ -978,6 +996,7 @@ export const searchCatalogProgressive = (
         settled: false,
         cancelled: false,
         bypassCache: Boolean(options.bypassCache),
+        genreId,
         controller: new AbortController(),
         startedAtMs: nowMs,
         firstResultAtMs: null,

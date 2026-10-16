@@ -122,6 +122,11 @@ export const Search = ({ autoFocus = false }: SearchProps = {}) => {
   // exactement la même requête qu'une saisie manuelle — aucun second système
   // de recherche, aucun écran factice.
   const [genres, setGenres] = React.useState<BrowseCategoryModel[]>([]);
+  /** V70 (Bug 3) — catégorie « Parcourir » active. Non nulle, la recherche
+   *  devient une recherche PAR GENRE et non une recherche textuelle sur le
+   *  libellé (cause du morceau intitulé « Jazz » en tête de la catégorie). */
+  const [selectedGenre, setSelectedGenre] =
+    React.useState<BrowseCategoryModel | null>(null);
   const inputRef = React.useRef<TextInput>(null);
   const scrollRef = React.useRef<ScrollView | null>(null);
 
@@ -252,7 +257,12 @@ export const Search = ({ autoFocus = false }: SearchProps = {}) => {
             recent.add(q);
           }
         },
-        { bypassCache: bypassCacheRef.current }
+        {
+          bypassCache: bypassCacheRef.current,
+          genre: selectedGenre
+            ? { id: selectedGenre.id, label: selectedGenre.title }
+            : undefined,
+        }
       );
 
       bypassCacheRef.current = false;
@@ -271,7 +281,7 @@ export const Search = ({ autoFocus = false }: SearchProps = {}) => {
     // `recent.add` est stable (useCallback sans dépendance) : l'inclure
     // relancerait la recherche à chaque rendu.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query, retrySeed]);
+  }, [query, retrySeed, selectedGenre]);
 
   const player = usePlayer();
   const [actionTrack, setActionTrack] = React.useState<PlayerTrack | null>(
@@ -374,9 +384,17 @@ export const Search = ({ autoFocus = false }: SearchProps = {}) => {
   // déjà (app/(tabs)/search/{artist,album,playlist}/[id].tsx) : un résultat
   // de recherche ouvre donc la VRAIE page, jamais un cul-de-sac.
   // Un genre n'est pas une page : c'est une RECHERCHE pré-remplie.
-  const handleGenrePress = React.useCallback((title: string) => {
-    setQuery(title);
-  }, []);
+  const handleGenrePress = React.useCallback(
+    (category: BrowseCategoryModel) => {
+      // V70 (Bug 3) — l'id de la catégorie est désormais transporté jusqu'au
+      // moteur : `searchCatalogProgressive` reçoit `genre` et la source iTunes
+      // confronte le libellé à l'index de genre (`attribute=genreIndex`,
+      // paramètre documenté par Apple) au lieu de le chercher dans les titres.
+      setSelectedGenre(category);
+      setQuery(category.title);
+    },
+    []
+  );
 
   const openArtist = React.useCallback(
     (slide: LibraryItemModel) => {
@@ -405,6 +423,7 @@ export const Search = ({ autoFocus = false }: SearchProps = {}) => {
    * le focus — l'utilisateur veut corriger sa saisie, pas perdre sa place.
    */
   const handleClearField = React.useCallback(() => {
+    setSelectedGenre(null);
     setQuery('');
     setResults(null);
     setStatus('idle');
@@ -412,7 +431,17 @@ export const Search = ({ autoFocus = false }: SearchProps = {}) => {
     inputRef.current?.focus();
   }, []);
 
+  /**
+   * V70 (Bug 3) — une saisie MANUELLE annule la catégorie : l'utilisateur
+   * corrige sa requête, elle ne doit plus être interprétée comme un genre.
+   */
+  const handleQueryChange = React.useCallback((text: string) => {
+    setSelectedGenre(null);
+    setQuery(text);
+  }, []);
+
   const handleRecentSelect = React.useCallback((entry: string) => {
+    setSelectedGenre(null);
     setQuery(entry);
   }, []);
 
@@ -569,7 +598,7 @@ export const Search = ({ autoFocus = false }: SearchProps = {}) => {
         autoFocus={autoFocus}
         inputRef={inputRef}
         onClear={handleClearField}
-        onChangeText={setQuery}
+        onChangeText={handleQueryChange}
         onSubmit={handleSubmit}
         showBackButton={autoFocus}
         onBack={() => router.back()}
@@ -601,13 +630,13 @@ export const Search = ({ autoFocus = false }: SearchProps = {}) => {
           <View style={styles.browseSection} testID="search-browse">
             <Text style={styles.browseTitle}>{translations.browseAll}</Text>
             <View style={styles.browseChips}>
-              {genres.map((genre) => (
+              {genres.map((category) => (
                 <BrowseCategory
-                  id={genre.id}
-                  imageURL={genre.imageURL}
-                  key={genre.id}
-                  onPress={() => handleGenrePress(genre.title)}
-                  title={genre.title}
+                  id={category.id}
+                  imageURL={category.imageURL}
+                  key={category.id}
+                  onPress={() => handleGenrePress(category)}
+                  title={category.title}
                 />
               ))}
             </View>
