@@ -25,10 +25,37 @@ if [ -z "${EXPECTED_VERSION_CODE:-}" ]; then
 fi
 [ -n "$EXPECTED_VERSION_CODE" ] || EXPECTED_VERSION_CODE=45003
 
+emit_block() {
+  # V88 — une seule annotation par bloc, sauts de ligne encodés en %0A : les
+  # commandes de workflow GitHub tiennent sur une ligne et le nombre
+  # d'annotations d'une étape est plafonné.
+  body=$(cat | tr -d '\r' | head -30)
+  [ -n "$body" ] || return 0
+  encoded=$(printf '%s' "$body" | awk '{ gsub(/%/, "%25"); printf "%s%%0A", $0 }')
+  printf '::error title=%s::%s\n' "$1" "$encoded"
+}
+
 fail() {
   # Les commandes de workflow GitHub doivent tenir sur une ligne.
   detail=$(printf '%s' "$1" | tr '\r\n' '  ' | sed 's/%/%25/g')
   echo "::error title=Test installation Android::$detail"
+  # V88 — « processus détruit » ne dit pas POURQUOI il est mort, et les
+  # journaux de job GitHub ne sont pas téléchargeables depuis tous les
+  # environnements d'analyse — les annotations, si. On remonte donc le tampon
+  # de crash de l'émulateur (FATAL EXCEPTION, tombstone native, ANR) puis les
+  # dernières lignes de l'app. Sans effet si adb n'est pas encore prêt ou si
+  # les tampons sont vides.
+  if command -v adb >/dev/null 2>&1; then
+    # `-A 15` : la ligne de signature seule ne dit rien — c'est la pile qui
+    # suit (type d'exception, processus, frames) qui nomme la cause.
+    adb logcat -d -b crash 2>/dev/null |
+      grep -E -A 15 'FATAL|AndroidRuntime|tombstone|ANR in|signal [0-9]' |
+      emit_block 'Crash émulateur'
+    adb logcat -d 2>/dev/null |
+      grep -E "$PACKAGE|ReactNativeJS|libc|DEBUG" |
+      tail -30 |
+      emit_block 'Logcat avant échec'
+  fi
   exit 1
 }
 
