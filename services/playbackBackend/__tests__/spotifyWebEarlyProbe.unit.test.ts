@@ -17,6 +17,7 @@
  */
 import { SpotifyWebBackend } from '../SpotifyWebBackend';
 import {
+  SPOTIFY_WEB_MEDIA_SESSION_PROBE,
   SPOTIFY_WEB_PROBE_INSTALLED_SCRIPT,
   isProbeInstalledMessage,
 } from '../spotifyWebMediaSessionProbe';
@@ -110,5 +111,84 @@ describe('SPOTIFY_WEB_PROBE_INSTALLED_SCRIPT — portée minimale', () => {
       "typeof bridge.postMessage !== 'function'"
     );
     expect(SPOTIFY_WEB_PROBE_INSTALLED_SCRIPT).toContain('catch (_) {}');
+  });
+});
+
+/**
+ * V89 — validité SYNTAXIQUE de la chaîne réellement injectée.
+ *
+ * Défaut corrigé ici, cause établie du `bridge_timeout` observé en CI alors que
+ * `probe_installed` était bien reçu : `TRACK_PATH` était écrit `/^\/track\/…/`
+ * à l'intérieur d'un LITTÉRAL DE GABARIT TypeScript. Dans un gabarit, `\/` est
+ * un échappement qui se réduit à `/` : la chaîne injectée contenait donc
+ *
+ *     const TRACK_PATH = /^/track/([a-z0-9]{22})(?:[/?#]|$)/;
+ *
+ * soit une erreur de syntaxe (« Invalid regular expression flags »). Le script
+ * tardif mourait au parse, AVANT `post({ type: 'ready' })` — d'où un handshake
+ * qui n'aboutissait jamais, de façon déterministe, sur tous les runs. La sonde
+ * précoce, elle, ne contient aucune regex : elle passait, ce qui bornait la
+ * panne à l'injection tardive sans en donner la cause.
+ *
+ * Ces tests évaluent la chaîne EXPORTÉE — pas une copie — enveloppée exactement
+ * comme le fait le natif (`RNCWebView.callInjectedJavaScript*` entoure toute
+ * injection de « (function() { … ; })(); »).
+ */
+describe('V89 — la chaîne injectée doit être syntaxiquement valide', () => {
+  /** Enveloppe native réelle (RNCWebView.java, callInjectedJavaScript*). */
+  const asNativeEvaluatesIt = (script: string): string =>
+    `(function() {\n${script};\n})();`;
+
+  const compile = (script: string): void => {
+    // eslint-disable-next-line no-new-func
+    new Function(asNativeEvaluatesIt(script));
+  };
+
+  it('la sonde principale compile une fois enveloppée par le natif', () => {
+    expect(() => compile(SPOTIFY_WEB_MEDIA_SESSION_PROBE)).not.toThrow();
+  });
+
+  it('la sonde précoce compile une fois enveloppée par le natif', () => {
+    expect(() => compile(SPOTIFY_WEB_PROBE_INSTALLED_SCRIPT)).not.toThrow();
+  });
+
+  it('les barres obliques de TRACK_PATH survivent au littéral de gabarit', () => {
+    // Garde contre la récidive : dans la CHAÎNE PRODUITE (pas dans la source),
+    // chaque barre du motif doit être échappée.
+    const line = SPOTIFY_WEB_MEDIA_SESSION_PROBE.split('\n').find((l) =>
+      l.includes('TRACK_PATH =')
+    );
+    expect(line).toBeDefined();
+    expect(line).toContain('\\/track\\/');
+    expect(line).not.toContain('/^/track/');
+  });
+
+  it('exécutée dans un document factice, la sonde principale poste bien ready', () => {
+    const posted: Array<Record<string, unknown>> = [];
+    const listeners: string[] = [];
+    const doc: Record<string, unknown> = {
+      ReactNativeWebView: {
+        postMessage: (raw: string) => {
+          posted.push(JSON.parse(raw) as Record<string, unknown>);
+        },
+      },
+      addEventListener: (type: string) => {
+        listeners.push(type);
+      },
+      navigator: {},
+      location: { href: 'https://open.spotify.com/' },
+    };
+    doc.globalThis = doc;
+    // eslint-disable-next-line no-new-func
+    const run = new Function(
+      'g',
+      `with(g){ ${asNativeEvaluatesIt(SPOTIFY_WEB_MEDIA_SESSION_PROBE)} }`
+    );
+    run(doc);
+    const types = posted.map((message) => String(message.type));
+    // `ready` seul fait aboutir le handshake côté backend.
+    expect(types).toContain('ready');
+    // L'écoute des commandes est enregistrée AVANT le ready (contrat V17).
+    expect(listeners).toEqual(['message']);
   });
 });

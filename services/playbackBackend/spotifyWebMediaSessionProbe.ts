@@ -134,7 +134,7 @@ export const SPOTIFY_WEB_MEDIA_SESSION_PROBE = `
   // donnée de stockage, aucun objet média, aucun chemin protégé n'est lu.
   // null partout ailleurs : une identité inconnue ne doit jamais être
   // inventée (garde anti-faux-positif du transport).
-  const TRACK_PATH = /^\/track\/([a-z0-9]{22})(?:[/?#]|$)/;
+  const TRACK_PATH = /^\\/track\\/([a-z0-9]{22})(?:[\\/?#]|$)/;
   const trackIdFromDocument = () => {
     try {
       const href = String(globalThis.location && globalThis.location.href);
