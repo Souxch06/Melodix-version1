@@ -357,7 +357,22 @@ jobs:
           EXPO_PUBLIC_SPOTIFY_OAUTH_SMOKE: ''
         run: |
           set -o pipefail
-          npm test -- --runInBand 2>&1 | tee jest.log
+          npm test -- --runInBand 2>&1 | tee jest.log || JEST_FAILED=1
+          if [ -n "${JEST_FAILED:-}" ]; then
+            # Les journaux de job GitHub ne sont pas téléchargeables depuis
+            # tous les environnements d'analyse, mais les annotations le sont.
+            # On remonte donc les noms des tests en échec comme ::error:: :
+            # sans cela, un échec de l'étape 11 est illisible de l'extérieur
+            # et ne peut être diagnostiqué qu'en devinant.
+            echo "::error title=Étape 11 — tests en échec::$(grep -cE '^  ● ' jest.log 2>/dev/null || echo 0) ligne(s) de failure, détail ci-dessous"
+            grep -E '^  ● ' jest.log 2>/dev/null | grep -v 'Console' | sort -u | head -40 | while IFS= read -r line; do
+              echo "::error title=Test en échec::${line}"
+            done
+            grep -E '^(FAIL|Tests:|Test Suites:)' jest.log 2>/dev/null | sort -u | head -20 | while IFS= read -r line; do
+              echo "::error title=Résumé Jest::${line}"
+            done
+            exit 1
+          fi
 
       - name: Générer le projet Android
         run: npx expo prebuild --platform android --no-install
