@@ -52,8 +52,24 @@ object MelodixMediaController {
    * Projette l'état du lecteur : mémorise la projection (synchrone), puis
    * sur le MAIN thread : garantit le service et fait suivre au service actif.
    * Le démarrage n'est tenté QUE sur lecture volontaire (verrou JS côté 5A).
+   *
+   * CONTRAT V83 — valeur de retour :
+   *  - `true`  : projection ACCEPTÉE et remise au main thread sans échec
+   *              détectable de façon synchrone.
+   *  - `false` : échec détectable (exception synchrone avant/après la remise).
+   *
+   * ⚠️ LIMITE ASSUMÉE ET DOCUMENTÉE : `true` confirme la REMISE, pas
+   * l'AFFICHAGE. Le travail réel s'exécute dans `mainHandler.post { … }`, donc
+   * APRÈS ce retour : les échecs `SERVICE_START_FAIL`, `PROJECTION_FAIL` et
+   * `VMP_UPDATE_FAIL` surviennent plus tard et ne peuvent PAS être reflétés par
+   * cette valeur. Ils restent journalisés dans MelodixDiagLog. Une confirmation
+   * RÉELLE de projection exigerait un événement ou une promesse native — voir
+   * `docs/audits/V83-NATIVE-PROJECTION-FAILURE.md`, §Limites.
+   *
+   * Le blindage 5C.2 est INTÉGRALEMENT conservé : aucune exception ne remonte
+   * jamais vers le JS et rien ne peut crasher le main thread.
    */
-  fun updateSession(context: Context, payload: Map<String, Any?>) {
+  fun updateSession(context: Context, payload: Map<String, Any?>): Boolean = try {
     lastPayload = payload
     val appContext = context.applicationContext
 
@@ -125,6 +141,15 @@ object MelodixMediaController {
         MelodixDiagLog.error("PROJECTION_FAIL", t) // DIAG 4.4.7
       }
     }
+    // Remise acceptée. ⚠️ ne prouve PAS l'affichage : voir le contrat ci-dessus.
+    true
+  } catch (t: Throwable) {
+    // Blindage 5C.2 INTÉGRALEMENT conservé : on ne re-throw JAMAIS. Un échec
+    // détectable est signalé par `false`, ce qui empêche le pont JS de graver
+    // la signature de déduplication et lui laisse retenter la projection.
+    Log.e(TAG, "Remise de projection refusée — lecture préservée", t)
+    MelodixDiagLog.error("UPDATE_HANDOFF_FAIL", t)
+    false
   }
 
   /** Arrêt propre : service + session relâchés par le service lui-même. */

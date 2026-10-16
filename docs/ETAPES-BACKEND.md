@@ -2,6 +2,31 @@
 
 Document de migration. Date : 28 septembre 2026.
 
+> ## ⚠️ PARTIELLEMENT OBSOLÈTE — V79 (16 octobre 2026)
+>
+> **La partie « accès Spotify » décrite ci-dessous a été RETIRÉE du code.**
+> Les sections qui mentionnent l'extraction d'un `secret` depuis le bundle JS
+> du Web Player, le **TOTP** (`node:crypto`, HMAC-SHA1), le jeton **anonyme**,
+> la persisted query **`searchDesktop`** et l'API interne
+> **`api-partner.spotify.com/pathfinder`** décrivent un mécanisme **non
+> officiel** qui contournait l'authentification et les conditions d'accès de
+> Spotify.
+>
+> Fichiers concernés, **supprimés** :
+> `server/src/spotify/accessToken.ts`, `server/src/spotify/graphQLSearch.ts`
+> (et leurs tests). Constantes supprimées : `SPOTIFY_PARTNER_API_URL`,
+> `SPOTIFY_SEARCH_DESKTOP_HASH`, `MELODIX_SPOTIFY_SEARCH_HASH`.
+>
+> `search()` échoue désormais explicitement en `PROVIDER_UNAVAILABLE` (503) :
+> ce backend ne dispose d'aucun identifiant Spotify officiel.
+>
+> **Ce document est conservé à titre historique. Ne pas réimplémenter ces
+> mécanismes.** Voir `docs/audits/V78-SPOTIFY-INTEGRATION.md` (audit) et
+> `docs/audits/V79-SPOTIFY-INTERNAL-API-REMOVAL.md` (retrait).
+>
+> Les getters par identifiant (`getTrack`, `getAlbum`, `getPlaylist`,
+> `getArtist`) via les pages publiques `/embed` restent en place.
+
 ## Architecture cible
 
 ```

@@ -1,9 +1,19 @@
 /**
  * Artiste Spotify via la session utilisateur OAuth PKCE.
  *
- *   GET /v1/artists/{id}          → fiche (image, genres, popularité)
+ *   GET /v1/artists/{id}          → fiche (image, genres)
  *   GET /v1/artists/{id}/albums   → discographie paginée
- *   GET /v1/artists/{id}/top-tracks → top titres (nécessite un market)
+ *
+ * V79 — `GET /v1/artists/{id}/top-tracks` a été SUPPRIMÉ par Spotify
+ * (changelog officiel de février 2026 : « [REMOVED] Get Artist's Top Tracks »,
+ * et la page de référence porte le badge « Deprecated »). L'appel était de
+ * toute façon absorbé par un `.catch(() => null)`, ce qui produisait un écran
+ * artiste sans top titres SANS que rien ne l'indique. Le champ `topTracks`
+ * est désormais explicitement vide : l'UI ne prétend pas avoir chargé des
+ * titres. Aucune alternative officielle ne fournit des « top titres » —
+ * `GET /v1/artists/{id}/albums` ne donne que la discographie, qui est déjà
+ * servie séparément ; la substituer ferait passer des pistes d'album pour des
+ * titres populaires.
  *
  * Même principe que api/spotify/playlist.ts : la session fournit les données
  * complètes du compte ; le backend Melodix reste le repli (voir
@@ -11,10 +21,7 @@
  */
 import { spotifyApiGet } from '@services';
 
-import { ArtistModel, LibraryItemModel, TrackModel } from '@models';
-
-/** Spotivité n'expose pas les top titres sans marché. */
-const MARKET = 'FR';
+import { ArtistModel, LibraryItemModel } from '@models';
 
 type SpotifyImage = { url?: string }[] | null;
 
@@ -34,21 +41,6 @@ type SpotifyAlbumRaw = {
   release_date?: string;
   total_tracks?: number;
   artists?: { id?: string; name?: string }[] | null;
-} | null;
-
-type SpotifyTopTrackRaw = {
-  id?: string;
-  name?: string;
-  duration_ms?: number;
-  explicit?: boolean;
-  preview_url?: string | null;
-  album?: {
-    id?: string;
-    name?: string;
-    images?: SpotifyImage;
-  } | null;
-  artists?: { id?: string; name?: string }[] | null;
-  external_ids?: { isrc?: string | null } | null;
 } | null;
 
 type SpotifyPage<T> = { items?: (T | undefined)[] | null } | null;
@@ -77,26 +69,6 @@ const albumToLibraryItem = (raw: SpotifyAlbumRaw): LibraryItemModel | null => {
   };
 };
 
-const topTrackToTrackModel = (raw: SpotifyTopTrackRaw): TrackModel | null => {
-  if (!raw?.id || !raw.name) {
-    return null;
-  }
-
-  return {
-    id: raw.id,
-    title: raw.name,
-    subtitle: names(raw.artists).join(', '),
-    imageURL: firstImage(raw.album?.images ?? null) || undefined,
-    explicit: Boolean(raw.explicit),
-    durationMs: typeof raw.duration_ms === 'number' ? raw.duration_ms : null,
-    albumName: raw.album?.name ?? null,
-    isrc:
-      typeof raw.external_ids?.isrc === 'string' && raw.external_ids.isrc.trim()
-        ? raw.external_ids.isrc.trim().toUpperCase()
-        : null,
-  };
-};
-
 /** Discographie complète d'un artiste, pagination Spotify incluse. */
 export const getSpotifyArtistAlbums = async (
   artistId: string,
@@ -116,7 +88,13 @@ export const getSpotifyArtistAlbums = async (
     .filter((album): album is LibraryItemModel => Boolean(album));
 };
 
-/** Fiche artiste : image + genres + top titres (données du compte). */
+/**
+ * Fiche artiste : image + genres + discographie (données du compte).
+ *
+ * V79 — `topTracks` est délibérément vide : l'endpoint qui les fournissait a
+ * été supprimé par Spotify et aucune alternative officielle n'existe. On ne
+ * simule pas de titres populaires (voir l'en-tête du module).
+ */
 export const getSpotifyArtist = async (
   artistId: string
 ): Promise<ArtistModel> => {
@@ -127,24 +105,18 @@ export const getSpotifyArtist = async (
     throw new Error('Spotify a renvoyé un artiste sans identifiant.');
   }
 
-  // Top titres et discographie en parallèle : deux GET indépendants sur la
-  // même session. Aucun des deux ne bloque l'autre.
-  const [topTracksRaw, albums] = await Promise.all([
-    spotifyApiGet<{ tracks?: (SpotifyTopTrackRaw | undefined)[] | null }>(
-      `/artists/${encoded}/top-tracks?market=${MARKET}`
-    ).catch(() => null),
-    getSpotifyArtistAlbums(artistId).catch(() => []),
-  ]);
+  // La discographie reste disponible : `GET /v1/artists/{id}/albums` figure
+  // toujours parmi les endpoints conservés (changelog février 2026).
+  const albums = await getSpotifyArtistAlbums(artistId).catch(() => []);
 
   return {
     type: 'artist',
     id: raw.id,
     name: raw.name,
     imageURL: firstImage(raw.images ?? null),
-    topTracks: (topTracksRaw?.tracks ?? [])
-      .filter((track): track is SpotifyTopTrackRaw => Boolean(track))
-      .map(topTrackToTrackModel)
-      .filter((track): track is TrackModel => Boolean(track)),
+    // Vide et non « chargé » : l'écran artiste n'affiche pas de section
+    // « Titres populaires » plutôt que d'en afficher une vide ou fausse.
+    topTracks: [],
     albums,
   };
 };

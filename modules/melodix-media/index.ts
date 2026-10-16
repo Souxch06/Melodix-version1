@@ -30,7 +30,7 @@ export type MediaSessionPayload = {
 };
 
 type NativeMelodixMedia = {
-  updateSession: (payload: MediaSessionPayload) => void;
+  updateSession: (payload: MediaSessionPayload) => boolean;
   stopSession: () => void;
   requestNotificationPermission: () => boolean | null;
   // DIAG 4.4.7 (temporaire) : journal persistant + drapeaux d'isolation.
@@ -65,12 +65,25 @@ const getNativeModule = (): NativeMelodixMedia | null => {
 export const isMelodixMediaAvailable = (): boolean =>
   getNativeModule() !== null;
 
-/** Projette l'état de lecteur vers la MediaSession (5A : métadonnées+état). */
-export const updateSession = (payload: MediaSessionPayload): void => {
+/**
+ * Projette l'état de lecteur vers la MediaSession (5A : métadonnées+état).
+ *
+ * CONTRAT V83 — renvoie `true` UNIQUEMENT si le natif a explicitement confirmé
+ * la remise. Tout le reste vaut `false` : `false`, `undefined` (module absent,
+ * natif plus ancien, wrapper `void`), valeur inattendue, ou exception. **Un
+ * échec n'est jamais interprété comme une réussite** — c'est précisément le
+ * défaut démontré en V82 §4.
+ *
+ * ⚠️ `true` confirme la REMISE au main thread Android, pas l'affichage : le
+ * travail natif réel est différé. Voir
+ * `docs/audits/V83-NATIVE-PROJECTION-FAILURE.md`, §Limites.
+ */
+export const updateSession = (payload: MediaSessionPayload): boolean => {
   try {
-    getNativeModule()?.updateSession(payload);
+    return getNativeModule()?.updateSession(payload) === true;
   } catch {
     // Jamais de crash audio pour une couche de contrôle (phase 5A, §11).
+    return false;
   }
 };
 

@@ -8,41 +8,14 @@ import {
   createSpotifyMetadataProvider,
   type SpotifyProviderDeps,
 } from '../spotifyMetadataProvider';
-import type { SpotifyRawAlbumHit, SpotifyRawTrackHit } from '../graphQLSearch';
 import type { EmbedPayload } from '../embedEntity';
 
-const TRACK_HITS: SpotifyRawTrackHit[] = [
-  {
-    id: 'track-a',
-    title: 'One More Time',
-    artists: ['Daft Punk'],
-    album: 'Discovery',
-    durationMs: 320_000,
-    coverUrl: 'cover-a.jpg',
-  },
-  {
-    id: 'track-b',
-    title: 'One More Chance',
-    artists: ['Air'],
-    album: 'Moon Safari',
-    durationMs: 300_000,
-    coverUrl: 'cover-b.jpg',
-  },
-];
-
-const ALBUM_HITS: SpotifyRawAlbumHit[] = [
-  {
-    id: 'album-a',
-    title: 'Discovery',
-    artists: ['Daft Punk'],
-    coverUrl: 'cover-album.jpg',
-  },
-];
+// V79 — Les fixtures `TRACK_HITS` / `ALBUM_HITS` de l'ancienne recherche par
+// API interne ont été supprimées avec le mécanisme pathfinder.
 
 const makeDeps = (
   overrides: Partial<SpotifyProviderDeps> = {}
 ): SpotifyProviderDeps => ({
-  search: async () => ({ tracks: TRACK_HITS, albums: ALBUM_HITS }),
   fetchEmbed: async (): Promise<EmbedPayload> => ({
     entity: null,
     trackList: [],
@@ -56,114 +29,100 @@ const makeProvider = (deps: SpotifyProviderDeps) =>
     metadata: new TtlCache(),
   });
 
-test('search : mapping DTO, tri déterministe, jamais de champ interne', async () => {
+test('V79 search : requête réelle → 503 PROVIDER_UNAVAILABLE (mécanisme interne retiré)', async () => {
   __resetServiceGuards();
   const provider = makeProvider(makeDeps());
-
-  const first = await provider.search('one more time', 10, [
-    'tracks',
-    'albums',
-  ]);
-  const second = await provider.search('one more time', 10, [
-    'tracks',
-    'albums',
-  ]);
-
-  assert.deepEqual(first, second, 'ordre déterministe');
-  assert.equal(first.tracks.length, 2);
-  assert.equal(first.albums.length, 1);
-
-  const best = first.tracks[0];
-  assert.equal(best.id, 'track-a', 'le titre exact arrive en tête');
-  assert.equal(best.title, 'One More Time');
-  assert.equal(best.audiusMatch, null);
-
-  // Aucune donnée interne ne fuit dans le DTO.
-  assert.equal('uri' in best, false);
-  assert.equal('token' in best, false);
-});
-
-test('search : types filtrés + requête vide', async () => {
-  __resetServiceGuards();
-  const provider = makeProvider(makeDeps());
-
-  const tracksOnly = await provider.search('discovery', 10, ['tracks']);
-  assert.equal(tracksOnly.albums.length, 0);
-
-  const empty = await provider.search('   ', 10, ['tracks']);
-  assert.deepEqual(empty, { tracks: [], albums: [] });
-});
-
-test('search : limite appliquée après tri', async () => {
-  __resetServiceGuards();
-  const provider = makeProvider(makeDeps());
-  const result = await provider.search('one more', 1, ['tracks']);
-  assert.equal(result.tracks.length, 1);
-  assert.equal(result.tracks[0].id, 'track-a');
-});
-
-test('search : deuxième appel servi par le cache (pas de nouvel appel upstream)', async () => {
-  __resetServiceGuards();
-  let upstreamCalls = 0;
-  const deps = makeDeps({
-    search: async () => {
-      upstreamCalls += 1;
-      return { tracks: TRACK_HITS, albums: [] };
-    },
-  });
-  const provider = makeProvider(deps);
-
-  await provider.search('daft punk', 5, ['tracks']);
-  await provider.search('daft punk', 5, ['tracks']);
-  assert.equal(upstreamCalls, 1);
-});
-
-test('search : échec upstream → 503 PROVIDER_UNAVAILABLE, pas de contenu interne', async () => {
-  __resetServiceGuards();
-  const provider = makeProvider(
-    makeDeps({
-      search: async () => {
-        throw new Error('upstream exploded with secret details');
-      },
-    })
-  );
 
   await assert.rejects(
-    provider.search('x', 5, ['tracks']),
+    provider.search('daft punk', 10, ['tracks', 'albums']),
     (error: unknown) => {
       assert.ok(error instanceof ApiError);
       assert.equal(error.code, 'PROVIDER_UNAVAILABLE');
       assert.equal(error.httpStatus, 503);
+      return true;
+    }
+  );
+});
+
+test('V79 search : le message exposé ne divulgue aucun détail interne', async () => {
+  __resetServiceGuards();
+  const provider = makeProvider(makeDeps());
+
+  await assert.rejects(
+    provider.search('one more time', 10, ['tracks']),
+    (error: unknown) => {
+      assert.ok(error instanceof ApiError);
+      const exposed = error.message;
+      // Aucune trace du mécanisme retiré ne doit remonter jusqu'au client.
+      for (const leak of [
+        'pathfinder',
+        'api-partner',
+        'searchDesktop',
+        'totp',
+        'secret',
+        'anonymous',
+      ]) {
+        assert.equal(
+          exposed.toLowerCase().includes(leak),
+          false,
+          `le message ne doit pas contenir « ${leak} »`
+        );
+      }
+      // Le détail technique vit dans internalDetail, jamais dans message.
       assert.equal(
-        error.message.includes('secret'),
-        false,
-        'le message exposé ne contient aucun détail interne'
+        typeof error.internalDetail === 'string',
+        true,
+        'le détail technique reste côté serveur'
       );
       return true;
     }
   );
 });
 
-test('search : après 5 échecs le circuit s ouvre et bloque sans appel upstream', async () => {
+test('V79 search : requête vide → contrat historique conservé, aucun échec', async () => {
   __resetServiceGuards();
-  let upstreamCalls = 0;
-  const provider = makeProvider(
-    makeDeps({
-      search: async () => {
-        upstreamCalls += 1;
-        throw new Error('boom');
-      },
-    })
-  );
+  const provider = makeProvider(makeDeps());
 
-  for (let i = 0; i < 5; i += 1) {
-    await assert.rejects(provider.search(`q-${i}`, 5, ['tracks']));
-  }
-  assert.equal(upstreamCalls, 5);
+  // Une entrée dégénérée ne doit PAS échouer : elle renvoie le résultat vide
+  // historique, sans émettre la moindre requête.
+  assert.deepEqual(await provider.search('   ', 10, ['tracks']), {
+    tracks: [],
+    albums: [],
+  });
+  assert.deepEqual(await provider.search('', 5, ['tracks', 'albums']), {
+    tracks: [],
+    albums: [],
+  });
+});
 
-  // Une requête de plus : le guard doit la bloquer AVANT l'appel au mock.
-  await assert.rejects(provider.search('q-extra', 5, ['tracks']));
-  assert.equal(upstreamCalls, 5, 'aucun nouvel appel upstream, circuit ouvert');
+test('V79 search : échec DÉTERMINISTE, aucune dépendance upstream n existe', async () => {
+  __resetServiceGuards();
+  const provider = makeProvider(makeDeps());
+
+  // L'indisponibilité est structurelle, pas transitoire : deux appels
+  // successifs échouent de façon identique et n'entament pas le budget du
+  // service guard (aucun appel réseau n'est tenté).
+  const first = await provider
+    .search('x', 5, ['tracks'])
+    .then(() => null)
+    .catch((error: unknown) => error);
+  const second = await provider
+    .search('x', 5, ['tracks'])
+    .then(() => null)
+    .catch((error: unknown) => error);
+
+  assert.ok(first instanceof ApiError);
+  assert.ok(second instanceof ApiError);
+  assert.equal(first.code, second.code);
+  assert.equal(first.httpStatus, second.httpStatus);
+});
+
+test('V79 search : SpotifyProviderDeps n expose plus aucune fonction de recherche', () => {
+  // Garde structurelle : réintroduire un accès non officiel exigerait
+  // d'ajouter une dépendance à ce type, ce que ce test rend visible.
+  const deps = makeDeps();
+  assert.deepEqual(Object.keys(deps), ['fetchEmbed']);
+  assert.equal('search' in deps, false);
 });
 
 test('getTrack : 404 quand l embed ne fournit pas d entité', async () => {
@@ -239,7 +198,7 @@ test('getAlbum : pistes embarquées normalisées, entrées incomplètes ignorée
   assert.equal(dto.tracks[0].album, 'Discovery');
 });
 
-test('getArtist : complète artistes manquants et filtre sa discographie', async () => {
+test('V79 getArtist : titres populaires servis, discographie explicitement absente', async () => {
   __resetServiceGuards();
   const provider = makeProvider(
     makeDeps({
@@ -260,35 +219,20 @@ test('getArtist : complète artistes manquants et filtre sa discographie', async
           },
         ],
       }),
-      search: async () => ({
-        tracks: [],
-        albums: [
-          {
-            id: 'album-daft',
-            title: 'Discovery',
-            artists: ['Daft Punk'],
-            coverUrl: 'discovery.jpg',
-          },
-          {
-            id: 'album-air',
-            title: 'Moon Safari',
-            artists: ['Air'],
-            coverUrl: 'moon.jpg',
-          },
-        ],
-      }),
     })
   );
 
   const artist = await provider.getArtist('artist12345');
 
+  // Ce qui fonctionne encore est préservé.
   assert.equal(artist.name, 'Daft Punk');
   assert.equal(artist.imageUrl, 'artist.jpg');
   assert.deepEqual(artist.topTracks?.[0].artists, ['Daft Punk']);
-  assert.deepEqual(
-    artist.albums?.map((album) => album.title),
-    ['Discovery']
-  );
+
+  // V79 — La discographie était déduite d'une recherche par API interne.
+  // Elle est désormais `null`, et NON un tableau vide : l'absence est
+  // explicite plutôt que simulée.
+  assert.equal(artist.albums, null);
 });
 
 test('ids invalides → 400 BAD_REQUEST', async () => {

@@ -172,6 +172,10 @@ describe('mediaBridge — projection MediaSession (phase 5A)', () => {
   beforeEach(async () => {
     await AsyncStorage.clear();
     jest.clearAllMocks();
+    // Contrat V83 — le natif CONFIRME explicitement la remise de la projection
+    // en renvoyant `true`. Les mocks modélisent ce contrat : par défaut la
+    // remise réussit. Les tests d'échec V83 surchargent ce retour.
+    mockUpdateSession.mockReturnValue(true);
     commandListener = null;
     noisyListener = null;
     mockNoisyUnsubscribe = null;
@@ -913,7 +917,7 @@ describe('mediaBridge — projection MediaSession (phase 5A)', () => {
       expect(melodixPlayer.getState().status).toBe('playing');
     });
 
-    it('updateSession lève : la lecture ne crashe JAMAIS (erreur aval)', async () => {
+    it('un throw SYNCHRONE du natif ne casse jamais la lecture (propriété de robustesse uniquement — scénario impossible sur le natif réel, cf. V82 §4.3)', async () => {
       mockUpdateSession.mockImplementationOnce(() => {
         throw new Error('native boom');
       });
@@ -922,6 +926,165 @@ describe('mediaBridge — projection MediaSession (phase 5A)', () => {
       await flush();
 
       expect(melodixPlayer.getState().status).toBe('playing');
+    });
+
+    /**
+     * V83 — contrat de retour de la projection native.
+     *
+     * V82 §4 a démontré que `pushedOk` valait toujours `true` : le Kotlin avale
+     * toute exception (Blindage 5C.2), le travail réel est différé par
+     * `mainHandler.post`, et aucun événement de confirmation ne remonte au JS.
+     * La branche `NATIVE_UPDATE_FAILED` était donc du code mort et le correctif
+     * V70 Bug 2 n'apportait aucune protection.
+     *
+     * Ces tests fixent le CONTRAT : la signature n'est gravée que sur un `true`
+     * EXPLICITE. Toute autre valeur — `false`, `undefined`, valeur inattendue —
+     * est un échec, jamais une réussite.
+     */
+    describe('V83 — contrat de retour de la projection native', () => {
+      /**
+       * Observable de la gravure de signature : si elle n'est PAS gravée, un
+       * seek dans la même seconde (payload identique) reprojette ; si elle est
+       * gravée, la déduplication supprime l'appel. Même mécanisme que le test
+       * « déduplication : deux états identiques (même seconde) ».
+       */
+      const nbReprojectionsMemeSeconde = async (
+        baseMillis = 0
+      ): Promise<number> => {
+        mockUpdateSession.mockClear();
+        // Même seconde arrondie que `baseMillis` ⇒ payload identique.
+        await melodixPlayer.seekTo(baseMillis + 400);
+
+        return mockUpdateSession.mock.calls.length;
+      };
+
+      const lignesDeJournal = (): string[] =>
+        mockAppendDiagLog.mock.calls.map((c) => String(c[0]));
+
+      const aJournalise = (marqueur: string): boolean =>
+        lignesDeJournal().some((l) => l.includes(marqueur));
+
+      it('échec natif (`false`) : la signature N’EST PAS gravée comme une réussite', async () => {
+        mockUpdateSession.mockReturnValue(false);
+
+        await melodixPlayer.playQueue([morceau('a', 'Photo')], 0);
+        await flush();
+
+        expect(mockUpdateSession).toHaveBeenCalled();
+        // Signature non gravée ⇒ la déduplication ne supprime pas la retentative.
+        expect(await nbReprojectionsMemeSeconde()).toBe(1);
+      });
+
+      it('échec natif (`false`) : NATIVE_UPDATE_FAILED est journalisé', async () => {
+        mockUpdateSession.mockReturnValue(false);
+
+        await melodixPlayer.playQueue([morceau('a', 'Photo')], 0);
+        await flush();
+
+        expect(aJournalise('NATIVE_UPDATE_FAILED')).toBe(true);
+      });
+
+      it('échec natif (`false`) : une nouvelle tentative a lieu, pas de boucle figée', async () => {
+        mockUpdateSession.mockReturnValue(false);
+
+        await melodixPlayer.playQueue([morceau('a', 'Photo')], 0);
+        await flush();
+
+        const avant = mockUpdateSession.mock.calls.length;
+        await melodixPlayer.seekTo(30_000);
+
+        expect(mockUpdateSession.mock.calls.length).toBeGreaterThan(avant);
+      });
+
+      it('échec natif (`false`) : la lecture audio continue de fonctionner', async () => {
+        mockUpdateSession.mockReturnValue(false);
+
+        await melodixPlayer.playQueue([morceau('a', 'Photo')], 0);
+        await flush();
+
+        expect(melodixPlayer.getState().status).toBe('playing');
+
+        // Le pont reste opérationnel : une commande système atteint le moteur.
+        const pauseSpy = jest.spyOn(melodixPlayer, 'pause');
+        handleMediaCommand({ command: 'pause' });
+        expect(pauseSpy).toHaveBeenCalledTimes(1);
+      });
+
+      it('réussite (`true`) : la signature EST gravée — aucune reprojection sur payload identique', async () => {
+        mockUpdateSession.mockReturnValue(true);
+
+        await melodixPlayer.playQueue([morceau('a', 'Photo')], 0);
+        await flush();
+
+        expect(await nbReprojectionsMemeSeconde()).toBe(0);
+      });
+
+      it('réussite (`true`) : NATIVE_UPDATE_FAILED n’est PAS journalisé', async () => {
+        mockUpdateSession.mockReturnValue(true);
+
+        await melodixPlayer.playQueue([morceau('a', 'Photo')], 0);
+        await flush();
+
+        expect(aJournalise('NATIVE_UPDATE_FAILED')).toBe(false);
+      });
+
+      /**
+       * Contrat retenu : SEUL `true` vaut réussite. Un natif plus ancien, non
+       * lié, ou un wrapper qui renvoie `void` produit `undefined` — et
+       * `undefined` ne doit JAMAIS être lu comme un succès, sinon le défaut
+       * V82 reviendrait à l'identique.
+       */
+      it.each([
+        ['undefined (natif sans retour / module plus ancien)', undefined],
+        ['null', null],
+        ['chaîne « ok »', 'ok'],
+        ['nombre 1', 1],
+        ['booléen chaîné « false »', 'false'],
+      ])(
+        'valeur inattendue — %s : traitée comme un ÉCHEC, jamais comme une réussite',
+        async (_libelle, valeur) => {
+          mockUpdateSession.mockReturnValue(valeur);
+
+          await melodixPlayer.playQueue([morceau('a', 'Photo')], 0);
+          await flush();
+
+          expect(await nbReprojectionsMemeSeconde()).toBe(1);
+          expect(aJournalise('NATIVE_UPDATE_FAILED')).toBe(true);
+        }
+      );
+
+      it('anti-spam : un échec continu ne répète pas NATIVE_UPDATE_FAILED à chaque tick', async () => {
+        mockUpdateSession.mockReturnValue(false);
+
+        await melodixPlayer.playQueue([morceau('a', 'Photo')], 0);
+        await flush();
+
+        // Échecs consécutifs sur des payloads distincts (positions différentes).
+        await melodixPlayer.seekTo(30_000);
+        await melodixPlayer.seekTo(60_000);
+        await melodixPlayer.seekTo(90_000);
+
+        const echecs = lignesDeJournal().filter((l) =>
+          l.includes('NATIVE_UPDATE_FAILED')
+        );
+
+        expect(echecs.length).toBe(1);
+      });
+
+      it('récupération : après un échec, une projection réussie est à nouveau gravée et signalée', async () => {
+        mockUpdateSession.mockReturnValue(false);
+
+        await melodixPlayer.playQueue([morceau('a', 'Photo')], 0);
+        await flush();
+        expect(aJournalise('NATIVE_UPDATE_FAILED')).toBe(true);
+
+        mockUpdateSession.mockReturnValue(true);
+        await melodixPlayer.seekTo(30_000);
+
+        expect(aJournalise('NATIVE_UPDATE_RECOVERED')).toBe(true);
+        // La réussite grave la signature : plus de reprojection à l'identique.
+        expect(await nbReprojectionsMemeSeconde(30_000)).toBe(0);
+      });
     });
 
     it('teardown : plus aucune projection ni commande après démontage', async () => {

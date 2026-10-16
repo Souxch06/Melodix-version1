@@ -2,9 +2,13 @@ import { spotifyApiGet } from '@services';
 
 import { getSpotifyArtist, getSpotifyArtistAlbums } from '../artist';
 
-// Mapping de GET /v1/artists/{id} (+ /albums, /top-tracks) : la session du
-// compte est la SEULE source qui fournisse les vrais top titres et la
-// discographie paginée.
+// Mapping de GET /v1/artists/{id} (+ /albums) : la session du compte est la
+// source de la fiche et de la discographie paginée.
+//
+// V79 — GET /v1/artists/{id}/top-tracks a été SUPPRIMÉ par Spotify (changelog
+// officiel de février 2026). Ces tests vérifient désormais que l'appel n'est
+// PLUS émis et que l'écran obtient un état vide explicite, jamais des titres
+// présentés comme chargés.
 
 jest.mock('@services', () => ({
   spotifyApiGet: jest.fn(),
@@ -17,26 +21,6 @@ const ARTIST = {
   name: 'Daft Punk',
   images: [{ url: 'https://i.scdn.co/artist.jpg' }],
   genres: ['french house'],
-};
-
-const TOP_TRACKS = {
-  tracks: [
-    {
-      id: 'tr-1',
-      name: 'One More Time',
-      duration_ms: 320_000,
-      explicit: false,
-      artists: [{ id: 'ar-1', name: 'Daft Punk' }],
-      album: {
-        id: 'al-1',
-        name: 'Discovery',
-        images: [{ url: 'https://i.scdn.co/album.jpg' }],
-      },
-      external_ids: { isrc: 'usrt19901234' },
-    },
-    { name: 'sans id' },
-    null,
-  ],
 };
 
 const ALBUMS_PAGE = {
@@ -60,9 +44,8 @@ beforeEach(() => {
 });
 
 describe('getSpotifyArtist', () => {
-  it('maps identity, top tracks and discography', async () => {
+  it('maps identity and discography, with an explicitly empty top tracks', async () => {
     mockedGet.mockImplementation(async (path: string) => {
-      if (path.startsWith('/artists/ar-1/top-tracks')) return TOP_TRACKS;
       if (path.startsWith('/artists/ar-1/albums')) return ALBUMS_PAGE;
       return ARTIST;
     });
@@ -75,15 +58,8 @@ describe('getSpotifyArtist', () => {
       name: 'Daft Punk',
       imageURL: 'https://i.scdn.co/artist.jpg',
     });
-    expect(artist.topTracks).toHaveLength(1);
-    expect(artist.topTracks?.[0]).toMatchObject({
-      id: 'tr-1',
-      title: 'One More Time',
-      subtitle: 'Daft Punk',
-      durationMs: 320_000,
-      albumName: 'Discovery',
-      isrc: 'USRT19901234',
-    });
+    // V79 — état vide explicite, pas une liste « chargée » de titres.
+    expect(artist.topTracks).toEqual([]);
     expect(artist.albums).toHaveLength(1);
     expect(artist.albums?.[0]).toMatchObject({
       id: 'al-1',
@@ -93,9 +69,8 @@ describe('getSpotifyArtist', () => {
     });
   });
 
-  it('asks for the artist, its top tracks (with market) and its albums', async () => {
+  it('asks for the artist and its albums, and NEVER for the removed top-tracks', async () => {
     mockedGet.mockImplementation(async (path: string) => {
-      if (path.startsWith('/artists/ar-1/top-tracks')) return TOP_TRACKS;
       if (path.startsWith('/artists/ar-1/albums')) return ALBUMS_PAGE;
       return ARTIST;
     });
@@ -104,19 +79,16 @@ describe('getSpotifyArtist', () => {
 
     const paths = mockedGet.mock.calls.map(([path]) => path);
     expect(paths).toContain('/artists/ar-1');
-    expect(paths).toContain('/artists/ar-1/top-tracks?market=FR');
     expect(paths).toContain(
       '/artists/ar-1/albums?limit=20&include_groups=album%2Csingle%2Ccompilation'
     );
+    // V79 — régression verrouillée : plus AUCUN appel à l'endpoint supprimé.
+    expect(paths.some((path) => path.includes('top-tracks'))).toBe(false);
   });
 
-  it('still returns the artist when top tracks or albums fail', async () => {
-    // Spotify refuse /top-tracks sans market valide, ou 404 sur certains
-    // comptes : l'écran doit rester utilisable.
+  it('still returns the artist when the discography fails', async () => {
+    // 404 sur /albums pour certains comptes : l'écran doit rester utilisable.
     mockedGet.mockImplementation(async (path: string) => {
-      if (path.startsWith('/artists/ar-1/top-tracks')) {
-        throw new Error('no market');
-      }
       if (path.startsWith('/artists/ar-1/albums')) {
         throw new Error('gone');
       }

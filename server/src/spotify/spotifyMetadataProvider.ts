@@ -9,9 +9,14 @@
  *   getPlaylist(id)            → PlaylistMetadataDTO
  *   getArtist(id)              → ArtistMetadataDTO
  *
+ * V79 — La recherche (`search`) n'est PLUS implémentée : elle reposait sur
+ * l'API interne Spotify (pathfinder + jeton anonyme), retirée. Elle échoue
+ * désormais explicitement en `PROVIDER_UNAVAILABLE` (503). Les getters par
+ * identifiant restent fonctionnels.
+ *
  * Garanties propres à Melodix :
  * - jamais d'audio (métadonnées UNIQUEMENT) ;
- * - tokens éphémères serveur-side, jamais émis vers le client ;
+ * - aucun jeton Spotify n'est émis vers le client ;
  * - chaque appel passe par le service guard (budget + circuit breaker) :
  *   en cas de refus ou d'échec → ApiError PROVIDER_UNAVAILABLE (503) ;
  * - cache TTL (recherche + métadonnées) pour limiter l'empreinte réseau ;
@@ -31,7 +36,6 @@ import {
 import { TtlCache } from '../cache/ttlCache';
 import { getServiceGuard } from '../net/serviceGuard';
 import { createLogger } from '../logging/logger';
-import { spotifyGraphQLSearch } from './graphQLSearch';
 import {
   entityCoverUrl,
   fetchEmbedPayload,
@@ -97,37 +101,6 @@ const guardedCall = async <T>(operation: () => Promise<T>): Promise<T> => {
   }
 };
 
-const toTrackDTO = (hit: {
-  id: string;
-  title: string;
-  artists: string[];
-  album: string | null;
-  durationMs: number | null;
-  coverUrl: string | null;
-}): TrackMetadataDTO => ({
-  id: hit.id,
-  title: hit.title,
-  artists: hit.artists,
-  album: hit.album,
-  durationMs: hit.durationMs,
-  coverUrl: hit.coverUrl,
-  audiusMatch: null,
-});
-
-const toAlbumDTO = (hit: {
-  id: string;
-  title: string;
-  artists: string[];
-  coverUrl: string | null;
-}): AlbumMetadataDTO => ({
-  id: hit.id,
-  title: hit.title,
-  artists: hit.artists,
-  coverUrl: hit.coverUrl,
-  releaseDate: null,
-  tracks: null,
-});
-
 /** TrackList embed → DTO pistes (entrées incomplètes ignorées). */
 const embedTrackListToDTOs = (
   trackList: SpotifyEmbedTrackListItem[],
@@ -155,7 +128,15 @@ const embedTrackListToDTOs = (
   return tracks;
 };
 
-/** Pertinence vs requête (titre + artistes), ordre déterministe. */
+/**
+ * Pertinence vs requête (titre + artistes), ordre déterministe.
+ *
+ * V79 — Plus aucun appelant dans ce fichier depuis le retrait de la
+ * recherche : conservé volontairement car c'est un classement PUREMENT
+ * textuel (aucun réseau, aucun accès Spotify) et qu'il reste couvert par
+ * `normalization.test.ts`. À réutiliser si une recherche officielle est
+ * un jour branchée.
+ */
 const byQueryRelevance = <
   T extends { id: string; title: string; artists: string[] },
 >(
@@ -188,12 +169,10 @@ const byQueryRelevance = <
 };
 
 export type SpotifyProviderDeps = {
-  search: typeof spotifyGraphQLSearch;
   fetchEmbed: typeof fetchEmbedPayload;
 };
 
 const defaultDeps: SpotifyProviderDeps = {
-  search: spotifyGraphQLSearch,
   fetchEmbed: fetchEmbedPayload,
 };
 
@@ -216,29 +195,33 @@ export const createSpotifyMetadataProvider = (
   ): Promise<SearchResultsDTO> {
     const q = String(query ?? '').trim();
     if (!q) {
+      // Entrée dégénérée : contrat historique conservé (aucune requête émise).
       return { tracks: [], albums: [] };
     }
 
-    const cacheKey = `search:${q.toLowerCase()}:${limit}:${types.join(',')}`;
-    const cached = caches.search.get<SearchResultsDTO>(cacheKey);
-    if (cached) {
-      logger.debug('cache hit recherche');
-      return cached;
-    }
-
-    const { tracks, albums } = await guardedCall(() => deps.search(q, limit));
-
-    const result: SearchResultsDTO = {
-      tracks: types.includes('tracks')
-        ? tracks.map(toTrackDTO).sort(byQueryRelevance(q)).slice(0, limit)
-        : [],
-      albums: types.includes('albums')
-        ? albums.map(toAlbumDTO).sort(byQueryRelevance(q)).slice(0, limit)
-        : [],
-    };
-
-    caches.search.set(cacheKey, result, env.cache.searchTtlSeconds);
-    return result;
+    // V79 — La recherche par API interne Spotify (`api-partner.spotify.com/
+    // pathfinder/v1`, requête persistée `searchDesktop`, jeton anonyme obtenu
+    // par extraction de secret + TOTP) a été RETIRÉE : elle contournait
+    // l'authentification et les conditions d'accès de Spotify.
+    //
+    // L'API officielle `GET /v1/search` exigerait ici des identifiants
+    // d'application (Client ID/Secret) et un compte propriétaire Premium —
+    // voir `docs/audits/V78-SPOTIFY-INTEGRATION.md` §3.1. Ce backend ne
+    // dispose d'AUCUN de ces éléments (cf. `config/env.ts` et
+    // `.env.example` : aucune variable de credential Spotify).
+    //
+    // Plutôt que de réintroduire un accès non officiel ou de renvoyer un
+    // résultat vide qui laisserait croire à une recherche réussie, on échoue
+    // explicitement. Le détail technique reste dans le journal serveur.
+    logger.warn(
+      'recherche Spotify indisponible : aucune source officielle configurée'
+    );
+    throw new ApiError(
+      'PROVIDER_UNAVAILABLE',
+      'La recherche Spotify est indisponible.',
+      503,
+      'spotify search removed: no official credentials configured'
+    );
   },
 
   async getTrack(id: string): Promise<TrackMetadataDTO> {
@@ -384,27 +367,11 @@ export const createSpotifyMetadataProvider = (
       artists: track.artists.length > 0 ? track.artists : [pageArtistName],
     }));
 
-    // Discographie best-effort via la recherche publique déjà isolée dans ce
-    // provider. Une panne secondaire ne doit pas masquer les titres populaires
-    // obtenus depuis l'embed artiste.
-    let albums: AlbumMetadataDTO[] | null = null;
-    try {
-      const searchResult = await guardedCall(() =>
-        deps.search(pageArtistName, 20)
-      );
-      const artistName = normalizeArtist(pageArtistName);
-      const matchingAlbums = searchResult.albums
-        .filter((album) =>
-          album.artists.some(
-            (albumArtist) => normalizeArtist(albumArtist) === artistName
-          )
-        )
-        .map(toAlbumDTO)
-        .sort(byQueryRelevance(pageArtistName));
-      albums = matchingAlbums.length > 0 ? matchingAlbums : null;
-    } catch {
-      logger.warn('discographie artiste temporairement indisponible');
-    }
+    // V79 — La discographie était déduite d'une recherche Spotify. Cette
+    // recherche reposait sur l'API interne (pathfinder), retirée. Le champ
+    // `albums` reste à `null`, valeur déjà prévue par le DTO : les titres
+    // populaires issus de l'embed artiste continuent d'être servis.
+    const albums: AlbumMetadataDTO[] | null = null;
 
     const dto: ArtistMetadataDTO = {
       id: artistId,

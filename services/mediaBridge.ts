@@ -43,6 +43,12 @@ let unsubscribeNoisyAudio: (() => void) | null = null;
 let sessionActivated = false;
 /** Déduplication : signature JSON du dernier payload RÉELLEMENT poussé. */
 let lastPushedSignature = '';
+/**
+ * V83 — nombre d'échecs de projection CONSÉCUTIFS. Sert uniquement à borner le
+ * journal : sans cette garde, une panne native persistante écrirait une ligne
+ * `NATIVE_UPDATE_FAILED` à chaque tick (500 ms) pendant toute sa durée.
+ */
+let consecutiveProjectionFailures = 0;
 /** Android 13+ : une seule demande liée à la première lecture volontaire. */
 let notificationPermissionRequested = false;
 
@@ -54,6 +60,27 @@ const callNative = (fn: () => void): boolean => {
     return true;
   } catch (error) {
     console.warn('MelodixMedia native error (tolerated):', error);
+    return false;
+  }
+};
+
+/**
+ * V83 — même blindage que `callNative`, pour un appel qui RENVOIE une
+ * confirmation. Deux invariants CUMULÉS :
+ *  - une exception native ne casse jamais le pont ni la lecture (§11) ;
+ *  - seul un `true` explicite vaut réussite : `false`, `undefined` (natif plus
+ *    ancien, module non lié) ou toute valeur inattendue est un ÉCHEC.
+ *
+ * Le second invariant est ce qui manquait : `callNative` ne distinguait qu'un
+ * `throw` synchrone, or le Kotlin n'en produit jamais (blindage 5C.2) — voir
+ * `docs/audits/V82-MEDIA-ARCHITECTURE-COMPARISON.md` §4.
+ */
+const callNativeConfirmed = (fn: () => boolean): boolean => {
+  try {
+    return fn() === true;
+  } catch (error) {
+    console.warn('MelodixMedia native error (tolerated):', error);
+
     return false;
   }
 };
@@ -294,6 +321,9 @@ const projectState = (state: PlayerState): void => {
     if (sessionActivated) {
       sessionActivated = false;
       lastPushedSignature = '';
+      // V83 : une session close remet le compteur d'échecs à zéro — la panne
+      // éventuelle de la session suivante doit être journalisée à son tour.
+      consecutiveProjectionFailures = 0;
       callNative(stopSession);
     }
     // Android 13+ : la notification de la MediaSession portée par la WebView
@@ -311,6 +341,9 @@ const projectState = (state: PlayerState): void => {
     if (sessionActivated) {
       sessionActivated = false;
       lastPushedSignature = '';
+      // V83 : une session close remet le compteur d'échecs à zéro — la panne
+      // éventuelle de la session suivante doit être journalisée à son tour.
+      consecutiveProjectionFailures = 0;
       callNative(stopSession);
     }
 
@@ -347,22 +380,47 @@ const projectState = (state: PlayerState): void => {
 
   sessionActivated = true;
 
-  // V70 (Bug 2) — la signature n'est gravée QUE si la projection native a
-  // réellement abouti. L'ancien ordre gravait AVANT l'appel : comme
-  // `callNative` avale toute exception Android, une projection ratée était
-  // considérée comme réussie et le tick suivant la dédupliquait — la
-  // notification restait alors figée sur l'ANCIEN morceau jusqu'à ce qu'un
-  // autre champ change par hasard. En cas d'échec la signature reste intacte :
-  // le prochain tick (500 ms) retente la projection.
-  const pushedOk = callNative(() => updateSession(payload));
+  // V83 — la signature n'est gravée QUE sur une confirmation EXPLICITE du
+  // natif. V82 §4 a démontré que l'ancienne détection (un `throw` synchrone
+  // capté par `callNative`) était structurellement inatteignable : le Kotlin
+  // avale toute exception (blindage 5C.2), le travail réel est différé par
+  // `mainHandler.post`, et aucun événement de confirmation ne remontait.
+  // `pushedOk` valait donc toujours `true`, la branche d'échec ci-dessous était
+  // du code mort, et le correctif V70 Bug 2 n'apportait aucune protection.
+  //
+  // `updateSession` renvoie désormais un booléen : `true` = remise acceptée.
+  // Toute autre valeur — y compris `undefined` d'un natif plus ancien ou d'un
+  // module non lié — est un ÉCHEC, jamais une réussite. La comparaison stricte
+  // `=== true` est VOLONTAIREMENT répétée ici alors que le wrapper du module la
+  // fait déjà : une valeur truthy inattendue (`'ok'`, `1`) ne doit pouvoir être
+  // lue comme un succès par AUCUN des deux étages.
+  //
+  // ⚠️ `true` confirme la REMISE au main thread, pas l'affichage : les échecs
+  // asynchrones natifs restent hors de portée de ce retour (voir le rapport).
+  const pushedOk = callNativeConfirmed(() => updateSession(payload));
 
   if (!pushedOk) {
-    appendDiagLog(
-      `[MEDIA_DIAG] NATIVE_UPDATE_FAILED state=${
-        payload.isPlaying ? 'PLAYING' : 'PAUSED'
-      } trackId=${payload.trackId} (retenté au prochain tick)`
-    );
+    // La signature reste intacte : le prochain tick retente la projection.
+    consecutiveProjectionFailures += 1;
+    // Anti-spam : seule la PREMIÈRE panne d'une série est journalisée ; la
+    // reprise signalera le nombre de tentatives masquées.
+    if (consecutiveProjectionFailures === 1) {
+      appendDiagLog(
+        `[MEDIA_DIAG] NATIVE_UPDATE_FAILED state=${
+          payload.isPlaying ? 'PLAYING' : 'PAUSED'
+        } trackId=${payload.trackId} (retenté au prochain tick)`
+      );
+    }
+
     return;
+  }
+
+  if (consecutiveProjectionFailures > 0) {
+    appendDiagLog(
+      `[MEDIA_DIAG] NATIVE_UPDATE_RECOVERED trackId=${payload.trackId} ` +
+        `après ${consecutiveProjectionFailures} échec(s) masqué(s)`
+    );
+    consecutiveProjectionFailures = 0;
   }
 
   lastPushedSignature = pushed;
@@ -399,6 +457,7 @@ export const setMediaBridgeEnabled = (enabled: boolean): void => {
   if (!enabled && sessionActivated) {
     sessionActivated = false;
     lastPushedSignature = '';
+    consecutiveProjectionFailures = 0;
     callNative(stopSession);
   }
 };
@@ -437,6 +496,9 @@ export const teardownMediaBridge = (): void => {
     if (sessionActivated) {
       sessionActivated = false;
       lastPushedSignature = '';
+      // V83 : une session close remet le compteur d'échecs à zéro — la panne
+      // éventuelle de la session suivante doit être journalisée à son tour.
+      consecutiveProjectionFailures = 0;
       callNative(stopSession);
     }
   } finally {

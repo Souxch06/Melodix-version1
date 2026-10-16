@@ -315,13 +315,19 @@ class MelodixMediaModule : Module() {
      * Blindage 5C.2 : JAMAIS de throw vers le JS — l'audio n'en dépend pas.
      */
     Function("updateSession") { payload: Map<String, Any?> ->
+      // CONTRAT V83 — renvoie `true` si la remise a été acceptée, `false` en cas
+      // d'échec détectable. ⚠️ `true` confirme la REMISE, pas l'affichage : le
+      // travail réel est différé par `mainHandler.post` côté Controller.
+      // Blindage 5C.2 conservé : JAMAIS de throw vers le JS.
       try {
         // DIAG 4.4.5-diagnostic : la Function Expo est bien atteinte.
         android.util.Log.i("MXDIAG", "MEDIA_SESSION_UPDATE_CALL")
         val context = appContext.reactContext
         if (context == null) {
+          // Échec DÉTECTABLE : sans contexte React aucune projection n'est
+          // possible. Le JS doit le savoir pour ne pas graver sa signature.
           MelodixDiagLog.step("NATIVE_UPDATE_NO_REACT_CONTEXT")
-          return@Function
+          return@Function false
         }
         MelodixDiagLog.step(
           "NATIVE_UPDATE_RECEIVED",
@@ -330,6 +336,7 @@ class MelodixMediaModule : Module() {
         MelodixMediaController.updateSession(context, payload)
       } catch (t: Throwable) {
         android.util.Log.e(TAG, "updateSession ignoré — lecture préservée", t)
+        false
       }
     }
 
