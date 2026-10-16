@@ -3,10 +3,12 @@ import { Pressable, Text, View } from 'react-native';
 import { Entypo } from '@expo/vector-icons';
 
 import { AnimatedPressable } from './AnimatedPressable';
+import { QueueActionMenu } from '../../Player/QueueActionMenu';
 
 import { checkSavedAlbums, checkSavedPlaylists } from '@api';
 import { removeSavedItem, saveItem } from '@services';
 import { LibraryItemModel } from '@models';
+import { translations } from '@data';
 
 import { styles } from './styles';
 
@@ -22,6 +24,13 @@ export type SummaryPropsType = {
   /** Statistique dynamique « 85/100 morceaux disponibles ». */
   availabilityInfo?: string;
   forceDisableSaveIcon?: boolean;
+  /**
+   * Morceaux DÉJÀ CHARGÉS par l'écran hôte, à mettre en file d'un geste.
+   * Fourni par Preview (propriétaire de la file) : sans lui, le bouton
+   * d'actions n'est PAS affiché — jamais de faux contrôle.
+   */
+  loadedTrackCount?: number;
+  onAddAllToQueue?: () => void;
 };
 
 export const Summary = ({
@@ -34,10 +43,17 @@ export const Summary = ({
   description = '',
   availabilityInfo = '',
   forceDisableSaveIcon,
+  loadedTrackCount = 0,
+  onAddAllToQueue,
 }: SummaryPropsType) => {
   const [isSaved, setIsSaved] = React.useState<boolean>(false);
+  const [actionsOpen, setActionsOpen] = React.useState(false);
   const mountedRef = React.useRef(true);
   const saveInFlightRef = React.useRef(false);
+
+  // Bouton d'actions RÉEL : affiché uniquement quand l'écran hôte fournit un
+  // lot à mettre en file (playlist/album) — sinon aucun « ⋯ » décoratif.
+  const canQueueCollection = loadedTrackCount > 0 && Boolean(onAddAllToQueue);
 
   React.useEffect(() => {
     mountedRef.current = true;
@@ -118,6 +134,12 @@ export const Summary = ({
 
   return (
     <View style={styles.summary}>
+      <QueueActionMenu
+        collection={{ title, trackCount: loadedTrackCount }}
+        onAddCollectionToQueue={onAddAllToQueue}
+        onClose={() => setActionsOpen(false)}
+        visible={actionsOpen}
+      />
       <Text style={styles.title}>{title}</Text>
       {description ? (
         <Text numberOfLines={3} style={styles.descriptionText}>
@@ -144,9 +166,17 @@ export const Summary = ({
             onPress={handleToggleSave}
           />
         )}
-        <Pressable>
-          <Entypo style={styles.moreIcon} name="dots-three-horizontal" />
-        </Pressable>
+        {canQueueCollection ? (
+          <Pressable
+            accessibilityLabel={translations.previewCollectionActions}
+            accessibilityRole="button"
+            onPress={() => setActionsOpen(true)}
+            style={styles.moreButton}
+            testID="summary-actions"
+          >
+            <Entypo style={styles.moreIcon} name="dots-three-horizontal" />
+          </Pressable>
+        ) : null}
       </View>
     </View>
   );

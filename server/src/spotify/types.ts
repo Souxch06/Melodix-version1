@@ -1,35 +1,12 @@
 /**
- * Formes BRUTES des réponses Spotify (internes Web Player, non officielles).
+ * Formes BRUTES des réponses Spotify (pages publiques `/embed`).
  * Elles ne quittent jamais ce dossier : spotifyMetadataProvider les normalise
  * en DTO Melodix avant toute sortie vers l'app.
+ *
+ * V79 — Les formes de l'API interne (`SpotifyServerTimeResponse`,
+ * `SpotifyTokenResponse`, `SpotifyGraphQLSearchResponse`,
+ * `SpotifySearchResult`) ont été supprimées avec le mécanisme pathfinder.
  */
-
-export type SpotifyServerTimeResponse = {
-  serverTime?: number;
-};
-
-export type SpotifyTokenResponse = {
-  accessToken?: string;
-  accessTokenExpirationTimestampMs?: number;
-  isAnonymous?: boolean;
-};
-
-/** Réponse GraphQL de la persisted query searchDesktop. */
-export type SpotifyGraphQLSearchResponse = {
-  data?: {
-    searchV2?: SpotifySearchResult;
-    search?: SpotifySearchResult;
-  };
-};
-
-export type SpotifySearchResult = {
-  tracks?: {
-    items?: unknown[];
-  };
-  albums?: {
-    items?: unknown[];
-  };
-};
 
 /** Forme d'entité extraite du blob __NEXT_DATA__ des pages /embed. */
 export type SpotifyEmbedEntity = {

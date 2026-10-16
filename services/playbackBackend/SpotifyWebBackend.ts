@@ -14,16 +14,33 @@ import type {
   PlaybackBackend,
   PlaybackBackendListener,
   PlaybackBackendState,
+  PlaybackBackendTrack,
 } from './types';
 
 export type SpotifyWebRuntimeCommands = {
-  play: () => Promise<boolean>;
-  pause: () => Promise<boolean>;
-  seek: (positionMillis: number) => Promise<boolean>;
-  next: () => Promise<boolean>;
-  previous: () => Promise<boolean>;
+  /**
+   * Chaque commande est OPTIONNELLE : une commande qu'un adaptateur n'implé-
+   * mente pas est routée vers le canal bridge versionné (commandes
+   * corrélées) au lieu d'être noyée. L'adaptateur de l'hôte produit n'implé-
+   * mente que `load`/`setVolume` — le reste passe par le pont.
+   */
+  play?: () => Promise<boolean>;
+  pause?: () => Promise<boolean>;
+  seek?: (positionMillis: number) => Promise<boolean>;
+  next?: () => Promise<boolean>;
+  previous?: () => Promise<boolean>;
   /** Only meaningful on protocol v2; legacy adapters may omit it. */
   toggle?: () => Promise<boolean>;
+  /**
+   * Mission 6 additions. They are deliberately NOT bridge commands: the
+   * frozen protocol v2 carries exactly six commands (play, pause, toggle,
+   * seek, next, previous) and is not extended here. `load` and `setVolume`
+   * exist only on the runtime adapter, which is the layer that knows how to
+   * make the page load a track or change its volume. A runtime that omits
+   * them simply reports `false` — no invented capability.
+   */
+  load?: (trackId: string) => Promise<boolean>;
+  setVolume?: (ratio: number) => Promise<boolean>;
 };
 
 /**
@@ -91,6 +108,19 @@ export class SpotifyWebBackend implements PlaybackBackend {
   private runtimeSession = 0;
   private commandSequence = 0;
   private bridgeReady = false;
+  /**
+   * Mission 6 : verrou de session. `destroy()` est irréversible, et une
+   * perte déclarée par le runtime ferme le pont jusqu'à ce qu'une NOUVELLE
+   * session l'ouvre explicitement.
+   *
+   * Sans ce verrou, un message `ready` rejoué par un renderer déjà condamné
+   * rouvrait la porte — et le message `state` qui le suit immédiatement dans
+   * la file d'une WebView réelle muterait alors l'état. C'est exactement
+   * l'interdit du brief : « aucun événement d'un renderer détruit ne doit
+   * modifier l'état ».
+   */
+  private destroyed = false;
+  private bridgeClosedByLoss = false;
   private capabilities: SpotifyWebRuntimeCapabilities | null = null;
   private bridgeTransport: SpotifyWebBridgeTransport | null = null;
   private pendingCommands = new Map<string, PendingCommand>();
@@ -123,6 +153,7 @@ export class SpotifyWebBackend implements PlaybackBackend {
     this.runtimeSession += 1;
     this.commandSequence += 1;
     this.bridgeReady = false;
+    this.bridgeClosedByLoss = false;
     this.capabilities = null;
     this.flushPendingCommands();
   };
@@ -144,6 +175,9 @@ export class SpotifyWebBackend implements PlaybackBackend {
     this.runtimeSession += 1;
     this.commandSequence += 1;
     this.bridgeReady = false;
+    // Une session neuve est la SEULE façon de rouvrir un pont condamné : le
+    // nouveau document refait le handshake par le chemin normal.
+    this.bridgeClosedByLoss = false;
     this.capabilities = null;
     this.lastStateSource = null;
     this.flushPendingCommands();
@@ -157,6 +191,19 @@ export class SpotifyWebBackend implements PlaybackBackend {
   ): boolean => {
     if (session !== this.runtimeSession) return false;
     this.bridgeReady = false;
+    // Le verrou ne s'arme que pour un renderer DÉTRUIT. La distinction est
+    // essentielle et elle est déjà celle du runtime :
+    //
+    //  - `renderer_destroyed` : le document est mort. Un `ready` qui arrive
+    //    encore ne peut venir que de lui, rejoué depuis la file de la
+    //    WebView. Il doit être ignoré, sinon la porte rouverte laisse passer
+    //    le message `state` qui le suit immédiatement.
+    //
+    //  - `bridge_timeout` : la page est peut-être seulement LENTE. Son
+    //    `ready` peut légitimement arriver pendant le backoff, et le
+    //    rattraper vaut mieux qu'un rechargement. Le runtime s'appuie
+    //    explicitement sur ce comportement.
+    this.bridgeClosedByLoss = errorCode === 'renderer_destroyed';
     this.capabilities = null;
     this.lastStateSource = null;
     this.commandSequence += 1;
@@ -188,11 +235,20 @@ export class SpotifyWebBackend implements PlaybackBackend {
 
   /** Accepts validated protocol data without ever logging the raw envelope. */
   receiveBridgeMessage = (raw: unknown): SpotifyWebBridgeResult => {
+    // Un backend détruit n'accepte plus rien : la destruction est
+    // irréversible, y compris face à une séquence rejouée telle quelle.
+    if (this.destroyed) return 'rejected';
+
     const result = classifySpotifyWebBridgeMessage(raw);
     if (result.kind === 'ignored') return 'ignored';
     if (result.kind === 'rejected') return 'rejected';
     const { message } = result;
     if (message.type === 'ready') {
+      // Un `ready` tardif — message encore en vol d'un document que le
+      // runtime a déjà condamné — ne rouvre PAS la porte. Il est ignoré
+      // honnêtement plutôt que refusé : le message est valide, c'est son
+      // moment qui ne l'est pas.
+      if (this.bridgeClosedByLoss) return 'ignored';
       this.bridgeReady = true;
       return 'ready';
     }
@@ -327,44 +383,107 @@ export class SpotifyWebBackend implements PlaybackBackend {
     invoke: (runtime: SpotifyWebRuntimeCommands) => Promise<boolean>,
     positionMillis?: number
   ): Promise<boolean> => {
-    if (this.runtime) return this.runLatestCommand(invoke);
+    // Un adaptateur runtime partial (par exemple : il sait seulement `load`
+    // une page piste et refuse le reste) ne doit pas priver les commandes
+    // qu'il n'implémente PAS du canal bridge corrélé : la commande part
+    // alors par le pont versionné, exactement comme sans runtime. Un
+    // adaptateur complet (les six commandes) conserve le canal runtime.
+    const runtime = this.runtime;
+    const adapterImplements =
+      runtime !== null &&
+      typeof (runtime as unknown as Record<string, unknown>)[name] ===
+        'function';
+    if (adapterImplements) return this.runLatestCommand(invoke);
     return this.beginBridgeCommand(name, positionMillis);
   };
 
+  // `!` : `runCommand` n'invoque `invoke` que si l'adaptateur implémente la
+  // commande (sinon la commande part par le canal bridge corrélé).
   play = async (): Promise<boolean> =>
-    this.runCommand('play', (runtime) => runtime.play());
+    this.runCommand('play', (runtime) => runtime.play!());
 
   pause = async (): Promise<boolean> =>
-    this.runCommand('pause', (runtime) => runtime.pause());
+    this.runCommand('pause', (runtime) => runtime.pause!());
 
-  toggle = async (): Promise<boolean> => {
-    if (this.runtime) {
-      if (!this.runtime.toggle) return false;
-      return this.runLatestCommand((runtime) => runtime.toggle!());
-    }
-    return this.runCommand('toggle', () => Promise.resolve(false));
+  /**
+   * Bascule lecture/pause. La décision est prise sur l'état PUBLIÉ par la
+   * page, jamais sur une supposition d'interface : c'est la condition du
+   * brief (« la MediaSession doit refléter l'état réel du Spotify Web Player,
+   * jamais un clic UI »).
+   */
+  togglePlayPause = async (): Promise<boolean> => {
+    const published = this.getState();
+    if (published.status === 'playing') return this.pause();
+    return this.play();
   };
+
+  /**
+   * Charge un morceau dans le lecteur Spotify Web.
+   *
+   * Contrairement au backend Audius/YouTube, ce backend PEUT honorer la
+   * séparation « charger sans lancer » : la commande est transmise à
+   * l'adaptateur runtime, et AUCUN état n'est déduit de l'acceptation.
+   * Un `load` qui renvoie `true` signifie seulement que l'adaptateur a
+   * accepté la demande ; il ne dit pas que la page a commencé à charger,
+   * et encore moins qu'un son est sorti. Tant que la page ne publie rien,
+   * `getState()` reste donc sur son dernier état publié.
+   * C'est la distinction `resolved ≠ loaded ≠ playing` tenue jusqu'au bout.
+   *
+   * Sans runtime attaché, la réponse est `false` : le protocole de pont v2
+   * est gelé à six commandes et n'emporte pas de `load`. Aucune capacité
+   * n'est inventée.
+   */
+  load = async (track: PlaybackBackendTrack): Promise<boolean> => {
+    if (!track?.trackId || !track.title) return false;
+    const runtime = this.runtime;
+    if (!runtime?.load) return false;
+    // Le `load` est le SEUL commandement qui change LÉGITIMEMENT la session
+    // de document : un adaptateur qui navigue ferme la session précédente
+    // (nouveau document en route) PENDANT son exécution. La validation
+    // session/séquence de `runLatestCommand` (conçue pour invalider une
+    // commande LENTE arrivée après un changement de document) le
+    // transformerait en faux refus ; la vérité est le booléen de
+    // l'adaptateur (il a accepté la charge), jamais la stabilité de la
+    // session. Les AUTRES commandes gardent la validation stricte.
+    try {
+      const accepted = await runtime.load(track.trackId);
+      return accepted === true;
+    } catch {
+      return false;
+    }
+  };
+
+  setVolume = async (ratio: number): Promise<boolean> => {
+    if (!Number.isFinite(ratio) || ratio < 0 || ratio > 1) return false;
+    if (!this.runtime?.setVolume) return false;
+    return this.runLatestCommand((runtime) => runtime.setVolume!(ratio));
+  };
+
+  toggle = async (): Promise<boolean> =>
+    this.runCommand('toggle', (runtime) => runtime.toggle!());
 
   seek = async (positionMillis: number): Promise<boolean> => {
     if (!Number.isFinite(positionMillis) || positionMillis < 0) return false;
     return this.runCommand(
       'seek',
-      (runtime) => runtime.seek(positionMillis),
+      (runtime) => runtime.seek!(positionMillis),
       positionMillis
     );
   };
 
   next = async (): Promise<boolean> =>
-    this.runCommand('next', (runtime) => runtime.next());
+    this.runCommand('next', (runtime) => runtime.next!());
 
   previous = async (): Promise<boolean> =>
-    this.runCommand('previous', (runtime) => runtime.previous());
+    this.runCommand('previous', (runtime) => runtime.previous!());
 
   destroy = (): void => {
     this.runtime = null;
     this.runtimeSession += 1;
     this.commandSequence += 1;
     this.bridgeReady = false;
+    this.destroyed = true;
+    this.bridgeClosedByLoss = true;
     this.capabilities = null;
     this.bridgeTransport = null;
     this.lastStateSource = null;

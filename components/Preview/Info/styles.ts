@@ -1,17 +1,14 @@
-import { COLORS } from '@config';
+import { APP_BACKGROUND_COLOR, COLORS, TYPOGRAPHY } from '@config';
 import { StyleSheet } from 'react-native';
 
 export const styles = StyleSheet.create({
   container: {
     paddingVertical: 20,
     paddingHorizontal: 16,
-    backgroundColor: COLORS.PRIMARY,
+    backgroundColor: APP_BACKGROUND_COLOR,
   },
   text: {
-    fontSize: 13,
-    lineHeight: 13,
-    fontFamily: 'SF-Bold',
-    fontWeight: '500',
+    ...TYPOGRAPHY.label,
     color: COLORS.WHITE,
   },
 });

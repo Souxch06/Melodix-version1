@@ -1,18 +1,15 @@
-import { COLORS, Shapes } from '@config';
+import { APP_BACKGROUND_COLOR, COLORS, ELEVATION, Shapes } from '@config';
 import { hexToRGB } from '@utils';
 import { StyleSheet } from 'react-native';
 
 export const styles = StyleSheet.create({
   container: {
     width: '100%',
-    backgroundColor: COLORS.PRIMARY,
+    // Même fond que le reste de l'app (jeton unique du design system).
+    backgroundColor: APP_BACKGROUND_COLOR,
     paddingBottom: 16,
-    elevation: 20,
-    shadowColor: COLORS.BLACK,
-    shadowOffset: { width: 0, height: 5 },
-    shadowOpacity: 1,
-    shadowRadius: 20,
     zIndex: 99,
+    ...ELEVATION.raised,
   },
   content: {
     paddingHorizontal: 16,

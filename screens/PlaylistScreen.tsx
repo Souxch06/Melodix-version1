@@ -1,18 +1,28 @@
 import * as React from 'react';
-import { Alert } from 'react-native';
+import { ActivityIndicator, Alert, StyleSheet, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { ErrorCard, Preview } from '@components';
 
-import { PlaylistModel, TrackModel } from '@models';
+import { artistsFromSubtitle, PlaylistModel, TrackModel } from '@models';
 import { checkSavedTracks, getPlaylist, getPlaylistItems } from '@api';
 import { toggleSavedTrack, SpotifyApiError } from '@services';
 import { useUserData } from '@context';
+import { APP_BACKGROUND_COLOR, PALETTE } from '@config';
 import { usePlaylistResolutions } from '@hooks';
 import { translations } from '@data';
 
 export type AlbumScreenPropsType = {
   playlistId: string;
 };
+
+const styles = StyleSheet.create({
+  loading: {
+    alignItems: 'center',
+    backgroundColor: APP_BACKGROUND_COLOR,
+    flex: 1,
+    justifyContent: 'center',
+  },
+});
 
 export const PlaylistScreen = ({ playlistId }: AlbumScreenPropsType) => {
   const router = useRouter();
@@ -74,13 +84,19 @@ export const PlaylistScreen = ({ playlistId }: AlbumScreenPropsType) => {
         }
       );
 
-      setTracks((prevTracks) => [
-        ...prevTracks,
-        ...newTracks.map((item, i) => ({
-          ...item,
-          isSaved: savedPlaylistTracksArr[i],
-        })),
-      ]);
+      // Fusion SANS doublon : si la playlist a changé entre deux pages, une
+      // ligne déjà affichée n'est jamais ajoutée une seconde fois.
+      setTracks((prevTracks) => {
+        const knownIds = new Set(prevTracks.map((item) => item.id));
+        const fresh = newTracks
+          .map((item, i) => ({
+            ...item,
+            isSaved: savedPlaylistTracksArr[i],
+          }))
+          .filter((item) => !knownIds.has(item.id));
+
+        return [...prevTracks, ...fresh];
+      });
       setOffset((prevOffset) => prevOffset + limit);
     } catch (error) {
       // Session Spotify morte en cours de consultation : retour propre au
@@ -162,22 +178,18 @@ export const PlaylistScreen = ({ playlistId }: AlbumScreenPropsType) => {
     () => (playlist ? playlist.imageURL : ''),
     [playlist]
   );
-  // @API_RATE
-  // const recommendationSeed = React.useMemo(
-  //   () =>
-  //     tracks
-  //       .slice(0, 5)
-  //       .map(({ id }) => id)
-  //       .join(','),
-  //   [tracks]
-  // );
+  // Recommandation basée sur le premier morceau valide de la playlist
+  const recommendationSeed = React.useMemo(
+    () => (tracks.length && tracks[0]?.id ? tracks[0].id : ''),
+    [tracks]
+  );
 
   // Favori LOCAL de la ligne : persistance immédiate (aucun compte), UI à
   // jour en fonction du résultat (réversible).
   const handleToggleTrackSaved = React.useCallback(
     async (track: TrackModel) => {
       const nowSaved = await toggleSavedTrack(track, {
-        artists: track.subtitle ? track.subtitle.split(', ') : [],
+        artists: artistsFromSubtitle(track.subtitle),
       });
       setTracks((prevTracks) =>
         prevTracks.map((item) =>
@@ -188,33 +200,38 @@ export const PlaylistScreen = ({ playlistId }: AlbumScreenPropsType) => {
     []
   );
 
-  // Résolution progressive Audius → YouTube (≤ 5 simultanées, cache partagé).
+  // Mission v7 : la disponibilité suit la capacité RÉELLE du lecteur
+  // (Spotify Web Player = seule source des pistes Spotify) — plus de
+  // pré-matching Audius/YouTube, jamais un ratio artificiel.
   const resolutions = usePlaylistResolutions(tracks);
 
   const availabilityById = React.useMemo(() => {
-    const map: Record<
-      string,
-      'audius' | 'youtube' | 'none' | 'pending' | 'resolving'
-    > = {};
+    const map: Record<string, 'spotify-web' | 'none'> = {};
 
     for (const track of tracks) {
       const entry = resolutions.byTrackId[track.id];
-      map[track.id] =
-        entry?.status === 'resolved'
-          ? entry.providerId
-          : entry?.status === 'none'
-            ? 'none'
-            : (entry?.status ?? 'pending');
+      map[track.id] = entry?.status === 'eligible' ? 'spotify-web' : 'none';
     }
 
     return map;
   }, [tracks, resolutions.byTrackId]);
 
   const summaryAvailability = React.useMemo(() => {
-    const { available, total } = resolutions.stats;
-    return total > 0
-      ? translations.playlistAvailabilityInfo(available, total)
-      : '';
+    const { total, spotifyWebActive } = resolutions.stats;
+    if (total === 0) {
+      return '';
+    }
+    // Mission v7.1 : jamais un ratio « N/33 disponibles » pour une playlist
+    // Spotify. Moteur actif → on affiche la SOURCE (Spotify Web Player) ;
+    // la preuve réelle de lisibilité intervient à la LECTURE, pas ici.
+    // Moteur inactif (réglage éteint ou porte fermée) → on indique
+    // clairement que Spotify Web est désactivé : un moteur inactif ne
+    // signifie PAS « 0/33 morceaux disponibles », et aucun matching
+    // Audius/YouTube ne décide la disponibilité d'une piste Spotify.
+    return spotifyWebActive
+      ? translations.playlistSpotifyWebInfo(total)
+      : translations.playlistSpotifyWebDisabledInfo(total);
+    // `translations` est une constante de module (jamais mutée) : hors deps.
   }, [resolutions.stats]);
 
   const summaryDescription = React.useMemo(
@@ -232,6 +249,16 @@ export const PlaylistScreen = ({ playlistId }: AlbumScreenPropsType) => {
 
   // M-5 : carte d'erreur à l'écran (composant partagé) — état erreur
   // EXPLICITE + retry, jamais de stack trace utilisateur.
+  // Chargement initial : la playlist n'est pas encore connue ET aucune erreur
+  // n'est survenue → indicateur explicite (jamais un écran blanc).
+  if (!playlist && !loadError) {
+    return (
+      <View style={styles.loading} testID="playlist-loading">
+        <ActivityIndicator color={PALETTE.accent} size="large" />
+      </View>
+    );
+  }
+
   if (loadError) {
     return (
       <ErrorCard
@@ -258,6 +285,8 @@ export const PlaylistScreen = ({ playlistId }: AlbumScreenPropsType) => {
       onUnavailableTrackPress={handleUnavailableTrackPress}
       tracks={tracks}
       fetchTracks={fetchTracks}
+      recommendationsSeed={recommendationSeed}
+      recommendationsType="tracks"
       onToggleTrackSaved={handleToggleTrackSaved}
     />
   );

@@ -1,5 +1,5 @@
 import { StyleSheet } from 'react-native';
-import { COLORS, COVER_SIZE } from '@config';
+import { APP_BACKGROUND_COLOR, COVER_SIZE, ELEVATION, RADIUS } from '@config';
 
 export const styles = StyleSheet.create({
   imageBg: {
@@ -14,11 +14,12 @@ export const styles = StyleSheet.create({
     width: COVER_SIZE,
     height: COVER_SIZE,
     zIndex: 2,
-    elevation: 20,
-    shadowColor: COLORS.PRIMARY,
-    shadowOffset: { width: 0, height: -10 },
-    shadowOpacity: 0.7,
-    shadowRadius: 20,
+    ...ELEVATION.floating,
+    shadowColor: ELEVATION.floating.shadowColor,
+    shadowOffset: ELEVATION.floating.shadowOffset,
+    shadowOpacity: ELEVATION.floating.shadowOpacity,
+    shadowRadius: ELEVATION.floating.shadowRadius,
+    borderRadius: RADIUS.md,
   },
   gradient: {
     ...StyleSheet.absoluteFillObject,
@@ -29,12 +30,7 @@ export const styles = StyleSheet.create({
     top: COVER_SIZE + 30 * 8,
     height: COVER_SIZE,
     left: -40,
-    backgroundColor: COLORS.PRIMARY,
-    elevation: 20,
-    shadowColor: COLORS.PRIMARY,
-    shadowOffset: { width: 0, height: -40 },
-    shadowOpacity: 1,
-    shadowRadius: 15,
+    backgroundColor: APP_BACKGROUND_COLOR,
     zIndex: 1,
   },
 });

@@ -96,6 +96,7 @@ export const TopAlbums = () => {
       size={Sizes.MEDIUM}
       shape={Shapes.SQUARE_BORDER}
       withShowAll={true}
+      onShowAllPress={() => router.push('/home/see-all/top-albums')}
       onSlidePress={handleSlidePress}
     />
   );

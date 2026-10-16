@@ -15,6 +15,47 @@ jest.mock('@services', () => ({
   saveItem: jest.fn(),
 }));
 
+const mockQueueCollection: {
+  current: {
+    title: string;
+    trackCount: number;
+    close: () => void;
+    fire: () => void;
+  } | null;
+} = { current: null };
+
+jest.mock('../../../Player/QueueActionMenu', () => {
+  const mockReact = jest.requireActual<typeof import('react')>('react');
+  const { Pressable: MockPressable } =
+    jest.requireActual<typeof import('react-native')>('react-native');
+  return {
+    QueueActionMenu: ({
+      collection,
+      onAddCollectionToQueue,
+      onClose,
+      visible,
+    }: {
+      collection?: { title: string; trackCount: number } | null;
+      onAddCollectionToQueue?: () => void;
+      onClose: () => void;
+      visible: boolean;
+    }) => {
+      if (visible && collection && onAddCollectionToQueue) {
+        mockQueueCollection.current = {
+          ...collection,
+          close: onClose,
+          fire: onAddCollectionToQueue,
+        };
+        return mockReact.createElement(MockPressable, {
+          onPress: onAddCollectionToQueue,
+          testID: 'mock-summary-queue-add',
+        });
+      }
+      return null;
+    },
+  };
+});
+
 jest.mock('../AnimatedPressable', () => {
   const mockReact = jest.requireActual<typeof import('react')>('react');
   const { Pressable: MockPressable } =
@@ -146,5 +187,61 @@ describe('Summary', () => {
     expect(mockedSaveItem).toHaveBeenCalledTimes(1);
     expect(mockedRemoveSavedItem).not.toHaveBeenCalled();
     await act(async () => pendingSave.resolve());
+  });
+});
+
+describe('Summary — bouton d’actions de liste (plus de « ⋯ » mort)', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockQueueCollection.current = null;
+    mockedCheckAlbums.mockResolvedValue([false]);
+    mockedCheckPlaylists.mockResolvedValue([false]);
+  });
+
+  it('un lot chargé rend le « ⋯ » actionnable et ouvre le menu', async () => {
+    const onAddAllToQueue = jest.fn();
+    const view = render(
+      <Summary
+        {...props}
+        loadedTrackCount={4}
+        onAddAllToQueue={onAddAllToQueue}
+      />
+    );
+
+    fireEvent.press(view.getByTestId('summary-actions'));
+
+    expect(mockQueueCollection.current?.title).toBe(props.title);
+    expect(mockQueueCollection.current?.trackCount).toBe(4);
+
+    fireEvent.press(view.getByTestId('mock-summary-queue-add'));
+    expect(onAddAllToQueue).toHaveBeenCalledTimes(1);
+  });
+
+  it('sans lot chargé : aucun « ⋯ » (jamais de bouton mort)', () => {
+    const view = render(
+      <Summary {...props} loadedTrackCount={0} onAddAllToQueue={jest.fn()} />
+    );
+
+    expect(view.queryByTestId('summary-actions')).toBeNull();
+  });
+
+  it('sans consommateur de file : aucun « ⋯ » non plus', () => {
+    const view = render(<Summary {...props} loadedTrackCount={4} />);
+
+    expect(view.queryByTestId('summary-actions')).toBeNull();
+  });
+
+  it('le menu se ferme après l’action (aucune feuille fantôme)', () => {
+    const view = render(
+      <Summary {...props} loadedTrackCount={2} onAddAllToQueue={jest.fn()} />
+    );
+
+    fireEvent.press(view.getByTestId('summary-actions'));
+    const close = mockQueueCollection.current?.close;
+    expect(close).toBeDefined();
+    act(() => close?.());
+
+    expect(mockQueueCollection.current).not.toBeNull();
+    expect(view.queryByTestId('mock-summary-queue-add')).toBeNull();
   });
 });

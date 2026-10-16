@@ -1,4 +1,13 @@
-import type { AudioProvider, AudioSourceQuery } from './types';
+import type {
+  AudioProvider,
+  AudioSourceQuery,
+  SongMatchKind,
+  TrackVariantClass,
+} from './types';
+import {
+  buildMatchedDiagnostic,
+  recordResolutionDiagnostic,
+} from './resolutionDiagnostics';
 
 /**
  * TrackResolver — point ENTREE unique de la chaîne de résolution.
@@ -51,6 +60,10 @@ export type ProviderChainOutcome =
       sourceId: string;
       /** 0..1 */
       score: number;
+      /** MOYEN de la décision (null si le provider ne l'a pas précisé). */
+      matchKind: SongMatchKind | null;
+      /** Classe de variante du morceau choisi (null si inconnue). */
+      variantClass: TrackVariantClass | null;
     }
   | { status: 'no-match' }
   | { status: 'error' };
@@ -67,7 +80,13 @@ export const resolveWithProviders = async (
   let sawProviderError = false;
 
   for (const provider of providers) {
-    let match: { sourceId: string; score: number } | null = null;
+    let match: {
+      sourceId: string;
+      score: number;
+      matchKind?: SongMatchKind;
+      variantClass?: TrackVariantClass;
+      searchQueryCount?: number;
+    } | null = null;
 
     try {
       match = await provider.resolveMatch(query);
@@ -78,6 +97,17 @@ export const resolveWithProviders = async (
         `TrackResolver: provider ${provider.id} threw, trying next`,
         error instanceof Error ? error.name : typeof error
       );
+      // Un fournisseur en panne n'est PAS un morceau absent : le code le dit,
+      // et le resolver ne gravera donc aucun négatif durable.
+      recordResolutionDiagnostic({
+        code: 'PROVIDER_ERROR',
+        providerId: provider.id,
+        rejectionCount: 0,
+        searchQueryCount: 0,
+        bestScore: null,
+        rejectedBy: {},
+        at: Date.now(),
+      });
       sawProviderError = true;
       continue;
     }
@@ -88,11 +118,26 @@ export const resolveWithProviders = async (
           ? '[AUDIO] Audius match'
           : '[AUDIO] YouTube fallback'
       );
+      // DIAGNOSTIC POSITIF : « pourquoi CE morceau a été choisi » — quel
+      // fournisseur, par quel moyen, quelle version, quelle confiance.
+      // Codes courts uniquement (voir buildMatchedDiagnostic) : jamais de
+      // titre, artiste, ISRC, identifiant de piste ou URL.
+      recordResolutionDiagnostic(
+        buildMatchedDiagnostic({
+          providerId: provider.id,
+          matchKind: match.matchKind ?? null,
+          variant: match.variantClass ?? null,
+          confidence: Math.round(match.score * 100),
+          searchQueryCount: match.searchQueryCount ?? 0,
+        })
+      );
       return {
         status: 'matched',
         provider,
         sourceId: match.sourceId,
         score: match.score,
+        matchKind: match.matchKind ?? null,
+        variantClass: match.variantClass ?? null,
       };
     }
   }
@@ -101,6 +146,20 @@ export const resolveWithProviders = async (
   // jamais de négatif durable sur une panne — le morceau est réessayable.
   if (!sawProviderError) {
     console.info('[AUDIO] Track unavailable');
+    // Tous les providers ont RÉPONDU sans rien trouver : le négatif est
+    // prouvé, et son motif exact est déjà dans le tampon (écrit par chaque
+    // provider). On ajoute la vue chaîne, utile quand les deux fournisseurs
+    // ont été muets sans même produire de candidat.
+    recordResolutionDiagnostic({
+      code: 'NO_PROVIDER_RESULT',
+      providerId: null,
+      rejectionCount: 0,
+      searchQueryCount: 0,
+      bestScore: null,
+      rejectedBy: {},
+      at: Date.now(),
+    });
   }
+
   return sawProviderError ? { status: 'error' } : { status: 'no-match' };
 };

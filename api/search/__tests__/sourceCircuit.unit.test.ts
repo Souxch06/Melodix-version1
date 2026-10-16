@@ -1,0 +1,274 @@
+/**
+ * V31 — disjoncteurs génériques PAR SOURCE (audius / backend / youtube).
+ *
+ * Verrous :
+ *  - 3 échecs consécutifs → circuit OUVERT 5 min (aucune requête réseau) ;
+ *  - succès → compteur remis à zéro, circuit refermé ;
+ *  - demi-ouverture : après les 5 min, la sonde suivante est autorisée ;
+ *    échec → réouverture immédiate ; succès → fermeture ;
+ *  - classification : panne (réseau/timeout/429/5xx/blocage) comptée,
+ *    erreur bénigne (404) NON comptée et remise à zéro, annulation JAMAIS.
+ */
+import { AudiusRequestError } from '../../audius/client';
+import { ItunesRequestError } from '../../itunes/client';
+import { JamendoRequestError } from '../../jamendo/client';
+import { BackendError } from '../../../services/backend/client';
+import { InnertubeError } from '../../../services/audio/youtubeInnertube';
+
+import {
+  classifySourceError,
+  getSourceCircuitStates,
+  isSourceCircuitOpen,
+  recordSourceFailure,
+  recordSourceSuccess,
+  resetSourceCircuits,
+  SOURCE_CIRCUIT_MAX_FAILURES,
+  SOURCE_CIRCUIT_OPEN_MS,
+} from '../sourceCircuit';
+
+const NOW = 1_000_000;
+
+beforeEach(() => {
+  resetSourceCircuits();
+});
+
+describe('ouverture après échecs consécutifs', () => {
+  it(`${SOURCE_CIRCUIT_MAX_FAILURES} échecs → circuit ouvert ${SOURCE_CIRCUIT_OPEN_MS / 60000} min`, () => {
+    for (let i = 0; i < SOURCE_CIRCUIT_MAX_FAILURES; i += 1) {
+      expect(isSourceCircuitOpen('audius', NOW)).toBe(false);
+      recordSourceFailure('audius', NOW);
+    }
+
+    expect(isSourceCircuitOpen('audius', NOW)).toBe(true);
+    // Les autres sources restent fermées (indépendance).
+    expect(isSourceCircuitOpen('backend', NOW)).toBe(false);
+    expect(isSourceCircuitOpen('youtube', NOW)).toBe(false);
+    expect(isSourceCircuitOpen('itunes', NOW)).toBe(false);
+  });
+
+  it('iTunes (V37) : disjoncteur propre, indépendant des autres sources', () => {
+    for (let i = 0; i < SOURCE_CIRCUIT_MAX_FAILURES; i += 1) {
+      recordSourceFailure('itunes', NOW);
+    }
+
+    expect(isSourceCircuitOpen('itunes', NOW)).toBe(true);
+    // La panne iTunes ne disjoncte JAMAIS les autres sources.
+    expect(isSourceCircuitOpen('audius', NOW)).toBe(false);
+    expect(isSourceCircuitOpen('backend', NOW)).toBe(false);
+    expect(isSourceCircuitOpen('youtube', NOW)).toBe(false);
+  });
+
+  it('un succès remet le compteur à zéro', () => {
+    recordSourceFailure('audius', NOW);
+    recordSourceFailure('audius', NOW);
+    recordSourceSuccess('audius');
+    recordSourceFailure('audius', NOW);
+    recordSourceFailure('audius', NOW);
+
+    // 2 échecs après le succès : toujours fermé.
+    expect(isSourceCircuitOpen('audius', NOW)).toBe(false);
+  });
+});
+
+describe('demi-ouverture après le délai', () => {
+  it('après 5 min : une sonde est autorisée ; nouvel échec → réouverture', () => {
+    for (let i = 0; i < SOURCE_CIRCUIT_MAX_FAILURES; i += 1) {
+      recordSourceFailure('audius', NOW);
+    }
+    expect(isSourceCircuitOpen('audius', NOW)).toBe(true);
+
+    const later = NOW + SOURCE_CIRCUIT_OPEN_MS + 1;
+    expect(isSourceCircuitOpen('audius', later)).toBe(false); // sonde permise
+
+    recordSourceFailure('audius', later); // la sonde échoue
+    expect(isSourceCircuitOpen('audius', later)).toBe(true); // réouvert
+  });
+
+  it('sonde réussie → circuit refermé durablement', () => {
+    for (let i = 0; i < SOURCE_CIRCUIT_MAX_FAILURES; i += 1) {
+      recordSourceFailure('audius', NOW);
+    }
+
+    const later = NOW + SOURCE_CIRCUIT_OPEN_MS + 1;
+    expect(isSourceCircuitOpen('audius', later)).toBe(false);
+    recordSourceSuccess('audius');
+
+    // Immédiatement après : fermé, et deux nouveaux échecs ne suffisent plus.
+    expect(isSourceCircuitOpen('audius', later)).toBe(false);
+    recordSourceFailure('audius', later);
+    recordSourceFailure('audius', later);
+    expect(isSourceCircuitOpen('audius', later)).toBe(false);
+  });
+});
+
+describe('classification des erreurs', () => {
+  it('annulation → aborted (jamais comptée)', () => {
+    expect(classifySourceError(new AudiusRequestError('aborted', 'x'))).toBe(
+      'aborted'
+    );
+    expect(classifySourceError(new InnertubeError('aborted', 'x'))).toBe(
+      'aborted'
+    );
+    expect(classifySourceError(new BackendError('aborted', 'x'))).toBe(
+      'aborted'
+    );
+    expect(classifySourceError(new ItunesRequestError('aborted', 'x'))).toBe(
+      'aborted'
+    );
+  });
+
+  it('Audius : réseau/timeout/429/5xx = panne ; 404 = bénin', () => {
+    expect(classifySourceError(new AudiusRequestError('network', 'x'))).toBe(
+      'failure'
+    );
+    expect(classifySourceError(new AudiusRequestError('timeout', 'x'))).toBe(
+      'failure'
+    );
+    expect(
+      classifySourceError(new AudiusRequestError('rate-limited', 'x', 429))
+    ).toBe('failure');
+    expect(classifySourceError(new AudiusRequestError('http', 'x', 500))).toBe(
+      'failure'
+    );
+    expect(
+      classifySourceError(new AudiusRequestError('not-found', 'x', 404))
+    ).toBe('benign');
+  });
+
+  it('YouTube : blocage 403 / 429 / 5xx / protocole cassé = panne', () => {
+    expect(classifySourceError(new InnertubeError('forbidden', 'x', 403))).toBe(
+      'failure'
+    );
+    expect(
+      classifySourceError(new InnertubeError('rate-limited', 'x', 429))
+    ).toBe('failure');
+    expect(classifySourceError(new InnertubeError('server', 'x', 502))).toBe(
+      'failure'
+    );
+    expect(classifySourceError(new InnertubeError('invalid', 'x'))).toBe(
+      'failure'
+    );
+    expect(classifySourceError(new InnertubeError('network', 'x'))).toBe(
+      'failure'
+    );
+  });
+
+  it('Backend : timeout/réseau/429/5xx = panne ; 4xx requête = bénin', () => {
+    expect(classifySourceError(new BackendError('unavailable', 'x'))).toBe(
+      'failure'
+    );
+    expect(classifySourceError(new BackendError('network', 'x'))).toBe(
+      'failure'
+    );
+    expect(
+      classifySourceError(new BackendError('http', 'x', undefined, 429))
+    ).toBe('failure');
+    expect(
+      classifySourceError(new BackendError('http', 'x', undefined, 500))
+    ).toBe('failure');
+    expect(
+      classifySourceError(new BackendError('http', 'x', undefined, 400))
+    ).toBe('benign');
+  });
+
+  it('iTunes (V37) : réseau/timeout/débit = panne ; 4xx autoritaire = bénin', () => {
+    expect(classifySourceError(new ItunesRequestError('network', 'x'))).toBe(
+      'failure'
+    );
+    expect(classifySourceError(new ItunesRequestError('timeout', 'x'))).toBe(
+      'failure'
+    );
+    expect(
+      classifySourceError(new ItunesRequestError('rate-limited', 'x', 429))
+    ).toBe('failure');
+    expect(classifySourceError(new ItunesRequestError('http', 'x', 500))).toBe(
+      'failure'
+    );
+    expect(classifySourceError(new ItunesRequestError('http', 'x', 400))).toBe(
+      'benign'
+    );
+  });
+
+  /**
+   * V48 — RÉGRESSION VERROUILLÉE. `JamendoRequestError` n'avait AUCUNE branche
+   * dans `classifySourceError` et tombait dans le repli « erreur non typée →
+   * prudence = panne ». Démontré par mesure avant correctif :
+   *   annulation → `failure` (au lieu de `aborted`)
+   *   HTTP 404   → `failure` (au lieu de `benign`)
+   * Conséquence réelle : chaque annulation de recherche (l'utilisateur
+   * continue de saisir) incrémentait le compteur de pannes Jamendo ; au bout
+   * de 3, le disjoncteur s'ouvrait 5 min et la source se désactivait
+   * SILENCIEUSEMENT sans avoir jamais échoué.
+   */
+  it('Jamendo (V48) : réseau/timeout/débit/5xx = panne ; 4xx autoritaire = bénin', () => {
+    expect(classifySourceError(new JamendoRequestError('network', 'x'))).toBe(
+      'failure'
+    );
+    expect(classifySourceError(new JamendoRequestError('timeout', 'x'))).toBe(
+      'failure'
+    );
+    expect(
+      classifySourceError(new JamendoRequestError('rate-limited', 'x', 429))
+    ).toBe('failure');
+    expect(classifySourceError(new JamendoRequestError('http', 'x', 503))).toBe(
+      'failure'
+    );
+    expect(classifySourceError(new JamendoRequestError('http', 'x', 404))).toBe(
+      'benign'
+    );
+    expect(classifySourceError(new JamendoRequestError('http', 'x', 401))).toBe(
+      'benign'
+    );
+  });
+
+  it('Jamendo (V48) : une ANNULATION n’est JAMAIS comptée comme une panne', () => {
+    expect(classifySourceError(new JamendoRequestError('aborted', 'x'))).toBe(
+      'aborted'
+    );
+  });
+
+  it('Jamendo (V48) : source non configurée = bénigne (jamais de disjoncteur)', () => {
+    expect(
+      classifySourceError(new JamendoRequestError('unconfigured', 'x'))
+    ).toBe('benign');
+  });
+
+  it('Jamendo (V48) : des annulations répétées ne disjonctent PAS la source', () => {
+    // Reproduit le scénario utilisateur réel : saisir plusieurs fois de suite
+    // annule la recherche en vol à chaque frappe.
+    for (let i = 0; i < SOURCE_CIRCUIT_MAX_FAILURES + 2; i += 1) {
+      const verdict = classifySourceError(
+        new JamendoRequestError('aborted', 'cancelled')
+      );
+      if (verdict === 'failure') {
+        recordSourceFailure('jamendo', NOW);
+      }
+    }
+
+    const states = getSourceCircuitStates(NOW);
+
+    expect(states.jamendo.failures).toBe(0);
+    expect(isSourceCircuitOpen('jamendo', NOW)).toBe(false);
+  });
+
+  it('Jamendo (V48) : de VRAIES pannes répétées disjonctent bien la source', () => {
+    // Contre-partie : le correctif ne doit pas avoir rendu la source
+    // indisjonctable.
+    for (let i = 0; i < SOURCE_CIRCUIT_MAX_FAILURES; i += 1) {
+      recordSourceFailure('jamendo', NOW);
+    }
+
+    expect(isSourceCircuitOpen('jamendo', NOW)).toBe(true);
+  });
+});
+
+describe('diagnostic', () => {
+  it('expose l état sans aucune donnée personnelle', () => {
+    recordSourceFailure('youtube', NOW);
+
+    const states = getSourceCircuitStates(NOW);
+    expect(states.youtube.failures).toBe(1);
+    expect(states.audius.openForMs).toBe(0);
+    expect(JSON.stringify(states)).not.toContain('http');
+  });
+});

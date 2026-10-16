@@ -19,6 +19,7 @@
  *    du morceau en cours projettent normalement.
  */
 import {
+  addAudioBecomingNoisyListener,
   addMediaCommandListener,
   appendDiagLog,
   requestMediaNotificationPermission,
@@ -37,20 +38,50 @@ let bridgeEnabled = false;
 let initialized = false;
 let unsubscribePlayer: (() => void) | null = null;
 let unsubscribeCommands: (() => void) | null = null;
+let unsubscribeNoisyAudio: (() => void) | null = null;
 /** Le service n'a été sollicité QUE si une lecture réelle l'a activé. */
 let sessionActivated = false;
 /** Déduplication : signature JSON du dernier payload RÉELLEMENT poussé. */
 let lastPushedSignature = '';
+/**
+ * V83 — nombre d'échecs de projection CONSÉCUTIFS. Sert uniquement à borner le
+ * journal : sans cette garde, une panne native persistante écrirait une ligne
+ * `NATIVE_UPDATE_FAILED` à chaque tick (500 ms) pendant toute sa durée.
+ */
+let consecutiveProjectionFailures = 0;
 /** Android 13+ : une seule demande liée à la première lecture volontaire. */
 let notificationPermissionRequested = false;
 
 /** Appel natif blindé : une couche de CONTRÔLE ne fait jamais crasher le
  * moteur audio même si Android jette (§11 résilience). */
-const callNative = (fn: () => void): void => {
+const callNative = (fn: () => void): boolean => {
   try {
     fn();
+    return true;
   } catch (error) {
     console.warn('MelodixMedia native error (tolerated):', error);
+    return false;
+  }
+};
+
+/**
+ * V83 — même blindage que `callNative`, pour un appel qui RENVOIE une
+ * confirmation. Deux invariants CUMULÉS :
+ *  - une exception native ne casse jamais le pont ni la lecture (§11) ;
+ *  - seul un `true` explicite vaut réussite : `false`, `undefined` (natif plus
+ *    ancien, module non lié) ou toute valeur inattendue est un ÉCHEC.
+ *
+ * Le second invariant est ce qui manquait : `callNative` ne distinguait qu'un
+ * `throw` synchrone, or le Kotlin n'en produit jamais (blindage 5C.2) — voir
+ * `docs/audits/V82-MEDIA-ARCHITECTURE-COMPARISON.md` §4.
+ */
+const callNativeConfirmed = (fn: () => boolean): boolean => {
+  try {
+    return fn() === true;
+  } catch (error) {
+    console.warn('MelodixMedia native error (tolerated):', error);
+
+    return false;
   }
 };
 
@@ -124,13 +155,34 @@ export const handleMediaCommand = (command: MediaCommand): void => {
   switch (command.command) {
     case 'play':
       if (status === 'paused' || status === 'error') {
-        void melodixPlayer.togglePlayPause();
+        void melodixPlayer.resume();
+      } else if (status === 'ended') {
+        // Fin de file atteinte : PLAY système relance le morceau affiché
+        // depuis le début (pas un toggle qui resterait sur « terminé »).
+        void melodixPlayer.playAtIndex(melodixPlayer.getState().index);
+      } else if (status === 'idle') {
+        // Session restaurée ou morceau en attente dans la file
+        void melodixPlayer.play();
+      } else if (status === 'buffering') {
+        // Mise en place en vol : play() garantit l'intention de lecture
+        // (jamais un toggle) — sans-op si la lecture part normalement,
+        // reprise assurée si une pause interne a interrompu le buffer.
+        void melodixPlayer.play();
       }
       break;
 
     case 'pause':
-      if (status === 'playing') {
-        void melodixPlayer.togglePlayPause();
+      // pause() du moteur est idempotente : playing → pauseAsync ;
+      // buffering → pauseAsync avant la fin du chargement (commande
+      // perdue si on ne traitait QUE 'playing') ; loading/resolving →
+      // annulation propre de la mise en place (Sound orphelin déchargé).
+      if (
+        status === 'playing' ||
+        status === 'buffering' ||
+        status === 'loading' ||
+        status === 'resolving'
+      ) {
+        void melodixPlayer.pause();
       }
       break;
 
@@ -158,6 +210,84 @@ export const handleMediaCommand = (command: MediaCommand): void => {
 };
 
 /**
+ * Casque filaire débranché / Bluetooth perdu (§11).
+ *
+ * Android signale `ACTION_AUDIO_BECOMING_NOISY` : continuer à jouer dans le
+ * haut-parleur du téléphone serait un comportement fautif. On met donc en
+ * PAUSE — jamais de saut, jamais de reprise — et UNIQUEMENT si le moteur
+ * joue réellement : une lecture déjà en pause, en chargement ou terminée
+ * n'est pas modifiée. Le natif ne décide rien (il notifie), le moteur reste
+ * la seule source de vérité, exactement comme pour une commande système.
+ */
+export const handleAudioBecomingNoisy = (): void => {
+  const status = melodixPlayer.getState().status;
+
+  appendDiagLog(`AUDIO_BECOMING_NOISY status=${status}`);
+
+  // V51 — DEUX défauts corrigés ici, tous deux reproduits par
+  // `__tests__/mediaBridgeNoisyAudio.unit.test.ts` :
+  //
+  //  1. La garde ne couvrait QUE `playing`. Or Android émet
+  //     ACTION_AUDIO_BECOMING_NOISY dès que la sortie bascule vers le
+  //     haut-parleur, y compris PENDANT la mise en place : en `buffering`
+  //     (Sound créé, pas encore en lecture) comme en `resolving`/`loading`
+  //     (flux pas encore obtenu), le son partait ensuite dans le
+  //     haut-parleur — exactement le comportement que ce gestionnaire existe
+  //     pour empêcher. Les états traités sont donc désormais LES MÊMES que
+  //     ceux de la commande système PAUSE (voir `handleMediaCommand`).
+  //
+  //  2. La commande était un TOGGLE (`togglePlayPause()` sans argument), dont
+  //     la direction dépend de l'état interne transient
+  //     (`transportIntent ?? lastNativePlaying ?? status`). Un toggle peut
+  //     donc calculer « play » et RELANCER la lecture au moment précis où il
+  //     faut la couper. `pause()` est à direction FORCÉE et idempotente :
+  //     elle ne peut jamais reprendre la lecture.
+  //
+  // Une lecture déjà en pause, terminée (`ended`) ou sans piste n'est pas
+  // modifiée : `pause()` s'en garde elle-même, et aucune relance n'est
+  // possible. Le moteur reste la seule source de vérité — le natif notifie,
+  // il ne décide rien.
+  if (
+    status === 'playing' ||
+    status === 'buffering' ||
+    status === 'loading' ||
+    status === 'resolving'
+  ) {
+    void melodixPlayer.pause();
+  }
+};
+
+/**
+ * Android 13+ : demande UNIQUE de la permission de notification, liée à la
+ * première lecture volontaire — QUEL QUE SOIT LE PORTEUR AUDIO.
+ *
+ * Pourquoi aussi sur le chemin Spotify Web : la MediaSession système d'une
+ * piste Spotify est portée par la MediaSession PROPRE de la WebView
+ * (Chromium), mais la notification correspondante est postée par le
+ * PROCESSUS DE L'APPLICATION. Sur Android 13+, sans `POST_NOTIFICATIONS`
+ * accordée, ce processus ne peut rien afficher dans le tiroir : la
+ * notification média reste invisible alors que la lecture tourne. La
+ * demande est contextuelle (geste utilisateur : première lecture volontaire
+ * confirmée), unique (drapeau partagé avec le chemin natif) et
+ * JAMAIS bloquante : le refus ne change rien à l'audio.
+ */
+const ensureNotificationPermissionRequested = (): void => {
+  if (notificationPermissionRequested) {
+    return;
+  }
+
+  const result = (() => {
+    try {
+      return requestMediaNotificationPermission();
+    } catch (error) {
+      console.warn('MelodixMedia notification permission unavailable:', error);
+      return null;
+    }
+  })();
+  notificationPermissionRequested = result !== null;
+};
+
+/**
  * Projection d'un nouvel état moteur (appelée via subscribe).
  *
  * ANTI-AUTOPLAY VERROUILLÉ (§9 durci) : TANT QU'AUCUNE lecture RÉELLE n'a
@@ -178,6 +308,31 @@ const projectState = (state: PlayerState): void => {
     return;
   }
 
+  // LECTURE SPOTIFY WEB : la piste est portée par la WebView (Chromium), qui
+  // intègre SA PROPRE MediaSession système — la notification, l'écran
+  // verrouillé, le Bluetooth et les boutons pilotent RÉELLEMENT la page via
+  // les MediaSessionActionEvent standards. Créer notre session Media3 ici
+  // donnerait UNE DEUXIÈME notification concurrente et des commandes mortes
+  // (le pont n'a pas de surface d'exécution autorisée). On arrête donc notre
+  // session (si elle était active pour un morceau Audius/YouTube) et on se
+  // tient hors du chemin système : l'UI Melodix suit toujours l'état publié,
+  // seul le porteur de la MediaSession système change.
+  if (state.resolved?.provider === 'Spotify Web') {
+    if (sessionActivated) {
+      sessionActivated = false;
+      lastPushedSignature = '';
+      // V83 : une session close remet le compteur d'échecs à zéro — la panne
+      // éventuelle de la session suivante doit être journalisée à son tour.
+      consecutiveProjectionFailures = 0;
+      callNative(stopSession);
+    }
+    // Android 13+ : la notification de la MediaSession portée par la WebView
+    // est postée par le processus de l'app — la demander ici (unique,
+    // non bloquante) ou la notification média restera invisible.
+    ensureNotificationPermissionRequested();
+    return;
+  }
+
   const payload = buildMediaSessionPayload(state);
 
   if (!payload) {
@@ -186,6 +341,9 @@ const projectState = (state: PlayerState): void => {
     if (sessionActivated) {
       sessionActivated = false;
       lastPushedSignature = '';
+      // V83 : une session close remet le compteur d'échecs à zéro — la panne
+      // éventuelle de la session suivante doit être journalisée à son tour.
+      consecutiveProjectionFailures = 0;
       callNative(stopSession);
     }
 
@@ -213,30 +371,60 @@ const projectState = (state: PlayerState): void => {
   );
 
   // Android 13+ masque la notification dans le tiroir si la permission n'a
-  // jamais été accordée. Le réglage est activé par défaut : attendre que
-  // l'utilisateur le désactive/réactive rendait donc la notification
-  // introuvable. La première lecture VOLONTAIRE est le moment contextuel
-  // légitime pour demander une seule fois la permission. L'audio et le FGS
-  // restent non bloquants si Android refuse ou si le module est absent.
-  if (!notificationPermissionRequested) {
-    const result = (() => {
-      try {
-        return requestMediaNotificationPermission();
-      } catch (error) {
-        console.warn(
-          'MelodixMedia notification permission unavailable:',
-          error
-        );
-        return null;
-      }
-    })();
-    notificationPermissionRequested = result !== null;
-  }
+  // jamais été accordée. La première lecture VOLONTAIRE est le moment
+  // contextuel légitime pour demander une seule fois la permission. L'audio
+  // et le FGS restent non bloquants si Android refuse ou si le module est
+  // absent. (Même helper que le chemin Spotify Web : une seule demande,
+  // quel que soit le porteur.)
+  ensureNotificationPermissionRequested();
 
   sessionActivated = true;
+
+  // V83 — la signature n'est gravée QUE sur une confirmation EXPLICITE du
+  // natif. V82 §4 a démontré que l'ancienne détection (un `throw` synchrone
+  // capté par `callNative`) était structurellement inatteignable : le Kotlin
+  // avale toute exception (blindage 5C.2), le travail réel est différé par
+  // `mainHandler.post`, et aucun événement de confirmation ne remontait.
+  // `pushedOk` valait donc toujours `true`, la branche d'échec ci-dessous était
+  // du code mort, et le correctif V70 Bug 2 n'apportait aucune protection.
+  //
+  // `updateSession` renvoie désormais un booléen : `true` = remise acceptée.
+  // Toute autre valeur — y compris `undefined` d'un natif plus ancien ou d'un
+  // module non lié — est un ÉCHEC, jamais une réussite. La comparaison stricte
+  // `=== true` est VOLONTAIREMENT répétée ici alors que le wrapper du module la
+  // fait déjà : une valeur truthy inattendue (`'ok'`, `1`) ne doit pouvoir être
+  // lue comme un succès par AUCUN des deux étages.
+  //
+  // ⚠️ `true` confirme la REMISE au main thread, pas l'affichage : les échecs
+  // asynchrones natifs restent hors de portée de ce retour (voir le rapport).
+  const pushedOk = callNativeConfirmed(() => updateSession(payload));
+
+  if (!pushedOk) {
+    // La signature reste intacte : le prochain tick retente la projection.
+    consecutiveProjectionFailures += 1;
+    // Anti-spam : seule la PREMIÈRE panne d'une série est journalisée ; la
+    // reprise signalera le nombre de tentatives masquées.
+    if (consecutiveProjectionFailures === 1) {
+      appendDiagLog(
+        `[MEDIA_DIAG] NATIVE_UPDATE_FAILED state=${
+          payload.isPlaying ? 'PLAYING' : 'PAUSED'
+        } trackId=${payload.trackId} (retenté au prochain tick)`
+      );
+    }
+
+    return;
+  }
+
+  if (consecutiveProjectionFailures > 0) {
+    appendDiagLog(
+      `[MEDIA_DIAG] NATIVE_UPDATE_RECOVERED trackId=${payload.trackId} ` +
+        `après ${consecutiveProjectionFailures} échec(s) masqué(s)`
+    );
+    consecutiveProjectionFailures = 0;
+  }
+
   lastPushedSignature = pushed;
 
-  callNative(() => updateSession(payload));
   appendDiagLog(
     `[MEDIA_DIAG] NATIVE_UPDATE_REQUESTED state=${payload.isPlaying ? 'PLAYING' : 'PAUSED'} ` +
       `trackId=${payload.trackId}`
@@ -269,6 +457,7 @@ export const setMediaBridgeEnabled = (enabled: boolean): void => {
   if (!enabled && sessionActivated) {
     sessionActivated = false;
     lastPushedSignature = '';
+    consecutiveProjectionFailures = 0;
     callNative(stopSession);
   }
 };
@@ -289,6 +478,9 @@ export const initMediaBridge = (): void => {
 
   unsubscribePlayer = melodixPlayer.subscribe(projectState);
   unsubscribeCommands = addMediaCommandListener(handleMediaCommand);
+  unsubscribeNoisyAudio = addAudioBecomingNoisyListener(
+    handleAudioBecomingNoisy
+  );
 };
 
 /** Démontage complet (tests, logout éventuel) — idempotent. */
@@ -298,10 +490,15 @@ export const teardownMediaBridge = (): void => {
     unsubscribePlayer = null;
     unsubscribeCommands?.();
     unsubscribeCommands = null;
+    unsubscribeNoisyAudio?.();
+    unsubscribeNoisyAudio = null;
 
     if (sessionActivated) {
       sessionActivated = false;
       lastPushedSignature = '';
+      // V83 : une session close remet le compteur d'échecs à zéro — la panne
+      // éventuelle de la session suivante doit être journalisée à son tour.
+      consecutiveProjectionFailures = 0;
       callNative(stopSession);
     }
   } finally {

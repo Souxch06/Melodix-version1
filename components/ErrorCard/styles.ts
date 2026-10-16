@@ -1,6 +1,13 @@
 import { StyleSheet } from 'react-native';
 
-import { COLORS } from '@config';
+import {
+  ELEVATION,
+  PALETTE,
+  RADIUS,
+  SPACING,
+  TOUCH_TARGET,
+  TYPOGRAPHY,
+} from '@config';
 
 export const styles = StyleSheet.create({
   wrap: {
@@ -10,40 +17,42 @@ export const styles = StyleSheet.create({
   },
   card: {
     alignItems: 'center',
-    backgroundColor: '#1A1A1A',
-    borderColor: '#2A2A2A',
-    borderRadius: 16,
-    borderWidth: StyleSheet.hairlineWidth,
-    marginHorizontal: 16,
-    paddingHorizontal: 24,
-    paddingVertical: 26,
+    backgroundColor: PALETTE.night600,
+    borderColor: PALETTE.hairline,
+    borderRadius: RADIUS.xl,
+    borderWidth: 1,
+    marginHorizontal: SPACING.lg,
+    paddingHorizontal: SPACING.xl,
+    paddingVertical: SPACING.xxl,
+    ...ELEVATION.card,
   },
   title: {
-    color: COLORS.WHITE,
-    fontFamily: 'SF-Semibold',
-    fontSize: 15,
-    marginTop: 12,
+    ...TYPOGRAPHY.heading,
+    color: PALETTE.textPrimary,
+    marginTop: SPACING.md,
     textAlign: 'center',
   },
   body: {
-    color: COLORS.LIGHT_GREY,
-    fontSize: 13,
-    marginTop: 8,
+    ...TYPOGRAPHY.body,
+    color: PALETTE.textSecondary,
+    marginTop: SPACING.sm,
     textAlign: 'center',
   },
   retryButton: {
-    backgroundColor: COLORS.WHITE,
-    borderRadius: 20,
-    marginTop: 16,
-    paddingHorizontal: 26,
-    paddingVertical: 10,
+    backgroundColor: PALETTE.accent,
+    borderRadius: RADIUS.pill,
+    marginTop: SPACING.lg,
+    minHeight: TOUCH_TARGET.comfortable,
+    justifyContent: 'center',
+    paddingHorizontal: SPACING.xxl,
+    paddingVertical: SPACING.sm,
   },
   retryButtonPressed: {
     opacity: 0.75,
   },
   retryButtonText: {
-    color: COLORS.BLACK,
-    fontFamily: 'SF-Semibold',
-    fontSize: 14,
+    ...TYPOGRAPHY.label,
+    color: PALETTE.night900,
+    fontWeight: '700',
   },
 });

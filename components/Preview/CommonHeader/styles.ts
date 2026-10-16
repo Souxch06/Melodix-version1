@@ -1,4 +1,11 @@
-import { COLORS, COMMON_HEADER_HEIGHT } from '@config';
+import {
+  COLORS,
+  COMMON_HEADER_HEIGHT,
+  PALETTE,
+  SPACING,
+  TOUCH_TARGET,
+  TYPOGRAPHY,
+} from '@config';
 import { StyleSheet } from 'react-native';
 
 export const styles = StyleSheet.create({
@@ -11,9 +18,12 @@ export const styles = StyleSheet.create({
   },
   goBackPressable: {
     ...StyleSheet.absoluteFillObject,
-    left: 6,
-    width: 32,
+    left: SPACING.xs,
+    width: TOUCH_TARGET.minimum,
+    height: TOUCH_TARGET.minimum,
     zIndex: 99,
+    alignItems: 'flex-start',
+    justifyContent: 'center',
   },
   goBackIcon: {
     fontSize: 32,
@@ -26,17 +36,14 @@ export const styles = StyleSheet.create({
   content: {
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 8,
-    paddingHorizontal: 16,
+    paddingVertical: SPACING.sm,
+    paddingHorizontal: SPACING.lg,
     height: '100%',
   },
   titleText: {
-    color: COLORS.WHITE,
+    ...TYPOGRAPHY.heading,
+    color: PALETTE.textPrimary,
     textAlign: 'center',
-    fontFamily: 'SF-Bold',
-    fontWeight: 'bold',
-    fontSize: 15,
-    lineHeight: 15,
-    marginBottom: 8,
+    marginBottom: SPACING.sm,
   },
 });

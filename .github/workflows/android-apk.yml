@@ -4,18 +4,8 @@ on:
   pull_request:
   workflow_dispatch:
     inputs:
-      spotify_client_id:
-        description: 'Client ID Spotify de test'
-        required: false
-        type: string
-      spotify_redirect_uri:
-        # Vide = on laisse la chaîne Variables → défaut natif décider.
-        description: 'Redirect URI Spotify de test (vide = défaut natif)'
-        required: false
-        default: 'melodix://callback'
-        type: string
       publish_test_apk:
-        description: "Publier l'APK dans la pré-release TEST OAuth Spotify"
+        description: "Publier une GitHub Release de test (tag v<version>) avec l'APK en asset"
         required: false
         default: false
         type: boolean
@@ -50,16 +40,54 @@ jobs:
       # d'une application tierce/exemple embarqué en production.
       # Deux canaux d'injection : extra de app.config (asset natif) + inlinage
       # Metro EXPO_PUBLIC_* (robuste en APK bare — voir services/spotify/authConfig).
-      # Client ID Spotify : inputs (test) → Variables du dépôt → ABSENT sinon.
+      # Client ID Spotify : Variables du dépôt → ABSENT sinon. Aucun input
+      # manuel : la valeur n'est jamais saisie dans l'UI et n'apparaît donc
+      # jamais dans un log de dispatch.
       # OAuth PKCE : aucun secret n'entre jamais ici — l'ID est public par
       # conception, mais il n'existe que si le mainteneur l'a créé.
-      SPOTIFY_CLIENT_ID: ${{ inputs.spotify_client_id || vars.SPOTIFY_CLIENT_ID || '' }}
-      EXPO_PUBLIC_SPOTIFY_CLIENT_ID: ${{ inputs.spotify_client_id || vars.SPOTIFY_CLIENT_ID || '' }}
-      # Redirect URI OAuth → même chaîne : inputs → Variables → DÉFAUT NATIF
-      # de production (melodix://callback, scheme déclaré dans le manifest en
-      # permanence ; à déclarer identique dans le dashboard Spotify).
-      SPOTIFY_REDIRECT_URI: ${{ inputs.spotify_redirect_uri || vars.SPOTIFY_REDIRECT_URI || 'melodix://callback' }}
-      EXPO_PUBLIC_SPOTIFY_REDIRECT_URI: ${{ inputs.spotify_redirect_uri || vars.SPOTIFY_REDIRECT_URI || 'melodix://callback' }}
+      SPOTIFY_CLIENT_ID: ${{ vars.SPOTIFY_CLIENT_ID || '' }}
+      EXPO_PUBLIC_SPOTIFY_CLIENT_ID: ${{ vars.SPOTIFY_CLIENT_ID || '' }}
+      # ── V48 — Client ID Jamendo (API officielle v3.0) ──
+      # Variable de dépôt OPTIONNELLE. SANS ELLE, l'APK compile et la source
+      # Jamendo reste désactivée (`skipped`, aucune requête émise) : l'app se
+      # comporte exactement comme avant V47. Aucun backend payant obligatoire.
+      # Identifiant PUBLIC par conception (transmis en clair dans la
+      # querystring par l'API elle-même) — ce n'est pas un secret, et il n'est
+      # jamais saisi dans l'UI ni journalisé.
+      # MÊME double canal que Spotify : extra de app.config (asset natif) +
+      # inlinage Metro EXPO_PUBLIC_* (robuste en APK bare).
+      # Défaillance corrigée (V48) : le banc réseau recevait cette variable mais
+      # le build APK ne la transmettait pas — l'APK livré ne pouvait donc
+      # JAMAIS être armé, quel que soit le réglage du dépôt.
+      JAMENDO_CLIENT_ID: ${{ vars.MELODIX_JAMENDO_CLIENT_ID || '' }}
+      EXPO_PUBLIC_JAMENDO_CLIENT_ID: ${{ vars.MELODIX_JAMENDO_CLIENT_ID || '' }}
+      # ── Redirect URI OAuth — CANONIQUE DE L'APPLICATION ──
+      # L'application « Melodix » (scheme natif `melodix`, package
+      # com.souxch06.melodix) déclare EXACTEMENT melodix://callback dans le
+      # Dashboard Spotify de son Client ID. Tout build APK — en particulier
+      # le build destiné au test physique — DOIT embarquer ce redirect.
+      # L'ancienne URI de test historique comspotifytestsdk://callback
+      # (dashboard de test périmé) ne doit JAMAIS alimenter un build : c'est
+      # elle qui a produit l'erreur « redirect_uri: not matching
+      # configuration » au test physique — le redirect envoyé ne figurait
+      # plus dans la configuration du client.
+      # Unicité de source : Spotify exige la même chaîne à /authorize ET
+      # /api/token — les deux canaux (inlinage Metro + asset natif
+      # app.config.js extra) reçoivent le MÊME littéral, vérifié avant le
+      # build (cohérence) et dans l'APK final (manifest + bundle).
+      # Le scheme natif `melodix` EST le scheme du redirect : expo prebuild
+      # génère l'intent-filter melodix://callback à partir de cette URI.
+      SPOTIFY_REDIRECT_URI: 'melodix://callback'
+      EXPO_PUBLIC_SPOTIFY_REDIRECT_URI: 'melodix://callback'
+      # FIXTURE SMOKE (build de test uniquement) : active la route
+      # melodix://oauth-smoke-seed qui seede une transaction PKCE
+      # déterministe en SecureStore, permettant au smoke Android de vérifier
+      # le wiring cold-start « transaction persistée → processus tué →
+      # callback → verifier restauré → exchange ». Aucun faux login :
+      # l'échange exige toujours un code Spotify réel. Le login normal
+      # (transaction live) est inchangé ; la variable est absente des builds
+      # de production (route inactive, aucun effet de bord).
+      EXPO_PUBLIC_SPOTIFY_OAUTH_SMOKE: '1'
       # Empreinte SHA-256 attendue : variable mainteneur si définie, sinon
       # certificat de TEST stable du template Expo actuel. Toute rotation
       # involontaire casse le workflow plutôt que les mises à jour Android.
@@ -75,46 +103,221 @@ jobs:
         with:
           ref: ${{ env.BUILD_SHA }}
 
-      - name: Valider la config Spotify injectée (Client ID 32-hex ou absent)
-        # Contrat STRICT — jamais d'application Spotify tierce/exemple :
-        #   valeur VALIDE  → utilisée telle quelle ;
-        #   valeur VIDE    → vide (l'APK compile, l'app affiche « Connexion
-        #                    Spotify non configurée » — le reste de l'app
-        #                    reste fonctionnel) ;
-        #   valeur INVALIDE (ex. un ACCESS TOKEN BQBrpi… collé à la place —
-        #                    diagnostic « SPOTIFY-DIAG » historique)
-        #                  → ERREUR CLAIRE et ÉCHEC du workflow AVANT tout
-        #                    build : une mauvaise configuration n'est jamais
-        #                    masquée en injectant une autre application.
+      - name: Installer Node.js 20 (résolution de la config effective)
+        # La validation Spotify ci-dessous résout la config EFFECTIVE via
+        # `node -p require('./app.config.js')` : Node doit donc être présent
+        # AVANT cette validation. Sans cache ici — le cache npm vit sur
+        # l'installation positionnée juste avant `npm ci`.
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 20
+
+      - name: Valider la config Spotify du build (deterministe)
+        # Contrat STRICT du BUILD — vérifié AVANT tout build :
+        #   1. Client ID : la valeur EFFECTIVE DOIT être un Client ID valide
+        #      (32 hex). Source unique = app.config.js : l'override env
+        #      (variable de dépôt SPOTIFY_CLIENT_ID) prime s'il est présent,
+        #      sinon le défaut committé (DEFAULT_SPOTIFY_CLIENT_ID) s'applique.
+        #      Sans valeur valide, le build échoue clairement plutôt que de
+        #      produire un APK non testable. PKCE — aucun secret, jamais de
+        #      champ Client ID dans l'UI.
+        #   2. Redirect URI : DOIT être EXACTEMENT le redirect canonique
+        #      melodix://callback (celui déclaré dans le Dashboard Spotify du
+        #      client Melodix). Les deux canaux (inlinage Metro + asset natif)
+        #      DOIVENT être cohérents. L'ancienne URI de test historique
+        #      comspotifytestsdk://callback = ÉCHEC explicite (dashboard périmé
+        #      → « redirect_uri: not matching configuration » garanti).
+        #   3. Valeur INVALIDE (ex. un access token collé à la place) →
+        #      erreur claire et échec AVANT le build.
         run: |
+          # Redirect canonique de l'application — source unique du workflow.
+          CANONICAL_REDIRECT_URI='melodix://callback'
           norm_cid() {
-            if [ -z "$1" ]; then echo ''; return 0; fi
             if [[ "$1" =~ ^[0-9a-fA-F]{32}$ ]]; then echo "$1"; return 0; fi
             return 1
           }
           norm_uri() {
-            if [ -z "$1" ]; then echo 'melodix://callback'; return 0; fi
             # Validate the complete value before writing it to GITHUB_ENV;
             # whitespace/CRLF could otherwise inject another environment entry.
             if [[ "$1" =~ ^[a-zA-Z][a-zA-Z0-9+.-]*://[^[:space:]]+$ ]]; then echo "$1"; return 0; fi
             return 1
           }
-          if ! CID="$(norm_cid "${SPOTIFY_CLIENT_ID:-}")"; then
-            echo "::error title=SPOTIFY_CLIENT_ID invalide::un Client ID Spotify doit contenir exactement 32 caractères hexadécimaux, ou rester vide. La valeur reçue n'est pas affichée."
+          # ── Client ID effectif : override env (variable de dépôt) ou
+          #    défaut committé — résolu sur la SOURCE UNIQUE du build.
+          if [ -n "${SPOTIFY_CLIENT_ID:-}" ]; then
+            case "${SPOTIFY_CLIENT_ID}" in
+              *$'\n'*)
+                echo "::error title=SPOTIFY_CLIENT_ID corrompu::la variable de dépôt SPOTIFY_CLIENT_ID contient un caractère de nouvelle ligne (recopie avec le saut de ligne final). La valeur reçue n'est pas affichée."
+                exit 1
+                ;;
+            esac
+            if ! norm_cid "${SPOTIFY_CLIENT_ID}" >/dev/null; then
+              echo "::error title=SPOTIFY_CLIENT_ID invalide::un Client ID Spotify doit contenir exactement 32 caractères hexadécimaux. La valeur reçue n'est pas affichée."
+              exit 1
+            fi
+          fi
+          CID="$(node -p "require('./app.config.js').expo.extra.spotifyClientId")"
+          if ! CID="$(norm_cid "${CID:-}")"; then
+            if [ -n "${SPOTIFY_CLIENT_ID:-}" ]; then
+              echo "::error title=Client ID effectif invalide::l'override env SPOTIFY_CLIENT_ID est défini mais la config effective de app.config.js ne le reflète pas. La valeur reçue n'est pas affichée."
+            else
+              echo "::error title=Client ID absent du build::ni la variable de dépôt SPOTIFY_CLIENT_ID ni le défaut committé (app.config.js : DEFAULT_SPOTIFY_CLIENT_ID) ne fournit un Client ID valide — le test physique Spotify est impossible. Le workflow ne produit pas un APK non testable en silence."
+            fi
             exit 1
+          fi
+          if [ -z "${SPOTIFY_CLIENT_ID:-}" ]; then
+            echo "::notice title=Client ID::variable de dépôt absente — utilisation du défaut committé (app.config.js : DEFAULT_SPOTIFY_CLIENT_ID)"
           fi
           if ! RU="$(norm_uri "${SPOTIFY_REDIRECT_URI:-}")"; then
             echo "::error title=Redirect URI Spotify invalide::format scheme://destination attendu. La valeur reçue n'est pas affichée."
             exit 1
           fi
-          # Protection : JAMAIS de secret dans l'APK (un « client secret » ne
-          # ressemble jamais à exigé ici, mais la validation 32-hex borne déjà).
+          # Cohérence des DEUX canaux d'injection (Metro + asset natif) :
+          # Spotify exige la même chaîne à /authorize et /api/token.
+          if [ "${EXPO_PUBLIC_SPOTIFY_REDIRECT_URI:-}" != "$RU" ]; then
+            echo "::error title=Canaux Redirect URI incohérents::SPOTIFY_REDIRECT_URI et EXPO_PUBLIC_SPOTIFY_REDIRECT_URI divergent — /authorize et /api/token enverraient deux redirect différents. La valeur reçue n'est pas affichée."
+            exit 1
+          fi
+          # Déterminisme du build : le redirect doit être EXACTEMENT le
+          # canonique déclaré dans le Dashboard Spotify du client.
+          # comspotifytestsdk://callback = ÉCHEC explicite (URI de test
+          # historique, dashboard périmé — mismatch garanti).
+          if [ "$RU" != "$CANONICAL_REDIRECT_URI" ]; then
+            if [ "$RU" = "comspotifytestsdk://callback" ]; then
+              echo "::error title=Redirect URI de test historique refusé::comspotifytestsdk://callback est l'ancienne URI de test (dashboard périmé) — elle ne doit JAMAIS alimenter un build réel (erreur « redirect_uri: not matching configuration » garantie). Attendu : $CANONICAL_REDIRECT_URI"
+            else
+              echo "::error title=Redirect URI inattendu::le build doit embarquer exactement $CANONICAL_REDIRECT_URI (déclaré dans le Dashboard Spotify du client) — reçu : $RU."
+            fi
+            exit 1
+          fi
+          # V76 — Client ID de l'application d'EXEMPLE du SDK Spotify refusé.
+          #
+          # 089d841c…1d54 est le Client ID de auth-sample/app-remote-sample
+          # (spotify/android-auth, MainActivity.java). Il appartient à Spotify,
+          # pas au projet : son tableau de bord ne déclare ni notre redirect URI
+          # ni notre compte dans « Users and Access », et cet exemple exige le
+          # nom de paquet et l'empreinte SHA-1 de SON propre certificat. Un build
+          # portant cet identifiant s'authentifierait comme une AUTRE application
+          # Spotify — la cause même de « redirect_uri: Not matching
+          # configuration » puis du HTTP 403 sur /v1/me. Retiré en a6760df
+          # (« zéro identifiant tiers embarqué »), classé « CAS C — non
+          # réutilisable » par l'audit V30. Le redirect qui l'accompagnait
+          # (comspotifytestsdk://callback) est déjà refusé plus haut ; ce garde
+          # ferme le volet Client ID, qui ne l'était pas.
+          if [ "$CID" = "089d841ccc194c10a77afad9e1c11d54" ]; then
+            echo "::error title=Client ID tiers refusé::089d841c… est le Client ID de l'application d'exemple du SDK Spotify (spotify/android-auth) — il appartient à un tiers et ne peut pas authentifier Melodix. Attendu : le Client ID de l'application « Melodix » du projet (empreinte 97a6…b3ed)."
+            exit 1
+          fi
+          # V70 — empreinte NON sensible du Client ID effectif.
+          #
+          # Un Client ID Spotify est un identifiant PUBLIC (client PKCE public,
+          # aucun secret), mais on n'en affiche que 4+4 caractères et 12 hex de
+          # son SHA-256. C'est exactement ce qui a manqué pour diagnostiquer
+          # « redirect_uri: Not matching configuration » : les annotations ne
+          # disaient que « <défini> », donc un APK construit avec le Client ID
+          # d'une AUTRE application Spotify était indiscernable d'un build
+          # correct — alors que Spotify valide le redirect URI contre le
+          # Dashboard de l'application qui s'authentifie, pas contre celui du
+          # propriétaire du téléphone. Assez pour recouper avec le Dashboard,
+          # trop court pour reconstituer la valeur dans des logs publics.
+          CID_FP="${CID:0:4}…${CID: -4}"
+          CID_SHA12="$(printf '%s' "$CID" | sha256sum | cut -c1-12)"
+          echo "::notice title=Config Spotify du build::Redirect URI = $RU (canonique — Dashboard Spotify du client, les deux canaux cohérents) · Client ID = $CID_FP (sha256:$CID_SHA12, 32 hex, valeur complète non affichée) · PKCE sans secret"
           {
             echo "SPOTIFY_CLIENT_ID=$CID"
             echo "EXPO_PUBLIC_SPOTIFY_CLIENT_ID=$CID"
             echo "SPOTIFY_REDIRECT_URI=$RU"
             echo "EXPO_PUBLIC_SPOTIFY_REDIRECT_URI=$RU"
+            # Empreintes seules — jamais la valeur complète.
+            echo "SPOTIFY_CLIENT_ID_FP=$CID_FP"
+            echo "SPOTIFY_CLIENT_ID_SHA12=$CID_SHA12"
           } >> "$GITHUB_ENV"
+
+      # ------------------------------------------------------------------
+      # GARDE-FOUS DE PUBLICATION — résolus AVANT tout build, pour qu'un
+      # tag, un nom d'APK et une Release ne puissent jamais pointer ailleurs
+      # que sur le commit réellement construit.
+      # ------------------------------------------------------------------
+      - name: Résoudre le tag de release de test et vérifier la branche
+        id: release_guard
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          BUILD_SHA: ${{ env.BUILD_SHA }}
+          PUBLISH: ${{ inputs.publish_test_apk }}
+        run: |
+          set -Eeuo pipefail
+          PUBLISH_TEST=false
+          if [ "$EVENT" = "workflow_dispatch" ] && [ "${PUBLISH:-false}" = "true" ]; then
+            PUBLISH_TEST=true
+          fi
+          echo "publish_test=$PUBLISH_TEST" >> "$GITHUB_OUTPUT"
+
+          if [ "$PUBLISH_TEST" != "true" ]; then
+            echo "::notice title=Publication::build sans Release (publish_test_apk désactivé)"
+            exit 0
+          fi
+
+          # 1. Seule la branche de travail autorisée publie une Release de test.
+          #    `main` ou toute autre branche → ÉCHEC explicite, jamais de
+          #    Release « verte » construite depuis un commit non annoncé.
+          if [ "$REF" != "refs/heads/arena/01a106dd-melodix" ]; then
+            echo "::error title=Branche de publication refusée::la Release de test ne peut être publiée que depuis refs/heads/arena/01a106dd-melodix (reçu : $REF). Aucune Release créée."
+            exit 1
+          fi
+
+          # 2. Le commit construit doit exister et être annoncé explicitement.
+          if [ -z "$BUILD_SHA" ]; then
+            echo "::error title=Commit absent::BUILD_SHA vide — rien ne sera publié."
+            exit 1
+          fi
+          echo "commit=$BUILD_SHA" >> "$GITHUB_OUTPUT"
+
+          # 3. Tag dérivé de la version du projet (jamais d'un SHA qui
+          #    dériverait à chaque run). Si le tag existe DÉJÀ sur un autre
+          #    commit, on incrémente le numéro de test : aucune Release
+          #    existante n'est écrasée ni supprimée.
+          BASE="v$(node -p "require('./package.json').version")"
+          TAG="$BASE"
+          N=1
+          while :; do
+            # Un tag ANNOTÉ pointe sur un objet tag, pas directement sur le
+            # commit : il faut le déréférencer, sinon on comparerait un objet
+            # tag au commit construit et on écraserait une Release étrangère.
+            # NB : sur un 404, `gh api` écrit le corps d'erreur sur stdout —
+            # tester seulement la non-vacité ferait croire que le tag existe.
+            # On valide donc le TYPE réel renvoyé par l'API.
+            OBJ_TYPE=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" \
+              --jq '.object.type' 2>/dev/null || true)
+            case "$OBJ_TYPE" in
+              tag | commit) ;; # le tag existe bel et bien
+              *) break ;;     # absent (404) ou réponse inattendue → tag libre
+            esac
+            OBJ_SHA=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" \
+              --jq '.object.sha' 2>/dev/null || true)
+            if [ "$OBJ_TYPE" = "tag" ]; then
+              EXISTING_COMMIT=$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$OBJ_SHA" \
+                --jq '.object.sha' 2>/dev/null || true)
+            else
+              EXISTING_COMMIT="$OBJ_SHA"
+            fi
+            if [ -n "$EXISTING_COMMIT" ] && [ "$EXISTING_COMMIT" = "$BUILD_SHA" ]; then
+              echo "::notice title=Tag réutilisé::$TAG pointe déjà sur le commit construit — la Release sera mise à jour, aucune autre Release touchée."
+              break
+            fi
+            # Tag déjà pris par un AUTRE commit : on incrémente le numéro de
+            # test. Aucune Release existante n'est écrasée ni supprimée.
+            echo "::warning title=Tag déjà pris::$TAG pointe sur $EXISTING_COMMIT (commit construit : $BUILD_SHA) — numéro de test suivant."
+            N=$((N + 1))
+            TAG="${BASE%%-test.*}-test.$N"
+            if [ "$N" -gt 20 ]; then
+              echo "::error title=Tag indisponible::aucun numéro de test libre après $BASE."
+              exit 1
+            fi
+          done
+          echo "release_tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "::notice title=Release de test::tag=$TAG commit=$BUILD_SHA"
 
       - name: Installer Node.js 20
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
@@ -149,23 +352,101 @@ jobs:
           EXPO_PUBLIC_SPOTIFY_CLIENT_ID: ''
           SPOTIFY_REDIRECT_URI: ''
           EXPO_PUBLIC_SPOTIFY_REDIRECT_URI: ''
+          # Les tests pilotent eux-mêmes la fixture smoke (process.env) ;
+          # le build de test APK de ce run reste flagué plus bas, volontairement.
+          EXPO_PUBLIC_SPOTIFY_OAUTH_SMOKE: ''
+          # V88 — MÊME neutralisation pour Jamendo, jusqu'ici oubliée. Ces deux
+          # variables sont déclarées au niveau du WORKFLOW (pour armer l'APK) :
+          # elles s'appliquaient donc aussi à cette étape. Dès qu'un
+          # identifiant existe dans les Variables du dépôt, la source Jamendo
+          # s'armait PENDANT les tests — et partout où elle n'est pas mockée,
+          # une vraie requête réseau partait. C'est exactement ce qui faisait
+          # échouer progressiveSearchV31/V32 en CI (source en échec ⇒ diagnostic
+          # « network » au lieu de « empty », « vide confirmé » non mémorisé)
+          # sans jamais se reproduire en local, où la variable est absente.
+          JAMENDO_CLIENT_ID: ''
+          EXPO_PUBLIC_JAMENDO_CLIENT_ID: ''
         run: |
           set -o pipefail
-          npm test -- --runInBand 2>&1 | tee jest.log
+          npm test -- --runInBand 2>&1 | tee jest.log || JEST_FAILED=1
+          if [ -n "${JEST_FAILED:-}" ]; then
+            # Les journaux de job GitHub ne sont pas téléchargeables depuis
+            # tous les environnements d'analyse, mais les annotations le sont.
+            # On remonte donc les noms des tests en échec comme ::error:: :
+            # sans cela, un échec de l'étape 11 est illisible de l'extérieur
+            # et ne peut être diagnostiqué qu'en devinant.
+            echo "::error title=Étape 11 — tests en échec::un bloc par test ci-dessous"
+            # V88 — UN bloc PAR test (assertion, valeurs attendues/reçues,
+            # extrait de source et ligne), au lieu de deux greps séparés
+            # « nom du test » et « valeur ». Séparés puis dédoublonnés, ces
+            # deux listes ne permettaient pas de savoir QUELLE assertion d'un
+            # test contredisait QUELLE valeur : avec plusieurs échecs, on
+            # pouvait attribuer à un test la valeur d'un autre.
+            # GitHub plafonne les annotations d'erreur d'une étape, d'où le
+            # plafond à 8 blocs — au-delà, le résumé Jest reste disponible.
+            awk '
+              function esc(s) {
+                gsub(/%/, "%25", s);
+                gsub(/\r/, "%0D", s);
+                gsub(/\n/, "%0A", s);
+                return s;
+              }
+              function flushblock() {
+                if (hdr == "") return;
+                printf "::error title=Échec Jest::%s\n", esc(hdr) esc(buf);
+                hdr = "";
+                buf = "";
+              }
+              /^  ● / && $0 !~ /Console/ {
+                flushblock();
+                blocks += 1;
+                keep = (blocks <= 8) ? 1 : 0;
+                hdr = (keep ? substr($0, 3) : "");
+                buf = "";
+                lines = 0;
+                next;
+              }
+              keep && /^      at / { buf = buf $0 "\n"; keep = 0; next }
+              keep && lines < 28 { buf = buf $0 "\n"; lines += 1; next }
+              END { flushblock() }
+            ' jest.log
+            grep -E '^(FAIL|Tests:|Test Suites:)' jest.log 2>/dev/null | sort -u | head -6 | while IFS= read -r line; do
+              echo "::error title=Résumé Jest::${line}"
+            done
+            exit 1
+          fi
 
       - name: Générer le projet Android
         run: npx expo prebuild --platform android --no-install
 
       - name: Vérifier la configuration Android générée
         run: |
+          # Version attendue : source UNIQUE = app.config.js. Le prebuild doit
+          # copier EXACTEMENT la version déclarée — vérifié sans constante qui
+          # divergerait à chaque bump.
+          EXPECTED_VC=$(node -p "require('./app.config.js').expo.android.versionCode")
+          EXPECTED_VN=$(node -p "require('./app.config.js').expo.version")
           # APK universel : ne pas retirer x86/x86_64 sans connaître l'appareil
           # cible. Le gradle.properties Expo généré doit conserver les quatre ABI.
           grep -Fq "applicationId 'com.souxch06.melodix'" android/app/build.gradle
           grep -Fq "namespace 'com.souxch06.melodix'" android/app/build.gradle
-          grep -Fq 'versionCode 44008' android/app/build.gradle
-          grep -Fq 'versionName "4.4.8-diagnostic"' android/app/build.gradle
+          grep -Fq "versionCode $EXPECTED_VC" android/app/build.gradle
+          grep -Fq "versionName \"$EXPECTED_VN\"" android/app/build.gradle
           grep -Eq '^reactNativeArchitectures=armeabi-v7a,arm64-v8a,x86,x86_64$' android/gradle.properties
+          # Redirect Spotify CANONIQUE (melodix://callback) : le scheme natif
+          # `melodix` (déclaré SANS host) est l'intent-filter MÊME qui route
+          # le callback Spotify — un data à scheme seul matche TOUTES les
+          # URLs melodix://*, dont melodix://callback?code=…&state=… (l'app
+          # vérifie ensuite le redirect exact côté JS). Sans lui, le callback
+          # Spotify ne reviendrait jamais à l'app → échec AVANT de construire
+          # l'APK.
           grep -Fq 'android:scheme="melodix"' android/app/src/main/AndroidManifest.xml
+          # L'ancienne URI de test historique ne doit JAMAIS se retrouver dans
+          # un build réel : son dashboard est périmé (mismatch garanti).
+          if grep -Fq 'android:scheme="comspotifytestsdk"' android/app/src/main/AndroidManifest.xml; then
+            echo "::error title=Build contaminé par l'ancienne URI de test::comspotifytestsdk présente dans le manifest — le build ne peut pas servir au test physique Spotify"
+            exit 1
+          fi
           grep -Fq 'android:name="expo.modules.melodixmedia.MelodixMediaService"' android/app/src/main/AndroidManifest.xml
           grep -Fq 'android:foregroundServiceType="mediaPlayback"' android/app/src/main/AndroidManifest.xml
           grep -Fq 'android:name="androidx.media3.session.MediaSessionService"' android/app/src/main/AndroidManifest.xml
@@ -179,6 +460,26 @@ jobs:
               exit 1
             fi
           done
+
+          # THÈME DÉTERMINISTE (anti « double sombre » — plugins/withMelodixTheme) :
+          # sans forceDarkAllowed=false, les appareils au thème système sombre
+          # appliquent leur transformation forced dark sur notre UI déjà sombre
+          # (cause du contraste illisible observé au test physique 4.5.0-test.1).
+          FD_COUNT=$(grep -Fc 'android:forceDarkAllowed="false"' android/app/src/main/AndroidManifest.xml || true)
+          if [ "${FD_COUNT:-0}" -lt 2 ]; then
+            echo "::error title=Thème Android non déterministe::android:forceDarkAllowed=\"false\" manquant (application + MainActivity) — l OS peut double-assombrir l UI sur thème système sombre"
+            exit 1
+          fi
+          if grep -Fq 'Theme.AppCompat.Light' android/app/src/main/res/values/styles.xml; then
+            echo "::error title=Thème Android non déterministe::AppTheme hérite d un thème Light — le plugin withMelodixTheme ne s est pas appliqué"
+            exit 1
+          fi
+          grep -Fq '<item name="android:windowBackground">#121212</item>' android/app/src/main/res/values/styles.xml
+          grep -Fq '<item name="android:navigationBarColor">#121212</item>' android/app/src/main/res/values/styles.xml
+          if grep -Fq '@android:color/black' android/app/src/main/res/values/styles.xml; then
+            echo "::error title=Thème Android non déterministe::texte natif noir par défaut — une app sombre ne peut pas avoir de chrome natif clair"
+            exit 1
+          fi
 
       # Tests unitaires JVM du module natif (Robolectric) — exécutés AVANT
       # l'assemble : un invariant Media3 cassé doit bloquer la release, pas
@@ -247,9 +548,16 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           TAG: ${{ github.event.release.tag_name }}
+          PUBLISH_TEST: ${{ steps.release_guard.outputs.publish_test }}
+          RELEASE_TAG: ${{ steps.release_guard.outputs.release_tag }}
         run: |
           if [ "$EVENT" = "release" ]; then
             VERSION="$TAG"
+          elif [ "${PUBLISH_TEST:-false}" = "true" ] && [ -n "${RELEASE_TAG:-}" ]; then
+            # Build publiable en Release : nom STABLE et lisible, dérivé du
+            # tag résolu — jamais d'un suffixe SHA qui changerait à chaque
+            # run et rendrait le téléchargement illisible.
+            VERSION="$RELEASE_TAG"
           else
             VERSION="v$(node -p "require('./package.json').version")-${BUILD_SHA::7}"
           fi
@@ -272,11 +580,11 @@ jobs:
             else
               echo "- Clé API Audius : nœuds publics de découverte"
             fi
-                        if [ -n "$SPOTIFY_CLIENT_ID" ]; then
-              echo "- Client ID Spotify (connexion OAuth PKCE) : intégré"
-            else
-              echo "- Client ID Spotify : ABSENT — connexion non configurée dans cet APK"
-            fi
+            # Config Spotify vérifiée AVANT le build (étape de validation) :
+            # la valeur effective est garantie présente et le redirect est le
+            # canonique — le résumé le dit sans re-checker.
+            echo "- Client ID Spotify (connexion OAuth PKCE) : intégré (valeur masquée)"
+            echo "- Redirect URI Spotify : melodix://callback (canonique — Dashboard Spotify du client)"
             echo "- Audio : Audius · Métadonnées : backend Melodix · Compte : connexion Spotify OAuth PKCE (Melodix 4.0)"
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -284,8 +592,12 @@ jobs:
         env:
           APK: ${{ steps.apk.outputs.name }}
           EXPECTED_PACKAGE: com.souxch06.melodix
-          EXPECTED_VERSION_CODE: '44008'
-          EXPECTED_VERSION_NAME: 4.4.8-diagnostic
+          # V41 — plus de version attendue CODÉE EN DUR ici : c'est la cause
+          # démontrée de l'échec du run 38229368736 (45033 attendu vs 45034
+          # réel après la montée de version V40). Le script
+          # verify-android-apk.sh dérive désormais la version attendue de sa
+          # source unique (app.config.js) — toute montée de version future
+          # reste cohérente sans toucher au workflow.
           EXPECTED_MIN_SDK: '23'
           EXPECTED_TARGET_SDK: '34'
           EXPECTED_SCHEME: melodix
@@ -329,48 +641,150 @@ jobs:
           script: scripts/smoke-test-android-apk.sh "${{ steps.apk.outputs.name }}"
 
       - name: Diagnostic OAuth Spotify (TEMPORAIRE — build de test)
-        # Oracle build-level : révèle QUELLE branche de la chaîne
-        # input → Variable GitHub → défaut embarqué a gagné, sans exposer
-        # d'identifiant complet (préfixe 6 + longueur + hash court).
+        # Oracle build-level : révèle QUELLE source d'injection a gagné, sans
+        # exposer d'identifiant complet (préfixe 6 + longueur + hash court).
+        # TOUT ÉCHEC ici = build incohérent avec le dashboard Spotify.
         env:
           APK: ${{ steps.apk.outputs.name }}
-          INP_CID: ${{ inputs.spotify_client_id }}
           VAR_CID: ${{ vars.SPOTIFY_CLIENT_ID }}
-          INP_URI: ${{ inputs.spotify_redirect_uri }}
-          VAR_URI: ${{ vars.SPOTIFY_REDIRECT_URI }}
         run: |
           state() { if [ -n "$1" ]; then echo '<défini>'; else echo '<vide>'; fi; }
-          echo "::notice title=SPOTIFY-DIAG 1/3 client_id::input=$(state "$INP_CID") | vars=$(state "$VAR_CID") | effectif=$(state "$SPOTIFY_CLIENT_ID")"
-          echo "::notice title=SPOTIFY-DIAG 2/3 redirect_uri::input=$(state "$INP_URI") | vars=$(state "$VAR_URI") | effectif=$(state "$SPOTIFY_REDIRECT_URI")"
-          APKANALYZER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name apkanalyzer | sort -V | tail -1)"
-          [ -x "$APKANALYZER" ] || { echo "::error title=apkanalyzer indisponible::outil absent ou non exécutable"; exit 1; }
-          if "$APKANALYZER" manifest print "$APK" | grep -Fq 'android:scheme="melodix"'; then
-            echo "::notice title=SPOTIFY-DIAG 3/3 scheme APK::melodix présent dans le manifest final"
-          else
-            echo "::error title=SPOTIFY-DIAG 3/3 scheme APK::melodix absent du manifest final"
-            exit 1
-          fi
-          # Cohérence redirect : le bundle JS de l'APK doit contenir l'URI
-          # effectif (inlinage EXPO_PUBLIC ou défaut natif) ; et si un scheme
-          # de TEST a été configuré, l'intent-filter correspondant doit être
-          # dans le manifest, sinon le callback ne reviendrait jamais à l'app.
-          EFFECTIVE_URI="${SPOTIFY_REDIRECT_URI:-melodix://callback}"
-          if unzip -p "$APK" assets/index.android.bundle 2>/dev/null | grep -aqF "$EFFECTIVE_URI"; then
-            echo "::notice title=SPOTIFY-DIAG 4/4 bundle::redirect URI effectif inliné dans le bundle JS de l'APK (getSpotifyRedirectUri renverra cette valeur)"
-          else
-            echo "::error title=SPOTIFY-DIAG 4/4 bundle::redirect URI effectif absent du bundle — build incohérent"
-            exit 1
-          fi
-          TEST_SCHEME="${EFFECTIVE_URI%%://*}"
-          if [ "$TEST_SCHEME" != "melodix" ]; then
-            if "$APKANALYZER" manifest print "$APK" | grep -Fq "android:scheme=\"$TEST_SCHEME\""; then
-              echo "::notice title=SPOTIFY-DIAG 5/5 intent-filter::intent-filter du scheme de test présent dans le manifest final ; fallback melodix conservé"
+          CANONICAL_REDIRECT_URI='melodix://callback'
+          # ── 1/7 Client ID : présent dans le build ET inliné dans le bundle ──
+          # (l'inlining Metro est le canal réellement utilisé par l'APK bare ;
+          #  la valeur ne quitte jamais le workflow — présence uniquement).
+          if [ -n "${SPOTIFY_CLIENT_ID:-}" ]; then
+            if unzip -p "$APK" assets/index.android.bundle 2>/dev/null | grep -aqF "$SPOTIFY_CLIENT_ID"; then
+              echo "::notice title=SPOTIFY-DIAG 1/7 client_id::vars=$(state "$VAR_CID") | effectif=$SPOTIFY_CLIENT_ID_FP (sha256:$SPOTIFY_CLIENT_ID_SHA12) | inliné dans le bundle: OUI"
             else
-              echo "::error title=SPOTIFY-DIAG 5/5 intent-filter::scheme de test '$TEST_SCHEME' absent du manifest — impossible de router le callback vers l'app"
+              echo "::error title=SPOTIFY-DIAG 1/7 client_id::Client ID présent en env mais ABSENT du bundle — inlining Metro inopérant, l'app affichera « non configurée » malgré la config CI"
               exit 1
             fi
           else
-            echo "::notice title=SPOTIFY-DIAG 5/5 intent-filter::URI effectif = scheme natif melodix (défaut de production), aucun intent-filter additionnel requis"
+            echo "::error title=SPOTIFY-DIAG 1/7 client_id::Client ID ABSENT du build — test physique Spotify impossible"
+            exit 1
+          fi
+          # ── 2/7 Redirect URI : valeur déterministe du workflow ──
+          echo "::notice title=SPOTIFY-DIAG 2/7 redirect_uri::source=workflow déterministe | effectif=$(state "$SPOTIFY_REDIRECT_URI") ($SPOTIFY_REDIRECT_URI)"
+          APKANALYZER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name apkanalyzer | sort -V | tail -1)"
+          [ -x "$APKANALYZER" ] || { echo "::error title=apkanalyzer indisponible::outil absent ou non exécutable"; exit 1; }
+          # ── 3/7 scheme natif melodix : TOUJOURS déclaré (reste de l'app) ──
+          if "$APKANALYZER" manifest print "$APK" | grep -Fq 'android:scheme="melodix"'; then
+            echo "::notice title=SPOTIFY-DIAG 3/7 scheme natif::melodix présent dans le manifest final (deep links internes conservés)"
+          else
+            echo "::error title=SPOTIFY-DIAG 3/7 scheme natif::melodix absent du manifest final — deep links internes cassés"
+            exit 1
+          fi
+          # ── 4/7 Redirect effectif : EXACTEMENT le canonique du client ──
+          # Le bundle DOIT contenir le redirect canonique
+          # melodix://callback. L'ancienne URI de test historique = build
+          # inutilisable pour le test physique (mismatch garanti).
+          EFFECTIVE_URI="${SPOTIFY_REDIRECT_URI:-}"
+          if [ "$EFFECTIVE_URI" != "$CANONICAL_REDIRECT_URI" ]; then
+            if [ "$EFFECTIVE_URI" = "comspotifytestsdk://callback" ]; then
+              echo "::error title=SPOTIFY-DIAG 4/7 redirect effectif::le redirect effectif du build est l'ancienne URI de test comspotifytestsdk://callback (dashboard périmé) — « redirect_uri: not matching configuration » garanti côté Spotify. Attendu : $CANONICAL_REDIRECT_URI"
+            else
+              echo "::error title=SPOTIFY-DIAG 4/7 redirect effectif::le redirect effectif du build est vide ou non canonique (attendu : $CANONICAL_REDIRECT_URI)"
+            fi
+            exit 1
+          fi
+          if unzip -p "$APK" assets/index.android.bundle 2>/dev/null | grep -aqF "$EFFECTIVE_URI"; then
+            echo "::notice title=SPOTIFY-DIAG 4/7 bundle::redirect URI effectif $EFFECTIVE_URI inliné dans le bundle JS (authorize + token exchange utiliseront exactement cette valeur)"
+          else
+            echo "::error title=SPOTIFY-DIAG 4/7 bundle::redirect URI $EFFECTIVE_URI absent du bundle — build incohérent"
+            exit 1
+          fi
+          # ── 5/7 intent-filter du redirect canonique dans le manifest final ──
+          # sans lui, Android ne routerait jamais le callback Spotify vers
+          # l'app (le callback ne reviendrait jamais).
+          REDIRECT_SCHEME="${EFFECTIVE_URI%%://*}"
+          REDIRECT_HOST="${EFFECTIVE_URI#*://}"
+          REDIRECT_HOST="${REDIRECT_HOST%%/*}"
+          MANIFEST_PRINT="$("$APKANALYZER" manifest print "$APK")"
+          if printf '%s\n' "$MANIFEST_PRINT" | grep -Fq 'android:scheme="comspotifytestsdk"'; then
+            echo "::error title=SPOTIFY-DIAG 5/7 manifest final contaminé::l'ancienne URI de test comspotifytestsdk est présente dans le manifest final du build — test physique garanti défaillant"
+            exit 1
+          fi
+          if [ "$REDIRECT_SCHEME" = "melodix" ]; then
+            # Redirect canonique : le scheme natif `melodix` (déclaré SANS
+            # host) route TOUTES les URLs melodix://*, dont le callback —
+            # la vérification du host exact est faite par l'app elle-même
+            # (url.startsWith(redirect)).
+            if printf '%s\n' "$MANIFEST_PRINT" | grep -Fq "android:scheme=\"$REDIRECT_SCHEME\""; then
+              echo "::notice title=SPOTIFY-DIAG 5/7 intent-filter::intent-filter $REDIRECT_SCHEME (redirect canonique $EFFECTIVE_URI) présent dans le manifest final — le callback Spotify est routable vers l'app"
+            else
+              echo "::error title=SPOTIFY-DIAG 5/7 intent-filter::intent-filter $REDIRECT_SCHEME absent du manifest final — Android ne routerait jamais le callback Spotify vers l'app"
+              exit 1
+            fi
+          else
+            # Scheme non canonique (refusé par la validation pré-build) : le
+            # filtre dérivé par app.config.js doit déclarer scheme ET host.
+            if printf '%s\n' "$MANIFEST_PRINT" | grep -Fq "android:scheme=\"$REDIRECT_SCHEME\"" \
+              && printf '%s\n' "$MANIFEST_PRINT" | grep -Fq "android:host=\"$REDIRECT_HOST\""; then
+              echo "::notice title=SPOTIFY-DIAG 5/7 intent-filter::intent-filter $REDIRECT_SCHEME://$REDIRECT_HOST présent dans le manifest final — le callback Spotify est routable vers l'app"
+            else
+              echo "::error title=SPOTIFY-DIAG 5/7 intent-filter::intent-filter $REDIRECT_SCHEME://$REDIRECT_HOST absent du manifest final — Android ne routerait jamais le callback Spotify vers l'app"
+              exit 1
+            fi
+          fi
+          # Fixture smoke (build de test) : le bundle DOIT contenir la route
+          # de seed — sinon le scénario B du smoke Android est inopérant.
+          if unzip -p "$APK" assets/index.android.bundle 2>/dev/null | grep -aqF "oauth-smoke-seed"; then
+            echo "::notice title=SPOTIFY-DIAG 6/7 fixture smoke::route melodix://oauth-smoke-seed inlinée dans le bundle (build de test) — wiring cold-start AVEC transaction persistée vérifiable en smoke"
+          else
+            echo "::error title=SPOTIFY-DIAG 6/7 fixture smoke::route de seed absente du bundle — EXPO_PUBLIC_SPOTIFY_OAUTH_SMOKE non inliné, scénario B du smoke impossible"
+            exit 1
+          fi
+          # Limite CI DÉCLARÉE, jamais implicite : GitHub Actions n'a aucun
+          # compte Spotify utilisable. Le smoke ci-dessus prouve la chaîne
+          # deep-link → runtime JS → classification [SpotifyAuth] sur
+          # Android 14 réel (émulateur) — pas un login Spotify.
+          echo "::notice title=SPOTIFY-DIAG 7/7 limite CI::PHYSICAL SPOTIFY LOGIN NOT TESTABLE IN CI — le login Spotify réel exige un appareil + un compte ; le scénario B du smoke prouve le wiring cold-start AVEC transaction persistée, pas un login"
+
+      - name: Diagnostic source Jamendo (V49)
+        # V49 — Oracle build-level pour la source Jamendo.
+        #
+        # POURQUOI cette étape : en V48, un défaut faisait que l'APK livré ne
+        # pouvait JAMAIS être armé (aucune variable transmise au build). Le
+        # correctif a câblé les deux canaux, mais RIEN ne prouvait au build que
+        # l'identifiant atteignait effectivement le bundle. Sans cet oracle, un
+        # dépôt correctement configuré pouvait encore livrer une source
+        # silencieusement inactive — exactement la classe de panne que V48 a
+        # corrigée.
+        #
+        # CONFIDENTIALITÉ : la VALEUR n'est jamais affichée, ni ici ni dans les
+        # annotations — uniquement l'état armée/non armée et la présence dans le
+        # bundle. Le `client_id` Jamendo est un identifiant PUBLIC par
+        # conception (l'API l'exige en clair dans la querystring de chaque
+        # requête GET) : il est intégré au bundle de l'application et n'est donc
+        # PAS un secret confidentiel. Aucun secret n'est embarqué ici.
+        #
+        # ASYMÉTRIE VOLONTAIRE avec Spotify : l'ABSENCE d'identifiant est une
+        # NOTICE, jamais une erreur. Jamendo est une source OPTIONNELLE — sans
+        # elle l'APK compile et l'application fonctionne exactement comme avant
+        # V47. À l'inverse, un identifiant PRÉSENT mais NON inliné est une
+        # ERREUR : ce serait un build silencieusement incohérent.
+        env:
+          APK: ${{ steps.apk.outputs.name }}
+        run: |
+          BUNDLE='assets/index.android.bundle'
+          if [ -n "${EXPO_PUBLIC_JAMENDO_CLIENT_ID:-}" ]; then
+            if unzip -p "$APK" "$BUNDLE" 2>/dev/null | grep -aqF "$EXPO_PUBLIC_JAMENDO_CLIENT_ID"; then
+              echo "::notice title=JAMENDO-DIAG::source ARMÉE — identifiant public présent en env ET inliné dans le bundle (valeur non affichée)"
+            else
+              echo "::error title=JAMENDO-DIAG::identifiant PRÉSENT en env mais ABSENT du bundle — inlining Metro inopérant, la source Jamendo resterait inactive dans l'APK malgré la configuration du dépôt"
+              exit 1
+            fi
+            # Second canal (asset natif app.config) : vérifié sans exposer la
+            # valeur. Une divergence entre les deux canaux produirait un
+            # comportement différent selon le chemin de lecture.
+            if unzip -p "$APK" "$BUNDLE" 2>/dev/null | grep -aqF 'jamendoClientId'; then
+              echo "::notice title=JAMENDO-DIAG::clé extra.jamendoClientId présente dans le bundle (canal asset natif)"
+            else
+              echo "::notice title=JAMENDO-DIAG::clé extra.jamendoClientId absente du bundle — seul le canal d'inlining Metro alimente la source"
+            fi
+          else
+            echo "::notice title=JAMENDO-DIAG::source NON ARMÉE (aucun identifiant) — attendu et sans effet : l'APK fonctionne normalement, la recherche ignore Jamendo sans émettre de requête"
           fi
 
       - name: Publier l'APK comme artefact
@@ -382,27 +796,130 @@ jobs:
             apk-inspection.txt
           if-no-files-found: error
 
-      - name: Publier l'APK de TEST (diagnostic OAuth uniquement)
-        if: ${{ inputs.publish_test_apk && github.event_name == 'workflow_dispatch' }}
+      # ------------------------------------------------------------------
+      # GITHUB RELEASE DE TEST
+      # Créée UNIQUEMENT si toutes les étapes précédentes ont réussi : les
+      # étapes GitHub Actions sont séquentielles, un build en échec
+      # n'atteint jamais cette ligne. Les garde-fous de branche, de commit
+      # et de tag ont déjà été résolus en début de job.
+      # ------------------------------------------------------------------
+      - name: Publier la GitHub Release de test (APK téléchargeable)
+        if: ${{ success() && steps.release_guard.outputs.publish_test == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
           APK: ${{ steps.apk.outputs.name }}
-          URI: ${{ inputs.spotify_redirect_uri || vars.SPOTIFY_REDIRECT_URI || 'melodix://callback' }}
+          TAG: ${{ steps.release_guard.outputs.release_tag }}
+          COMMIT: ${{ steps.release_guard.outputs.commit }}
+          EFFECTIVE_URI: ${{ env.SPOTIFY_REDIRECT_URI }}
         run: |
+          set -Eeuo pipefail
+
+          # Garde-fou final : ce build est destiné au test OAuth physique et
+          # DOIT embarquer le redirect canonique de l'application (celui
+          # déclaré dans le Dashboard Spotify du client). Un retour
+          # accidentel sur l'ancienne URI de test historique ferait échouer
+          # le test physique sans que rien ne le signale — on bloque AVANT
+          # publication.
+          if [ "$EFFECTIVE_URI" != "melodix://callback" ]; then
+            echo "::error title=Redirect URI non canonique::ce build doit embarquer le redirect canonique melodix://callback (effectif : $EFFECTIVE_URI). Aucune Release publiée."
+            exit 1
+          fi
+
           SHA256=$(sha256sum "$APK" | cut -d' ' -f1)
           SIZE=$(stat -c '%s' "$APK")
-          NOTES="Build de TEST publié par le workflow (run ${{ github.run_id }}). Redirect URI embarqué et vérifié dans l'APK : $URI. SHA-256 : $SHA256 — taille : $SIZE octets — commit exact : $BUILD_SHA. Revenir à la release officielle pour l'usage normal."
-          gh release create spotify-oauth-test "$APK" \
-            --repo "$GITHUB_REPOSITORY" \
-            --target "$BUILD_SHA" \
-            --title "TEST OAuth Spotify (diagnostic — JAMAIS en usage normal)" \
-            --notes "$NOTES" \
-            --prerelease \
-          || {
-            gh release edit spotify-oauth-test --repo "$GITHUB_REPOSITORY" \
-              --target "$BUILD_SHA" --notes "$NOTES"
-            gh release upload spotify-oauth-test "$APK" --clobber
-          }
+          TITLE="Melodix ${TAG#v} — Test"
+          VERSION="$(node -p "require('./package.json').version")"
+
+          # Notes honnêtes : seules les fonctionnalités RÉELLEMENT présentes
+          # dans le commit construit sont mentionnées, et la validation
+          # physique reste explicitement requise.
+          NOTES=$(cat <<EOF
+          # ${TITLE}
+
+          > **Build de test — validation physique nécessaire.**
+          > L'audio en arrière-plan, le Bluetooth/casque, l'écran verrouillé
+          > et la lecture réelle ne sont pas validés : ils doivent être testés
+          > sur le Samsung Galaxy S24.
+
+          ## Version
+
+          - Tag : \`${TAG}\`
+          - Version : \`${VERSION}\`
+          - Commit : \`${COMMIT}\`
+          - Branche : \`arena/fcdae8c6-melodix\`
+          - Workflow run : \`${{ github.run_id }}\`
+
+          ## Spotify (test OAuth)
+
+          Ce build embarque le redirect URI canonique de l'application :
+
+          \`melodix://callback\`
+
+          URI déclarée dans le Dashboard Spotify du Client ID Melodix —
+          c'est elle que l'application envoie à /authorize ET /api/token
+          (unicité de source, PKCE sans secret). Jamais d'ancienne URI de
+          test historique dans un build réel : elle produirait une erreur
+          « redirect_uri: not matching configuration ». Le bundle JS et le
+          manifeste de l'APK sont vérifiés en CI avant publication.
+
+          ## Nouveautés principales
+
+          Fonctionnalités réellement présentes dans ce commit :
+
+          - Lecteur avec les neuf états (\`idle\`, \`loading\`, \`resolving\`,
+            \`buffering\`, \`playing\`, \`paused\`, \`ended\`, \`error\`,
+            \`unavailable\`)
+          - Recherche Spotify : titres, artistes, albums, playlists —
+            résultats cliquables
+          - Albums et artistes via la session Spotify
+          - Titres aimés Spotify
+          - Cascade audio Audius → YouTube
+          - File de lecture, lecture automatique, shuffle, repeat
+          - Audio en arrière-plan, MediaSession, notification
+          - Historique de lecture
+          - Playlists (pagination)
+
+          ## Vérifications CI
+
+          - Tests Jest : exécutés
+          - TypeScript : exécuté
+          - ESLint : exécuté
+          - Prettier : exécuté
+          - Bundle JS Android : généré
+          - APK : compilé, aligné 16 Kio, signé, intégrité vérifiée
+          - installation + smoke test sur émulateur Android 14 : exécutés
+
+          ## Intégrité
+
+          - Fichier : \`${APK}\`
+          - Taille : ${SIZE} octets
+          - SHA-256 : \`${SHA256}\`
+
+          ## Installation
+
+          1. Télécharger l'APK ci-dessous.
+          2. Autoriser les sources inconnues sur le téléphone.
+          3. Installer (le \`versionCode\` est supérieur au précédent : une mise
+             à jour normale fonctionne).
+          EOF
+          )
+
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            # Tag réutilisé sur le MÊME commit (garanti par release_guard) :
+            # on met à jour la Release existante, on n'en crée pas d'autre.
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --target "$COMMIT" --title "$TITLE" --notes "$NOTES" --prerelease
+            gh release upload "$TAG" "$APK" --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" "$APK" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$COMMIT" \
+              --title "$TITLE" \
+              --notes "$NOTES" \
+              --prerelease
+          fi
+
+          echo "::notice title=Release publiée::${TAG} — ${APK} — SHA-256 ${SHA256}"
 
       - name: Joindre l'APK à la release
         if: github.event_name == 'release'

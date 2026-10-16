@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View, StyleSheet } from 'react-native';
 
 import { FullPlayer } from '@components';
-import { COLORS } from '@config';
+import { APP_BACKGROUND_COLOR } from '@config';
 
 export const PlayerScreen = () => (
   <View style={screenStyles.container}>
@@ -13,6 +13,6 @@ export const PlayerScreen = () => (
 const screenStyles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: COLORS.PRIMARY,
+    backgroundColor: APP_BACKGROUND_COLOR,
   },
 });

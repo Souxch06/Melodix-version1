@@ -4,7 +4,7 @@ import { Image } from 'expo-image';
 
 import Ionicons from '@expo/vector-icons/Ionicons';
 
-import { COLORS } from '@config';
+import { PALETTE, RADIUS, SPACING, TOUCH_TARGET, TYPOGRAPHY } from '@config';
 import { translations } from '@data';
 import type { PlayerTrack } from '@services';
 import { getFallbackImage } from '@utils';
@@ -62,13 +62,13 @@ const QueueRowComponent = ({
       <Ionicons
         name={isCurrent && isPlaying ? 'stats-chart' : 'musical-note'}
         size={15}
-        color={isCurrent ? accent : COLORS.GREY}
+        color={isCurrent ? PALETTE.accent : PALETTE.textSecondary}
         style={styles.queueIcon}
       />
       <View style={styles.queueInfo}>
         <Text
           numberOfLines={1}
-          style={[styles.queueTitleText, isCurrent && { color: accent }]}
+          style={[styles.queueTitleText, isCurrent && styles.queueTitleActive]}
         >
           {track.title}
         </Text>
@@ -91,7 +91,7 @@ const QueueRowComponent = ({
       style={[styles.queueAction, isFirst && styles.queueActionOff]}
       testID={`queue-up-${index}`}
     >
-      <Ionicons name="chevron-up" size={17} color={COLORS.LIGHT_GREY} />
+      <Ionicons name="chevron-up" size={17} color={PALETTE.textSecondary} />
     </Pressable>
     <Pressable
       accessibilityLabel={translations.playerQueueMoveDown}
@@ -103,7 +103,7 @@ const QueueRowComponent = ({
       style={[styles.queueAction, isLast && styles.queueActionOff]}
       testID={`queue-down-${index}`}
     >
-      <Ionicons name="chevron-down" size={17} color={COLORS.LIGHT_GREY} />
+      <Ionicons name="chevron-down" size={17} color={PALETTE.textSecondary} />
     </Pressable>
     <Pressable
       accessibilityLabel={translations.playerQueueRemove}
@@ -113,7 +113,7 @@ const QueueRowComponent = ({
       style={styles.queueAction}
       testID={`queue-remove-${index}`}
     >
-      <Ionicons name="trash-outline" size={16} color={COLORS.RED} />
+      <Ionicons name="trash-outline" size={16} color={PALETTE.danger} />
     </Pressable>
   </View>
 );
@@ -124,13 +124,16 @@ export const QueueRow = React.memo(QueueRowComponent);
 const styles = StyleSheet.create({
   queueRow: {
     alignItems: 'center',
-    borderRadius: 8,
+    borderRadius: RADIUS.sm,
     flexDirection: 'row',
-    paddingHorizontal: 8,
-    paddingVertical: 6,
+    paddingHorizontal: SPACING.sm,
+    paddingVertical: SPACING.xs,
+    minHeight: TOUCH_TARGET.comfortable,
   },
   queueRowActive: {
-    backgroundColor: COLORS.SECONDARY,
+    backgroundColor: PALETTE.night600,
+    borderWidth: 1,
+    borderColor: PALETTE.hairline,
   },
   queueTapArea: {
     alignItems: 'center',
@@ -138,32 +141,34 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
   },
   queueArtwork: {
-    borderRadius: 4,
-    height: 34,
-    marginRight: 10,
-    width: 34,
+    borderRadius: RADIUS.xs,
+    height: 40,
+    marginRight: SPACING.sm,
+    width: 40,
   },
   queueIcon: {
-    marginRight: 8,
+    marginRight: SPACING.sm,
   },
   queueInfo: {
     flex: 1,
   },
   queueTitleText: {
-    color: COLORS.WHITE,
-    fontSize: 13,
+    ...TYPOGRAPHY.body,
+    color: PALETTE.textPrimary,
   },
-  activeTextUnused: {
-    color: COLORS.TINT,
-    fontWeight: '600',
+  queueTitleActive: {
+    color: PALETTE.accent,
+    fontWeight: '700',
   },
   queueSubtitleText: {
-    color: COLORS.GREY,
-    fontSize: 11,
+    ...TYPOGRAPHY.caption,
+    color: PALETTE.textSecondary,
   },
   queueAction: {
-    paddingHorizontal: 6,
-    paddingVertical: 6,
+    width: TOUCH_TARGET.minimum,
+    height: TOUCH_TARGET.minimum,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   queueActionOff: {
     opacity: 0.25,

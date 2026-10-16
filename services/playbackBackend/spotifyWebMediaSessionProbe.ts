@@ -32,7 +32,6 @@ export const SPOTIFY_WEB_MEDIA_SESSION_PROBE = `
       bridge.postMessage(JSON.stringify(message));
     } catch (_) {}
   };
-  post({ version: ${SPOTIFY_WEB_BRIDGE_VERSION}, type: 'ready' });
 
   const SAFE_ID = /^[A-Za-z0-9_-]{1,40}$/;
   const COMMANDS = { play: 1, pause: 1, toggle: 1, seek: 1, next: 1, previous: 1 };
@@ -45,6 +44,10 @@ export const SPOTIFY_WEB_MEDIA_SESSION_PROBE = `
       code,
     });
   };
+  // Le listener de commandes est enregistré AVANT le ready : le handshake
+  // ne doit se terminer que lorsque le recepteur est capable de RECEVOIR —
+  // une commande partie entre le ready et l'ecoute serait perdue (timeout
+  // "expired" cote app) alors que la page etait prete a y repondre.
   globalThis.addEventListener('message', (event) => {
     let value = null;
     try {
@@ -80,6 +83,7 @@ export const SPOTIFY_WEB_MEDIA_SESSION_PROBE = `
     // honestly instead of simulating anything.
     respond(requestId, false, 'no-authorized-execution-surface');
   });
+  post({ version: ${SPOTIFY_WEB_BRIDGE_VERSION}, type: 'ready' });
 
   const navigatorApi = globalThis.navigator;
   const mediaSession = navigatorApi && navigatorApi.mediaSession;
@@ -124,6 +128,32 @@ export const SPOTIFY_WEB_MEDIA_SESSION_PROBE = `
     return true;
   }
 
+  // Identité de piste : l'URL publique du document lui-même (page piste
+  // open.spotify.com/track/<id>). C'est la même information que l'hôte natif
+  // reçoit par l'événement standard de navigation de la WebView — aucune
+  // donnée de stockage, aucun objet média, aucun chemin protégé n'est lu.
+  // null partout ailleurs : une identité inconnue ne doit jamais être
+  // inventée (garde anti-faux-positif du transport).
+  const TRACK_PATH = /^\\/track\\/([a-z0-9]{22})(?:[\\/?#]|$)/;
+  const trackIdFromDocument = () => {
+    try {
+      const href = String(globalThis.location && globalThis.location.href);
+      const match = TRACK_PATH.exec(href);
+      return match ? match[1] : null;
+    } catch (_) {
+      return null;
+    }
+  };
+
+  // Détection de fin : navigator.mediaSession ne publie que playing /
+  // paused / none. Un passage playing → paused COLLÉ à la fin de la piste
+  // (position dans les 3 dernières secondes) est le fait observable d'une
+  // fin de morceau ; tout le reste reste honnêtement paused. Sans
+  // positionState (capacité absente), la fin reste indétectable — et rien
+  // n'est inventé.
+  const END_TOLERANCE_MS = 3000;
+  let lastPlaybackState = null;
+
   let previousSignature = '';
   const boundedText = (value, max) =>
     typeof value === 'string' ? value.slice(0, max) : null;
@@ -134,24 +164,30 @@ export const SPOTIFY_WEB_MEDIA_SESSION_PROBE = `
   const publish = () => {
     const playbackState = mediaSession.playbackState;
     const metadata = mediaSession.metadata;
-    const position = mediaSession.positionState;
+    const positionState = mediaSession.positionState;
+    const positionMillis = positionState ? finiteMillis(positionState.position) : 0;
+    const durationMillis = positionState ? finiteMillis(positionState.duration) : 0;
+    const endedLike =
+      playbackState === 'paused' &&
+      lastPlaybackState === 'playing' &&
+      durationMillis > 0 &&
+      positionMillis >= durationMillis - END_TOLERANCE_MS;
+    const declared =
+      playbackState === 'playing' ? 'playing' : endedLike ? 'ended' : playbackState === 'paused' ? 'paused' : 'idle';
+    lastPlaybackState = playbackState;
     const artwork = metadata && Array.isArray(metadata.artwork)
       ? metadata.artwork.find((item) => item && typeof item.src === 'string')
       : null;
     const payload = {
-      status: playbackState === 'playing'
-        ? 'playing'
-        : playbackState === 'paused'
-          ? 'paused'
-          : 'idle',
-      trackId: null,
+      status: declared,
+      trackId: trackIdFromDocument(),
       title: metadata ? boundedText(metadata.title, 2048) : null,
       artists: metadata && typeof metadata.artist === 'string' && metadata.artist
         ? [metadata.artist.slice(0, 256)]
         : [],
       artworkUrl: artwork ? boundedText(artwork.src, 2048) : null,
-      durationMillis: position ? finiteMillis(position.duration) : 0,
-      positionMillis: position ? finiteMillis(position.position) : 0,
+      durationMillis,
+      positionMillis,
       isPlaying: playbackState === 'playing',
       isLoading: false,
       errorCode: null,
@@ -164,8 +200,78 @@ export const SPOTIFY_WEB_MEDIA_SESSION_PROBE = `
     }
   };
 
+  // Transitions IMMÉDIATES : l'API Media Session standard publie des
+  // événements (playbackstatechange, metadatachange). S'y abonner évite
+  // d'attendre jusqu'au prochain poll (1 s) pour playing/paused/ended et le
+  // changement de piste ; le poll reste le filet de sécurité pour la
+  // position. Aucune surface interdite : uniquement l'API publique.
+  if (typeof mediaSession.addEventListener === 'function') {
+    mediaSession.addEventListener('playbackstatechange', publish);
+    mediaSession.addEventListener('metadatachange', publish);
+  }
+
   publish();
   globalThis.setInterval(publish, 1000);
   true;
 })();
 `;
+
+/**
+ * V88 — Sonde PRÉCOCE, injectée avant le contenu du document.
+ *
+ * `SPOTIFY_WEB_MEDIA_SESSION_PROBE` ci-dessus est passé en `injectedJavaScript`,
+ * donc exécuté à la FIN du chargement. Quand le handshake n'aboutit pas, un
+ * `bridge_timeout` seul ne dit pas lequel de ces deux mondes on observe :
+ *
+ *   a) le pont natif `ReactNativeWebView` n'existe pas dans ce contexte — la
+ *      sonde principale sort dès sa première ligne et ne poste jamais rien ;
+ *   b) le pont existe, mais l'injection tardive n'a pas eu lieu ou a échoué.
+ *
+ * Ce script lève l'ambiguïté : injecté AVANT le contenu, il s'exécute à un
+ * moment où react-native-webview a déjà défini le pont. S'il poste
+ * `probe-installed` et que `ready` n'arrive jamais, la panne est dans
+ * l'injection tardive ; s'il ne poste rien non plus, c'est le pont.
+ *
+ * Il ne fait rien d'autre : aucune lecture de la page, aucun stockage, aucun
+ * réseau, aucune surface média. Le backend classe ce type de message en
+ * `ignored` — il ne participe pas au handshake.
+ */
+export const SPOTIFY_WEB_PROBE_INSTALLED_SCRIPT = `
+(() => {
+  const bridge = globalThis.ReactNativeWebView;
+  if (!bridge || typeof bridge.postMessage !== 'function') return true;
+  try {
+    bridge.postMessage(
+      JSON.stringify({
+        version: ${SPOTIFY_WEB_BRIDGE_VERSION},
+        type: 'probe-installed',
+      })
+    );
+  } catch (_) {}
+  true;
+})();
+`;
+
+/**
+ * Reconnaît le message de la sonde précoce.
+ *
+ * Strict sur la version et le type : un message d'une autre version ou d'un
+ * autre type n'est jamais traité comme une preuve d'installation. Le backend
+ * classe de toute façon ce type en `ignored` — il ne participe pas au
+ * handshake, seul `ready` le peut.
+ */
+export const isProbeInstalledMessage = (raw: unknown): boolean => {
+  if (typeof raw !== 'string') return false;
+  let value: unknown = null;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    return false;
+  }
+  if (!value || typeof value !== 'object') return false;
+  const message = value as { version?: unknown; type?: unknown };
+  return (
+    message.version === SPOTIFY_WEB_BRIDGE_VERSION &&
+    message.type === 'probe-installed'
+  );
+};

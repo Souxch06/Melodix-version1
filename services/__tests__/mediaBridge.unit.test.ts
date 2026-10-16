@@ -19,7 +19,7 @@ import {
   setMediaBridgeEnabled,
   teardownMediaBridge,
 } from '../mediaBridge';
-import { melodixPlayer, spotifyTrackSource } from '../player';
+import { melodixPlayer } from '../player';
 import type { PlayerState, PlayerTrack } from '../player';
 import { PLAYBACK_SESSION_VERSION } from '../playbackSession';
 import type { PlaybackSession } from '../playbackSession';
@@ -32,6 +32,19 @@ const mockRequestNotificationPermission = jest.fn<boolean | null, []>(
   () => null
 );
 let commandListener: ((command: unknown) => void) | null = null;
+// §11 : signal système « casque/Bluetooth débranché » (natif → JS).
+let noisyListener: (() => void) | null = null;
+let mockNoisyUnsubscribe: jest.Mock | null = null;
+// Callback de statut expo-av du dernier Sound créé (fin de piste, etc.).
+let statusCallback: ((status: Record<string, unknown>) => void) | null = null;
+// Sound factice créé par les mocks createAsync des tests buffering.
+let bufferingSound: {
+  playAsync: jest.Mock;
+  pauseAsync: jest.Mock;
+  unloadAsync: jest.Mock;
+  setPositionAsync: jest.Mock;
+  setVolumeAsync: jest.Mock;
+} | null = null;
 
 jest.mock('../../modules/melodix-media', () => ({
   updateSession: (...args: never[]) => mockUpdateSession(...args),
@@ -43,6 +56,12 @@ jest.mock('../../modules/melodix-media', () => ({
     commandListener = listener;
 
     return jest.fn();
+  },
+  addAudioBecomingNoisyListener: (listener: () => void) => {
+    noisyListener = listener;
+    mockNoisyUnsubscribe = jest.fn();
+
+    return mockNoisyUnsubscribe;
   },
 }));
 
@@ -57,7 +76,7 @@ jest.mock('expo-av', () => ({
           _initial: Record<string, unknown>,
           onStatus?: (status: Record<string, unknown>) => void
         ) => {
-          void onStatus;
+          statusCallback = onStatus ?? null;
           const sound = {
             // Contrat expo-av réel : les commandes rendent le statut natif.
             // Le bridge ne doit jamais dépendre d'un état inventé par le test.
@@ -91,12 +110,18 @@ jest.mock('expo-av', () => ({
   },
 }));
 
+// Mission v7 : les morceaux de ce fichier sont des pistes NATIVES (provider
+// Audius) — le moteur les lit via `resolveSource` (runtime expo-av). Les
+// pistes Spotify (provider null) sont lues par le Spotify Web Player et testées
+// ailleurs ; le bridge les distingue via `state.resolved?.provider`.
 const makeProvider = (): AudioProvider => ({
   id: 'audius',
   displayName: 'Audius',
   matches: jest.fn(async () => []),
-  resolveMatch: jest.fn(async () => ({ sourceId: 'aud-x', score: 0.9 })),
-  resolveSource: jest.fn(async () => ({ uri: 'https://stream/aud-x' })),
+  resolveMatch: jest.fn(async () => null),
+  resolveSource: jest.fn(async (sourceId: string) => ({
+    uri: `https://stream/${sourceId}`,
+  })),
 });
 
 const morceau = (
@@ -110,7 +135,7 @@ const morceau = (
   album: 'Good',
   durationMillis: 200_000,
   imageURL: 'https://img/p.jpg',
-  source: spotifyTrackSource(id),
+  source: { provider: 'audius', id },
 });
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -130,7 +155,7 @@ const payloadLongSensible = (): Partial<PlayerState>[] => [
       album: 'Vox',
       durationMillis: 180_000,
       imageURL: 'https://img/cover.jpg',
-      source: spotifyTrackSource('sensible'),
+      source: { provider: 'audius', id: 'sensible' },
       // Champs parasites : flux + tokens qui DOIVENT rester hors projection.
       streamUrl: 'https://stream/vault?token=abc',
       youtubeUri: 'https://youtube/watch?v=dQw4w9WgXcQ',
@@ -147,7 +172,14 @@ describe('mediaBridge — projection MediaSession (phase 5A)', () => {
   beforeEach(async () => {
     await AsyncStorage.clear();
     jest.clearAllMocks();
+    // Contrat V83 — le natif CONFIRME explicitement la remise de la projection
+    // en renvoyant `true`. Les mocks modélisent ce contrat : par défaut la
+    // remise réussit. Les tests d'échec V83 surchargent ce retour.
+    mockUpdateSession.mockReturnValue(true);
     commandListener = null;
+    noisyListener = null;
+    mockNoisyUnsubscribe = null;
+    bufferingSound = null;
     teardownMediaBridge();
     __testSetAudioProviders({ audius: makeProvider() });
     await melodixPlayer.__testReset();
@@ -400,32 +432,201 @@ describe('mediaBridge — projection MediaSession (phase 5A)', () => {
     it('PLAY quand paused → lecture ; PLAY quand playing → AUCUN toggle', async () => {
       await melodixPlayer.playQueue([morceau('a', 'Photo')], 0);
       await flush();
-      const toggleSpy = jest.spyOn(melodixPlayer, 'togglePlayPause');
+      const resumeSpy = jest.spyOn(melodixPlayer, 'resume');
 
       commandListener?.({ command: 'play' }); // déjà en lecture
-      expect(toggleSpy).not.toHaveBeenCalled();
+      expect(resumeSpy).not.toHaveBeenCalled();
 
       await melodixPlayer.togglePlayPause(); // mise en pause (compte 1)
-      toggleSpy.mockClear();
+      resumeSpy.mockClear();
       commandListener?.({ command: 'play' }); // PLAY système → lecture
-      expect(toggleSpy).toHaveBeenCalledTimes(1);
+      expect(resumeSpy).toHaveBeenCalledTimes(1);
     });
 
     it('PAUSE quand playing → pause ; PAUSE quand paused → RIEN', async () => {
       await melodixPlayer.playQueue([morceau('a', 'Photo')], 0);
       await flush();
-      const toggleSpy = jest.spyOn(melodixPlayer, 'togglePlayPause');
+      const pauseSpy = jest.spyOn(melodixPlayer, 'pause');
 
       commandListener?.({ command: 'pause' });
-      expect(toggleSpy).toHaveBeenCalledTimes(1);
-      await flush(); // togglePlayPause est asynchrone
+      expect(pauseSpy).toHaveBeenCalledTimes(1);
+      await flush(); // pause est asynchrone
       expect(melodixPlayer.getState().status).toBe('paused');
 
-      toggleSpy.mockClear();
+      pauseSpy.mockClear();
       commandListener?.({ command: 'pause' }); // déjà en pause
-      expect(toggleSpy).not.toHaveBeenCalled();
+      expect(pauseSpy).not.toHaveBeenCalled();
     });
 
+    it('PLAY quand ended → relance le morceau affiché (pas un toggle inutile)', async () => {
+      await melodixPlayer.playQueue([morceau('a', 'Photo')], 0);
+      await flush();
+
+      // Fin naturelle de la file : le moteur passe sur 'ended'.
+      statusCallback?.({ isLoaded: true, didJustFinish: true });
+      await flush();
+      expect(melodixPlayer.getState().status).toBe('ended');
+
+      const toggleSpy = jest.spyOn(melodixPlayer, 'togglePlayPause');
+      const playAtIndexSpy = jest.spyOn(melodixPlayer, 'playAtIndex');
+
+      handleMediaCommand({ command: 'play' });
+
+      // Un toggle resterait bloqué sur « terminé » : il faut REJOUER.
+      expect(toggleSpy).not.toHaveBeenCalled();
+      expect(playAtIndexSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('PLAY pendant resolving → AUCUNE commande (pas de faux départ)', async () => {
+      __testSetAudioProviders({
+        audius: {
+          ...makeProvider(),
+          resolveSource: jest.fn(
+            async () =>
+              await new Promise<{ uri: string }>((resolve) =>
+                setTimeout(() => resolve({ uri: 'https://stream/lent' }), 25)
+              )
+          ),
+        },
+      });
+
+      void melodixPlayer.playQueue([morceau('a', 'Photo')], 0);
+      await flush();
+      // La source audio n'est pas encore trouvée.
+      expect(melodixPlayer.getState().status).toBe('resolving');
+
+      const toggleSpy = jest.spyOn(melodixPlayer, 'togglePlayPause');
+      const playAtIndexSpy = jest.spyOn(melodixPlayer, 'playAtIndex');
+
+      handleMediaCommand({ command: 'play' });
+
+      expect(toggleSpy).not.toHaveBeenCalled();
+      expect(playAtIndexSpy).not.toHaveBeenCalled();
+    });
+
+    it('PAUSE pendant resolving → annule la mise en place (jamais de toggle, jamais de lecture)', async () => {
+      __testSetAudioProviders({
+        audius: {
+          ...makeProvider(),
+          resolveSource: jest.fn(
+            async () =>
+              await new Promise<{ uri: string }>((resolve) =>
+                setTimeout(() => resolve({ uri: 'https://stream/lent' }), 25)
+              )
+          ),
+        },
+      });
+
+      void melodixPlayer.playQueue([morceau('a', 'Photo')], 0);
+      await flush();
+      expect(melodixPlayer.getState().status).toBe('resolving');
+
+      const toggleSpy = jest.spyOn(melodixPlayer, 'togglePlayPause');
+      const pauseSpy = jest.spyOn(melodixPlayer, 'pause');
+      handleMediaCommand({ command: 'pause' });
+
+      // La commande système passe par pause() du moteur (idempotente),
+      // JAMAIS par un toggle — et la mise en place en vol est annulée.
+      expect(pauseSpy).toHaveBeenCalledTimes(1);
+      expect(toggleSpy).not.toHaveBeenCalled();
+      await flush();
+      expect(melodixPlayer.getState().status).toBe('paused');
+
+      // La résolution lente finit : rien ne démarre malgré tout.
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      expect(melodixPlayer.getState().status).toBe('paused');
+    });
+
+    it('PAUSE pendant buffering → pauseAsync sur le Sound (commande jamais perdue)', async () => {
+      const { Audio: av } = jest.requireMock('expo-av') as {
+        Audio: { Sound: { createAsync: jest.Mock } };
+      };
+      av.Sound.createAsync.mockImplementationOnce(async () => {
+        // Le runtime répond « encore en buffer » : pas de preuve de lecture.
+        bufferingSound = {
+          playAsync: jest.fn(async () => ({
+            isLoaded: true,
+            isPlaying: false,
+            isBuffering: true,
+          })),
+          pauseAsync: jest.fn(async () => ({
+            isLoaded: true,
+            isPlaying: false,
+            isBuffering: false,
+          })),
+          unloadAsync: jest.fn(async () => {}),
+          setPositionAsync: jest.fn(async () => {}),
+          setVolumeAsync: jest.fn(async () => {}),
+        };
+        return {
+          sound: bufferingSound,
+          status: {
+            isLoaded: true,
+            isPlaying: false,
+            isBuffering: true,
+            positionMillis: 0,
+          },
+        };
+      });
+
+      await melodixPlayer.playQueue([morceau('a', 'Photo')], 0);
+      expect(melodixPlayer.getState().status).toBe('buffering');
+
+      handleMediaCommand({ command: 'pause' });
+      await flush();
+
+      expect(bufferingSound?.pauseAsync).toHaveBeenCalledTimes(1);
+      expect(bufferingSound?.playAsync).not.toHaveBeenCalled();
+      expect(melodixPlayer.getState().status).toBe('paused');
+    });
+
+    it("PLAY pendant buffering → le moteur garantit l'intention de lecture (playAsync, jamais de toggle)", async () => {
+      const { Audio: av } = jest.requireMock('expo-av') as {
+        Audio: { Sound: { createAsync: jest.Mock } };
+      };
+      av.Sound.createAsync.mockImplementationOnce(async () => {
+        bufferingSound = {
+          playAsync: jest.fn(async () => ({
+            isLoaded: true,
+            isPlaying: false,
+            isBuffering: true,
+          })),
+          pauseAsync: jest.fn(async () => ({
+            isLoaded: true,
+            isPlaying: false,
+            isBuffering: false,
+          })),
+          unloadAsync: jest.fn(async () => {}),
+          setPositionAsync: jest.fn(async () => {}),
+          setVolumeAsync: jest.fn(async () => {}),
+        };
+        return {
+          sound: bufferingSound,
+          status: {
+            isLoaded: true,
+            isPlaying: false,
+            isBuffering: true,
+            positionMillis: 0,
+          },
+        };
+      });
+
+      await melodixPlayer.playQueue([morceau('a', 'Photo')], 0);
+      expect(melodixPlayer.getState().status).toBe('buffering');
+
+      const playSpy = jest.spyOn(melodixPlayer, 'play');
+      const toggleSpy = jest.spyOn(melodixPlayer, 'togglePlayPause');
+      handleMediaCommand({ command: 'play' });
+      await flush();
+
+      expect(playSpy).toHaveBeenCalledTimes(1);
+      // Intention EXPLICITE (true) — jamais un toggle nu qui pourrait
+      // calculer l'inverse sur un statut transitoire.
+      expect(toggleSpy).toHaveBeenCalledWith(true);
+      expect(bufferingSound?.playAsync).toHaveBeenCalledTimes(1);
+      // playAsync a répondu « buffer » : le moteur ne peut PAS inventer PLAYING.
+      expect(melodixPlayer.getState().status).toBe('buffering');
+    });
     it('NEXT / PREVIOUS / SEEK / STOP relèvent les mêmes méthodes moteur', async () => {
       await melodixPlayer.playQueue(
         [morceau('a', 'Photo'), morceau('b', 'Again')],
@@ -633,6 +834,58 @@ describe('mediaBridge — projection MediaSession (phase 5A)', () => {
     });
   });
 
+  describe('casque/Bluetooth débranché (§11)', () => {
+    it('PLAYING → mise en PAUSE du morceau courant, sans saut', async () => {
+      await melodixPlayer.playQueue([morceau('a', 'Photo')], 0);
+      await flush();
+      expect(melodixPlayer.getState().status).toBe('playing');
+
+      noisyListener?.();
+      await flush();
+
+      // La coupure de sortie audio ne doit JAMAIS continuer dans le
+      // haut-parleur du téléphone : pause, même index, même morceau.
+      expect(melodixPlayer.getState().status).toBe('paused');
+      expect(melodixPlayer.getState().index).toBe(0);
+      expect(melodixPlayer.getState().current?.title).toBe('Photo');
+    });
+
+    it('DÉJÀ en pause → aucun effet (jamais une reprise)', async () => {
+      await melodixPlayer.playQueue([morceau('a', 'Photo')], 0);
+      await flush();
+      await melodixPlayer.togglePlayPause();
+      await flush();
+      expect(melodixPlayer.getState().status).toBe('paused');
+      const toggleSpy = jest.spyOn(melodixPlayer, 'togglePlayPause');
+      // Un espion peut déjà exister (spies partagés entre tests) : on
+      // compare donc le NOMBRE d'appels, jamais le compteur absolu.
+      const callsBefore = toggleSpy.mock.calls.length;
+
+      noisyListener?.();
+      await flush();
+
+      expect(toggleSpy.mock.calls.length).toBe(callsBefore);
+      expect(melodixPlayer.getState().status).toBe('paused');
+    });
+
+    it('AUCUNE lecture (boot) → aucun effet de bord', () => {
+      const toggleSpy = jest.spyOn(melodixPlayer, 'togglePlayPause');
+
+      noisyListener?.();
+
+      expect(toggleSpy).not.toHaveBeenCalled();
+      expect(melodixPlayer.getState().current).toBeNull();
+    });
+
+    it('le démontage retire l’écoute (aucun rappel fantôme)', () => {
+      expect(mockNoisyUnsubscribe).not.toBeNull();
+
+      teardownMediaBridge();
+
+      expect(mockNoisyUnsubscribe).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe('résilience (§11)', () => {
     it('zéro boucle commande → état → commande (§7) : aucune oscillation', async () => {
       await melodixPlayer.playQueue([morceau('a', 'Photo')], 0);
@@ -664,7 +917,7 @@ describe('mediaBridge — projection MediaSession (phase 5A)', () => {
       expect(melodixPlayer.getState().status).toBe('playing');
     });
 
-    it('updateSession lève : la lecture ne crashe JAMAIS (erreur aval)', async () => {
+    it('un throw SYNCHRONE du natif ne casse jamais la lecture (propriété de robustesse uniquement — scénario impossible sur le natif réel, cf. V82 §4.3)', async () => {
       mockUpdateSession.mockImplementationOnce(() => {
         throw new Error('native boom');
       });
@@ -673,6 +926,165 @@ describe('mediaBridge — projection MediaSession (phase 5A)', () => {
       await flush();
 
       expect(melodixPlayer.getState().status).toBe('playing');
+    });
+
+    /**
+     * V83 — contrat de retour de la projection native.
+     *
+     * V82 §4 a démontré que `pushedOk` valait toujours `true` : le Kotlin avale
+     * toute exception (Blindage 5C.2), le travail réel est différé par
+     * `mainHandler.post`, et aucun événement de confirmation ne remonte au JS.
+     * La branche `NATIVE_UPDATE_FAILED` était donc du code mort et le correctif
+     * V70 Bug 2 n'apportait aucune protection.
+     *
+     * Ces tests fixent le CONTRAT : la signature n'est gravée que sur un `true`
+     * EXPLICITE. Toute autre valeur — `false`, `undefined`, valeur inattendue —
+     * est un échec, jamais une réussite.
+     */
+    describe('V83 — contrat de retour de la projection native', () => {
+      /**
+       * Observable de la gravure de signature : si elle n'est PAS gravée, un
+       * seek dans la même seconde (payload identique) reprojette ; si elle est
+       * gravée, la déduplication supprime l'appel. Même mécanisme que le test
+       * « déduplication : deux états identiques (même seconde) ».
+       */
+      const nbReprojectionsMemeSeconde = async (
+        baseMillis = 0
+      ): Promise<number> => {
+        mockUpdateSession.mockClear();
+        // Même seconde arrondie que `baseMillis` ⇒ payload identique.
+        await melodixPlayer.seekTo(baseMillis + 400);
+
+        return mockUpdateSession.mock.calls.length;
+      };
+
+      const lignesDeJournal = (): string[] =>
+        mockAppendDiagLog.mock.calls.map((c) => String(c[0]));
+
+      const aJournalise = (marqueur: string): boolean =>
+        lignesDeJournal().some((l) => l.includes(marqueur));
+
+      it('échec natif (`false`) : la signature N’EST PAS gravée comme une réussite', async () => {
+        mockUpdateSession.mockReturnValue(false);
+
+        await melodixPlayer.playQueue([morceau('a', 'Photo')], 0);
+        await flush();
+
+        expect(mockUpdateSession).toHaveBeenCalled();
+        // Signature non gravée ⇒ la déduplication ne supprime pas la retentative.
+        expect(await nbReprojectionsMemeSeconde()).toBe(1);
+      });
+
+      it('échec natif (`false`) : NATIVE_UPDATE_FAILED est journalisé', async () => {
+        mockUpdateSession.mockReturnValue(false);
+
+        await melodixPlayer.playQueue([morceau('a', 'Photo')], 0);
+        await flush();
+
+        expect(aJournalise('NATIVE_UPDATE_FAILED')).toBe(true);
+      });
+
+      it('échec natif (`false`) : une nouvelle tentative a lieu, pas de boucle figée', async () => {
+        mockUpdateSession.mockReturnValue(false);
+
+        await melodixPlayer.playQueue([morceau('a', 'Photo')], 0);
+        await flush();
+
+        const avant = mockUpdateSession.mock.calls.length;
+        await melodixPlayer.seekTo(30_000);
+
+        expect(mockUpdateSession.mock.calls.length).toBeGreaterThan(avant);
+      });
+
+      it('échec natif (`false`) : la lecture audio continue de fonctionner', async () => {
+        mockUpdateSession.mockReturnValue(false);
+
+        await melodixPlayer.playQueue([morceau('a', 'Photo')], 0);
+        await flush();
+
+        expect(melodixPlayer.getState().status).toBe('playing');
+
+        // Le pont reste opérationnel : une commande système atteint le moteur.
+        const pauseSpy = jest.spyOn(melodixPlayer, 'pause');
+        handleMediaCommand({ command: 'pause' });
+        expect(pauseSpy).toHaveBeenCalledTimes(1);
+      });
+
+      it('réussite (`true`) : la signature EST gravée — aucune reprojection sur payload identique', async () => {
+        mockUpdateSession.mockReturnValue(true);
+
+        await melodixPlayer.playQueue([morceau('a', 'Photo')], 0);
+        await flush();
+
+        expect(await nbReprojectionsMemeSeconde()).toBe(0);
+      });
+
+      it('réussite (`true`) : NATIVE_UPDATE_FAILED n’est PAS journalisé', async () => {
+        mockUpdateSession.mockReturnValue(true);
+
+        await melodixPlayer.playQueue([morceau('a', 'Photo')], 0);
+        await flush();
+
+        expect(aJournalise('NATIVE_UPDATE_FAILED')).toBe(false);
+      });
+
+      /**
+       * Contrat retenu : SEUL `true` vaut réussite. Un natif plus ancien, non
+       * lié, ou un wrapper qui renvoie `void` produit `undefined` — et
+       * `undefined` ne doit JAMAIS être lu comme un succès, sinon le défaut
+       * V82 reviendrait à l'identique.
+       */
+      it.each([
+        ['undefined (natif sans retour / module plus ancien)', undefined],
+        ['null', null],
+        ['chaîne « ok »', 'ok'],
+        ['nombre 1', 1],
+        ['booléen chaîné « false »', 'false'],
+      ])(
+        'valeur inattendue — %s : traitée comme un ÉCHEC, jamais comme une réussite',
+        async (_libelle, valeur) => {
+          mockUpdateSession.mockReturnValue(valeur);
+
+          await melodixPlayer.playQueue([morceau('a', 'Photo')], 0);
+          await flush();
+
+          expect(await nbReprojectionsMemeSeconde()).toBe(1);
+          expect(aJournalise('NATIVE_UPDATE_FAILED')).toBe(true);
+        }
+      );
+
+      it('anti-spam : un échec continu ne répète pas NATIVE_UPDATE_FAILED à chaque tick', async () => {
+        mockUpdateSession.mockReturnValue(false);
+
+        await melodixPlayer.playQueue([morceau('a', 'Photo')], 0);
+        await flush();
+
+        // Échecs consécutifs sur des payloads distincts (positions différentes).
+        await melodixPlayer.seekTo(30_000);
+        await melodixPlayer.seekTo(60_000);
+        await melodixPlayer.seekTo(90_000);
+
+        const echecs = lignesDeJournal().filter((l) =>
+          l.includes('NATIVE_UPDATE_FAILED')
+        );
+
+        expect(echecs.length).toBe(1);
+      });
+
+      it('récupération : après un échec, une projection réussie est à nouveau gravée et signalée', async () => {
+        mockUpdateSession.mockReturnValue(false);
+
+        await melodixPlayer.playQueue([morceau('a', 'Photo')], 0);
+        await flush();
+        expect(aJournalise('NATIVE_UPDATE_FAILED')).toBe(true);
+
+        mockUpdateSession.mockReturnValue(true);
+        await melodixPlayer.seekTo(30_000);
+
+        expect(aJournalise('NATIVE_UPDATE_RECOVERED')).toBe(true);
+        // La réussite grave la signature : plus de reprojection à l'identique.
+        expect(await nbReprojectionsMemeSeconde(30_000)).toBe(0);
+      });
     });
 
     it('teardown : plus aucune projection ni commande après démontage', async () => {
@@ -788,6 +1200,243 @@ describe('mediaBridge — projection MediaSession (phase 5A)', () => {
 
       expect(dernier.title).toBe('Again');
       expect(dernier.artworkUrl).toBe('https://img/nouvelle.png');
+    });
+  });
+
+  describe('Spotify Web : pas de MediaSession native concurrente', () => {
+    // Émission HYPOTHÉTIQUE d'un état moteur lu par Spotify Web (résolution
+    // confirmée par la page). En production c'est le port qui le produit ;
+    // ici on vérifie le CONTRACTE du bridge : la WebView (Chromium) porte la
+    // MediaSession système de cette lecture, la nôtre ne doit PAS la
+    // concurrencer.
+    const emitEngineState = (partial: Partial<PlayerState>): void => {
+      (
+        melodixPlayer as unknown as {
+          emit: (next: Partial<PlayerState>) => void;
+        }
+      ).emit(partial);
+    };
+
+    const etatSpotify = (
+      trackId: string,
+      titre: string,
+      status: PlayerState['status']
+    ): Partial<PlayerState> => ({
+      queue: [morceau(trackId, titre)],
+      index: 0,
+      current: morceau(trackId, titre),
+      status,
+      positionMillis: 10_000,
+      durationMillis: 200_000,
+      resolved: { provider: 'Spotify Web', sourceId: trackId, score: 100 },
+    });
+
+    it('état Spotify Web (playing) → AUCUNE projection native, aucune session', () => {
+      emitEngineState(etatSpotify('sp', 'Web Track', 'playing'));
+
+      expect(mockUpdateSession).not.toHaveBeenCalled();
+      expect(mockStopSession).not.toHaveBeenCalled(); // jamais activée
+    });
+
+    it("d'Audius (session active) à Spotify Web → stopSession, plus de projection", async () => {
+      await melodixPlayer.playQueue([morceau('a', 'Photo')], 0);
+      await flush();
+      expect(mockUpdateSession).toHaveBeenCalled(); // session Audius active
+
+      mockUpdateSession.mockClear();
+      mockStopSession.mockClear();
+
+      emitEngineState(etatSpotify('sp', 'Web Track', 'playing'));
+
+      // La session Audius est fermée (la WebView prend le relais) et aucune
+      // projection Spotify n'est poussée (pas de double notification).
+      expect(mockStopSession).toHaveBeenCalledTimes(1);
+      expect(mockUpdateSession).not.toHaveBeenCalled();
+    });
+
+    it('revenu à Audius après Spotify → la session native se RÉACTIVE', () => {
+      emitEngineState(etatSpotify('sp', 'Web Track', 'playing'));
+      expect(mockUpdateSession).not.toHaveBeenCalled();
+
+      // Un morceau Audius en lecture réelle réactive la session Media3.
+      emitEngineState({
+        queue: [morceau('b', 'Again')],
+        index: 0,
+        current: morceau('b', 'Again'),
+        status: 'playing',
+        positionMillis: 0,
+        durationMillis: 200_000,
+        resolved: { provider: 'Audius', sourceId: 'aud-x', score: 90 },
+      });
+
+      expect(mockUpdateSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: 'Again',
+          trackId: 'spotify:b',
+          isPlaying: true,
+        })
+      );
+    });
+
+    it('état Spotify Web pendant réglage DÉSACTIVÉ → rien du tout', () => {
+      setMediaBridgeEnabled(false);
+      emitEngineState(etatSpotify('sp', 'Web Track', 'playing'));
+
+      expect(mockUpdateSession).not.toHaveBeenCalled();
+      expect(mockStopSession).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('V70 (Bug 2) — une projection native ratée est RETENTÉE', () => {
+    const emitEngineState = (partial: Partial<PlayerState>): void => {
+      (
+        melodixPlayer as unknown as {
+          emit: (next: Partial<PlayerState>) => void;
+        }
+      ).emit(partial);
+    };
+
+    const playing = (track: PlayerTrack): Partial<PlayerState> => ({
+      queue: [track],
+      index: 0,
+      current: track,
+      status: 'playing',
+      positionMillis: 0,
+      durationMillis: track.durationMillis ?? 0,
+      resolved: null,
+    });
+
+    it('la notification n’est PAS figée sur l’ancien morceau après un échec', () => {
+      const morceauA = morceau('a', 'Morceau A');
+      const morceauB = morceau('b', 'Morceau B');
+
+      // 1) Lecture normale : la projection A passe.
+      emitEngineState(playing(morceauA));
+      expect(mockUpdateSession).toHaveBeenCalledTimes(1);
+
+      // 2) Android jette sur la projection du morceau B (exception tolérée
+      //    par callNative — c'est le comportement voulu, le moteur ne doit
+      //    jamais crasher à cause d'une couche de contrôle).
+      mockUpdateSession.mockImplementationOnce(() => {
+        throw new Error('native projection failed');
+      });
+      emitEngineState(playing(morceauB));
+      expect(mockUpdateSession).toHaveBeenCalledTimes(2);
+
+      // 3) Tick suivant sur le MÊME état : la projection doit être RETENTÉE.
+      //    Avant V70 la signature était gravée AVANT l'appel natif, donc cet
+      //    appel était dédupliqué et la notification restait sur « Morceau A ».
+      emitEngineState(playing(morceauB));
+      expect(mockUpdateSession).toHaveBeenCalledTimes(3);
+
+      // 4) Une projection réussie est bien dédupliquée ensuite (anti-spam
+      //    sur les ticks 500 ms conservé).
+      emitEngineState(playing(morceauB));
+      expect(mockUpdateSession).toHaveBeenCalledTimes(3);
+    });
+
+    it('la dernière projection RÉUSSIE porte bien le morceau courant', () => {
+      const morceauA = morceau('a', 'Morceau A');
+      const morceauB = morceau('b', 'Morceau B');
+
+      emitEngineState(playing(morceauA));
+      mockUpdateSession.mockImplementationOnce(() => {
+        throw new Error('native projection failed');
+      });
+      emitEngineState(playing(morceauB));
+      // Retentative réussie.
+      emitEngineState(playing(morceauB));
+
+      const lastCall =
+        mockUpdateSession.mock.calls[mockUpdateSession.mock.calls.length - 1];
+      expect(lastCall[0]).toMatchObject({
+        trackId: morceauB.id,
+        title: 'Morceau B',
+        isPlaying: true,
+      });
+    });
+  });
+
+  describe('V71 (Priorité 4) — changements de piste rapides', () => {
+    const emitEngineState = (partial: Partial<PlayerState>): void => {
+      (
+        melodixPlayer as unknown as {
+          emit: (next: Partial<PlayerState>) => void;
+        }
+      ).emit(partial);
+    };
+
+    const playing = (track: PlayerTrack): Partial<PlayerState> => ({
+      queue: [track],
+      index: 0,
+      current: track,
+      status: 'playing',
+      positionMillis: 0,
+      durationMillis: track.durationMillis ?? 0,
+      resolved: null,
+    });
+
+    it('A→B→C en rafale : la dernière projection porte C, aucune intermédiaire ne survit', () => {
+      const morceauA = morceau('a', 'Morceau A');
+      const morceauB = morceau('b', 'Morceau B');
+      const morceauC = morceau('c', 'Morceau C');
+
+      emitEngineState(playing(morceauA));
+      emitEngineState(playing(morceauB));
+      emitEngineState(playing(morceauC));
+
+      // Trois signatures distinctes ⇒ trois projections, dans l'ordre.
+      expect(mockUpdateSession).toHaveBeenCalledTimes(3);
+
+      const lastCall =
+        mockUpdateSession.mock.calls[mockUpdateSession.mock.calls.length - 1];
+      // La notification ne reste PAS figée sur un morceau intermédiaire.
+      expect(lastCall[0]).toMatchObject({
+        trackId: morceauC.id,
+        title: 'Morceau C',
+      });
+
+      const projectedTitles = mockUpdateSession.mock.calls.map(
+        (call) => call[0].title
+      );
+      expect(projectedTitles).toEqual(['Morceau A', 'Morceau B', 'Morceau C']);
+    });
+
+    it('un échec sur B n’empêche pas C d’être projeté correctement', () => {
+      const morceauA = morceau('a', 'Morceau A');
+      const morceauB = morceau('b', 'Morceau B');
+      const morceauC = morceau('c', 'Morceau C');
+
+      emitEngineState(playing(morceauA));
+
+      // Android jette sur B.
+      mockUpdateSession.mockImplementationOnce(() => {
+        throw new Error('native projection failed');
+      });
+      emitEngineState(playing(morceauB));
+      emitEngineState(playing(morceauC));
+
+      const lastCall =
+        mockUpdateSession.mock.calls[mockUpdateSession.mock.calls.length - 1];
+      expect(lastCall[0]).toMatchObject({
+        trackId: morceauC.id,
+        title: 'Morceau C',
+        isPlaying: true,
+      });
+    });
+
+    it('retour au morceau précédent : nouvelle projection (pas de déduplication abusive)', () => {
+      const morceauA = morceau('a', 'Morceau A');
+      const morceauB = morceau('b', 'Morceau B');
+
+      emitEngineState(playing(morceauA));
+      emitEngineState(playing(morceauB));
+      emitEngineState(playing(morceauA));
+
+      expect(mockUpdateSession).toHaveBeenCalledTimes(3);
+      const lastCall =
+        mockUpdateSession.mock.calls[mockUpdateSession.mock.calls.length - 1];
+      expect(lastCall[0]).toMatchObject({ trackId: morceauA.id });
     });
   });
 });

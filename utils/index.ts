@@ -21,6 +21,7 @@ export {
 } from './parsers';
 export {
   hexToRGB,
+  getColorForKey,
   getDisplayDate,
   getDisplayTime,
   getDisplayCopyrightText,

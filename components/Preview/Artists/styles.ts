@@ -1,10 +1,10 @@
 import { StyleSheet } from 'react-native';
-import { COLORS, Shapes } from '@config';
+import { APP_BACKGROUND_COLOR, COLORS, Shapes } from '@config';
 
 export const styles = StyleSheet.create({
   link: {
     paddingTop: 20,
-    backgroundColor: COLORS.PRIMARY,
+    backgroundColor: APP_BACKGROUND_COLOR,
   },
   container: {
     flexDirection: 'row',

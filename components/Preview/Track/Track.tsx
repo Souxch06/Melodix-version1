@@ -25,10 +25,18 @@ export type TrackPropsType = {
   explicit: boolean;
   forceDisableSaveIcon?: boolean;
   /**
-   * État de résolution (playlist) : badge discret — 🟢 Audius / 🔵 YouTube /
-   * ⚠️ Indisponible. undefined → rendu identique à avant (partout ailleurs).
+   * État de disponibilité (playlist) : badge discret — 🟢 Audius / 🔵 YouTube
+   * / ⚠️ Indisponible. `spotify-web` (Mission v7) = le lecteur Spotify Web
+   * est la source : PAS de badge (la preuve réelle intervient à la lecture,
+   * jamais un ratio inventé). undefined → rendu identique (partout ailleurs).
    */
-  availability?: 'audius' | 'youtube' | 'none' | 'pending' | 'resolving';
+  availability?:
+    | 'spotify-web'
+    | 'audius'
+    | 'youtube'
+    | 'none'
+    | 'pending'
+    | 'resolving';
   // Starts playback of this row (Spotify metadata matched to an Audius
   // stream). Undefined → the row renders inert exactly as before.
   onPress?: () => void;
@@ -69,6 +77,7 @@ export const Track = ({
 
   return (
     <Container
+      accessibilityLabel={`${title} — ${subtitle}`}
       style={styles.container}
       {...(onPress ? { onPress, accessibilityRole: 'button' as const } : {})}
     >
@@ -159,6 +168,11 @@ export const Track = ({
               : styles.isTrackUnsavedPressable
           }
           onPress={onToggleSaved}
+          accessibilityLabel={`${
+            isSaved
+              ? translations.trackRemoveSaved
+              : translations.trackSaveTrack
+          } — ${title}`}
           accessibilityRole="button"
         >
           <FontAwesome5

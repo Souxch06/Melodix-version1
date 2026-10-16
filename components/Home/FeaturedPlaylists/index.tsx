@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useRouter } from 'expo-router';
 
 import { getFeaturedPlaylists } from '@api';
 import { LibraryItemModel } from '@models';
@@ -8,6 +9,7 @@ import { translations } from '@data';
 import { Slider } from '../../Slider';
 
 export const FeaturedPlaylists = () => {
+  const router = useRouter();
   const [featuredPlaylists, setDataFeaturedPlaylists] = React.useState<
     LibraryItemModel[] | null
   >([
@@ -51,6 +53,7 @@ export const FeaturedPlaylists = () => {
       size={Sizes.MEDIUM}
       shape={Shapes.SQUARE_BORDER}
       withShowAll={true}
+      onShowAllPress={() => router.push('/home/see-all/featured-playlists')}
     />
   );
 };

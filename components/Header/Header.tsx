@@ -9,7 +9,7 @@ import * as Icons from '@expo/vector-icons';
 
 import { LibraryRelated } from './LibraryRelated';
 
-import { useUserData } from '@context';
+import { spotifyUnavailableBody, useUserData } from '@context';
 // Import direct (hors barrel) : langue active pour la salutation d'accueil.
 import { useTranslations } from '../../context/PreferencesContext';
 import {
@@ -31,7 +31,13 @@ export type HeaderPropsType = {
 
 export const Header = ({ tab }: HeaderPropsType) => {
   const { top: statusBarOffset } = useSafeAreaInsets();
-  const { userData, sessionStatus, signOut } = useUserData();
+  const {
+    userData,
+    sessionStatus,
+    signOut,
+    reloadUserData,
+    verificationFailure,
+  } = useUserData();
   const t = useTranslations();
   const router = useRouter();
   const [accountOpen, setAccountOpen] = React.useState(false);
@@ -50,9 +56,11 @@ export const Header = ({ tab }: HeaderPropsType) => {
           text: translations.loginSignOutConfirm,
           style: 'destructive',
           onPress: () => {
-            void signOut().then(() => {
-              router.replace({ pathname: '/login', params: {} });
-            });
+            // V29 — déconnexion = retour au MODE LOCAL, pas à un écran de
+            // connexion : l'app reste utilisable (recherche + lecture
+            // Audius → YouTube). « Se connecter » est une action de
+            // l'en-tête, plus une porte d'entrée.
+            void signOut();
           },
         },
       ]
@@ -65,8 +73,36 @@ export const Header = ({ tab }: HeaderPropsType) => {
       return;
     }
 
+    // Session Spotify présente mais identité non vérifiée : message exact et
+    // réessai — jamais l'alerte du mode local, qui affirmerait à tort qu'il
+    // n'y a « aucun compte ».
+    if (sessionStatus === 'spotify-unverified') {
+      Alert.alert(
+        translations.spotifyRestoreUnavailableTitle,
+        // V24 — corps CLASSÉ : 403 → « refus d'accès », jamais « erreur
+        // réseau temporaire ».
+        spotifyUnavailableBody(translations, verificationFailure),
+        [
+          { text: translations.accountCancel, style: 'cancel' },
+          {
+            text: translations.spotifyRestoreRetry,
+            onPress: () => void reloadUserData(),
+          },
+        ]
+      );
+      return;
+    }
+
     Alert.alert(translations.accountTitle, translations.accountLocalInfo, [
       { text: translations.accountCancel, style: 'cancel' },
+      {
+        // V29 — la connexion Spotify est FACULTATIVE : elle s'ouvre ici,
+        // comme action, jamais comme obstacle au démarrage.
+        text: translations.accountConnect,
+        onPress: () => {
+          router.push({ pathname: '/login', params: {} });
+        },
+      },
       {
         text: translations.accountClearHistory,
         style: 'destructive',
@@ -88,12 +124,15 @@ export const Header = ({ tab }: HeaderPropsType) => {
 
   // Accueil : salutation personnalisée « Bonjour, [Prénom] » à côté de l'avatar
   // (le titre « Accueil » des autres onglets reste inchangé).
+  // Salutation nominative UNIQUEMENT avec une identité Spotify vérifiée :
+  // pendant une restauration, `userData` porte le profil local (« Mélomane »),
+  // qui ne doit pas être présenté comme le nom du compte connecté.
   const homeHello = React.useMemo(
     () =>
-      tab === Pages.HOME
+      tab === Pages.HOME && sessionStatus === 'spotify'
         ? t.homeHello(firstNameOf(userData?.displayName ?? ''))
         : null,
-    [tab, userData, t]
+    [tab, userData, sessionStatus, t]
   );
 
   const height = React.useMemo(() => {
@@ -122,7 +161,10 @@ export const Header = ({ tab }: HeaderPropsType) => {
   }, [tab]);
 
   const handleHomeSearchPress = React.useCallback(() => {
-    router.push({ pathname: '/(tabs)/search', params: {} });
+    // `focus=1` : la loupe de l'accueil ouvre la recherche AVEC le clavier
+    // (l'utilisateur vient de demander à chercher). Ouvrir l'onglet
+    // Recherche directement ne déclenche pas ce paramètre.
+    router.push({ pathname: '/(tabs)/search', params: { focus: '1' } });
   }, [router]);
 
   // La roue ouvre le vrai écran Paramètres (/settings) ; le panneau « Compte

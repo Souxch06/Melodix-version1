@@ -9,6 +9,13 @@ jest.mock('@api', () => ({
   getArtistAlbums: jest.fn(),
 }));
 
+const mockPush = jest.fn();
+
+jest.mock('expo-router', () => ({
+  useRouter: () => ({ push: mockPush }),
+  useSegments: () => ['(tabs)', 'home'],
+}));
+
 jest.mock('../../../Slider', () => {
   const mockReact = jest.requireActual<typeof import('react')>('react');
   const { View: MockView } =

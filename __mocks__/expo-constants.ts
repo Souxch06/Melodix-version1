@@ -15,9 +15,13 @@ export enum UserInterfaceIdiom {
   Unsupported = 'unsupported',
 }
 
-const expoConfig: { extra: Record<string, unknown>; version?: string } = {
+const expoConfig: {
+  extra: Record<string, unknown>;
+  version?: string;
+  android?: { versionCode?: number };
+} = {
   extra: {},
-  version: '4.4.8-diagnostic',
+  version: '4.5.0-test.22',
 };
 
 const Constants = {
@@ -36,6 +40,14 @@ const Constants = {
       delete expoConfig.version;
     } else {
       expoConfig.version = version;
+    }
+  },
+  /** Tests uniquement : versionCode Android (build number du rapport V24). */
+  __setExpoConfigVersionCode(versionCode?: number): void {
+    if (versionCode === undefined) {
+      delete expoConfig.android;
+    } else {
+      expoConfig.android = { versionCode };
     }
   },
 };

@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useRouter } from 'expo-router';
 
 import { Slider } from '../../Slider';
 
@@ -8,6 +9,7 @@ import { Shapes, Sizes } from '@config';
 import { translations } from '@data';
 
 export const AfterListeningTopArtist = () => {
+  const router = useRouter();
   const [topArtistRecommendations, setTopArtistRecommendations] =
     React.useState<{
       recommendations: LibraryItemModel[] | null;
@@ -57,6 +59,15 @@ export const AfterListeningTopArtist = () => {
     };
   }, []);
 
+  // Aucun artiste écouté ou aucune proposition réelle → section masquée
+  // (jamais un titre suivi d'une rangée vide).
+  if (
+    !topArtistRecommendations.artist?.id ||
+    !topArtistRecommendations.recommendations?.length
+  ) {
+    return null;
+  }
+
   return (
     <Slider
       title={translations.afterListening(
@@ -66,6 +77,7 @@ export const AfterListeningTopArtist = () => {
       size={Sizes.MEDIUM}
       shape={Shapes.SQUARE}
       withShowAll={true}
+      onShowAllPress={() => router.push('/home/see-all/after-listening')}
     />
   );
 };

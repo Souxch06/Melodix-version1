@@ -42,6 +42,7 @@ describe('preferences — stockage local des réglages', () => {
       accent: 'bleu',
       backgroundAudio: false,
       startupVolume: 40,
+      spotifyWebPlayback: true,
     });
 
     const restored = await loadPreferences();
@@ -50,6 +51,7 @@ describe('preferences — stockage local des réglages', () => {
     expect(restored.accent).toBe('bleu');
     expect(restored.backgroundAudio).toBe(false);
     expect(restored.startupVolume).toBe(40);
+    expect(restored.spotifyWebPlayback).toBe(true);
     // La clé est versionnée (migration future sans casser les anciennes).
     expect(AsyncStorage.setItem).toHaveBeenCalledWith(
       PREFERENCES_STORAGE_KEY,

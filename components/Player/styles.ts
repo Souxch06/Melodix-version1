@@ -1,25 +1,32 @@
 import { StyleSheet } from 'react-native';
 
-import { COLORS } from '@config';
+import { COLORS, ELEVATION, PALETTE, RADIUS } from '@config';
 
+/**
+ * Surfaces du lecteur — alignées sur le design system (config/theme.ts).
+ *
+ * Identité retenue : bleu nuit profond + violet subtil. Le mini-lecteur est
+ * une surface SURÉLEVÉE (night600 + liseré violet) qui se détache du fond
+ * night900 sans crier — pas de gris neutre, pas de vert agressif.
+ */
 export const styles = StyleSheet.create({
   wrapper: {
     width: '96%',
     alignSelf: 'center',
-    backgroundColor: '#232323',
-    borderRadius: 14,
-    marginBottom: 6,
+    backgroundColor: PALETTE.night600,
+    borderColor: PALETTE.hairline,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderLeftWidth: StyleSheet.hairlineWidth,
+    borderRightWidth: StyleSheet.hairlineWidth,
+    borderRadius: RADIUS.lg,
+    marginBottom: RADIUS.sm,
     overflow: 'hidden',
-    elevation: 10,
-    shadowColor: COLORS.BLACK,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.45,
-    shadowRadius: 10,
+    ...ELEVATION.floating,
   },
   noticeBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: COLORS.RED,
+    backgroundColor: PALETTE.violet700,
     paddingHorizontal: 12,
     paddingVertical: 6,
   },
@@ -54,8 +61,8 @@ export const styles = StyleSheet.create({
   artwork: {
     width: 44,
     height: 44,
-    borderRadius: 8,
-    backgroundColor: COLORS.PRIMARY,
+    borderRadius: RADIUS.sm,
+    backgroundColor: PALETTE.night700,
   },
   info: {
     flex: 1,

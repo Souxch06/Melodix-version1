@@ -19,7 +19,16 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
  *                     historique) ;
  * - startupVolume   : volume 0..100 appliqué au démarrage du moteur
  *                     (melodixPlayer.setVolume) — défaut 100 (comportement
- *                     historique).
+ *                     historique) ;
+ * - spotifyWebPlayback : lecture via le lecteur Spotify Web (hôte WebView) —
+ *                     défaut true (Mission v7 : le Spotify Web Player est la
+ *                     source audio des pistes Spotify). La porte
+ *                     d'activation (flag local + validation physique
+ *                     consignée) est levée au démarrage par
+ *                     ensureProductionSpotifyWebActivation ; ce réglage
+ *                     reste le choix utilisateur (l'éteindre rend les
+ *                     pistes Spotify non lisibles — vraie erreur, pas de
+ *                     relais Audius/YouTube).
  */
 
 export type AppLanguage = 'fr' | 'en';
@@ -58,6 +67,7 @@ export type Preferences = {
   accent: string;
   backgroundAudio: boolean;
   startupVolume: number;
+  spotifyWebPlayback: boolean;
 };
 
 export const DEFAULT_PREFERENCES: Preferences = {
@@ -66,6 +76,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   accent: DEFAULT_ACCENT_ID,
   backgroundAudio: true,
   startupVolume: 100,
+  spotifyWebPlayback: true,
 };
 
 export const PREFERENCES_STORAGE_KEY = '@melodix/preferences.v1';
@@ -91,6 +102,10 @@ const sanitize = (raw: Partial<Preferences>): Preferences => ({
     typeof raw.startupVolume === 'number' && Number.isFinite(raw.startupVolume)
       ? Math.min(100, Math.max(0, Math.round(raw.startupVolume)))
       : 100,
+  spotifyWebPlayback:
+    typeof raw.spotifyWebPlayback === 'boolean'
+      ? raw.spotifyWebPlayback
+      : DEFAULT_PREFERENCES.spotifyWebPlayback,
 });
 
 export const loadPreferences = async (): Promise<Preferences> => {

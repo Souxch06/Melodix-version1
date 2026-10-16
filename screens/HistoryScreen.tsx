@@ -13,7 +13,14 @@ import { useRouter } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
 
 import { usePlayer } from '@context';
-import { COLORS } from '@config';
+import {
+  APP_BACKGROUND_COLOR,
+  PALETTE,
+  RADIUS,
+  SPACING,
+  TOUCH_TARGET,
+  TYPOGRAPHY,
+} from '@config';
 import {
   getRecentlyPlayedTracks,
   playerTrackFromHistoryEntry,
@@ -81,7 +88,7 @@ export const HistoryScreen = () => {
           onPress={() => router.back()}
           testID="history-back"
         >
-          <Ionicons color={COLORS.WHITE} name="chevron-back" size={28} />
+          <Ionicons color={PALETTE.textPrimary} name="chevron-back" size={28} />
         </Pressable>
         <Text style={styles.title}>Historique</Text>
       </View>
@@ -90,6 +97,7 @@ export const HistoryScreen = () => {
         <View style={styles.center} testID="history-error">
           <Text style={styles.message}>Historique indisponible.</Text>
           <Pressable
+            accessibilityLabel="Réessayer le chargement de l'historique"
             accessibilityRole="button"
             onPress={() => {
               setEntries(null);
@@ -103,11 +111,15 @@ export const HistoryScreen = () => {
         </View>
       ) : entries === null ? (
         <View style={styles.center} testID="history-loading">
-          <ActivityIndicator color={COLORS.WHITE} size="large" />
+          <ActivityIndicator color={PALETTE.accent} size="large" />
         </View>
       ) : entries.length === 0 ? (
         <View style={styles.center} testID="history-empty">
-          <Ionicons color={COLORS.GREY} name="time-outline" size={36} />
+          <Ionicons
+            color={PALETTE.textSecondary}
+            name="time-outline"
+            size={36}
+          />
           <Text style={styles.message}>Aucune écoute pour le moment.</Text>
         </View>
       ) : (
@@ -118,6 +130,7 @@ export const HistoryScreen = () => {
           renderItem={({ item }) => (
             <View style={styles.row}>
               <Pressable
+                accessibilityLabel={`Lire ${item.track.title} de ${item.track.subtitle}`}
                 accessibilityRole="button"
                 onPress={() => playEntry(item)}
                 style={styles.playArea}
@@ -131,7 +144,7 @@ export const HistoryScreen = () => {
                 ) : (
                   <View style={[styles.cover, styles.coverFallback]}>
                     <Ionicons
-                      color={COLORS.GREY}
+                      color={PALETTE.textSecondary}
                       name="musical-note"
                       size={22}
                     />
@@ -153,7 +166,11 @@ export const HistoryScreen = () => {
                 style={styles.remove}
                 testID={`history-remove-${item.track.id}`}
               >
-                <Ionicons color={COLORS.GREY} name="close" size={22} />
+                <Ionicons
+                  color={PALETTE.textSecondary}
+                  name="close"
+                  size={22}
+                />
               </Pressable>
             </View>
           )}
@@ -165,35 +182,62 @@ export const HistoryScreen = () => {
 
 const styles = StyleSheet.create({
   center: { alignItems: 'center', flex: 1, justifyContent: 'center' },
-  container: { backgroundColor: COLORS.PRIMARY, flex: 1 },
-  cover: { borderRadius: 5, height: 52, width: 52 },
+  container: { backgroundColor: APP_BACKGROUND_COLOR, flex: 1 },
+  cover: { borderRadius: RADIUS.sm, height: 52, width: 52 },
   coverFallback: {
     alignItems: 'center',
-    backgroundColor: '#252525',
+    backgroundColor: PALETTE.night600,
     justifyContent: 'center',
   },
   header: {
     alignItems: 'center',
     flexDirection: 'row',
-    gap: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
+    gap: SPACING.md,
+    paddingHorizontal: SPACING.lg,
+    paddingVertical: SPACING.md,
+    borderBottomColor: PALETTE.hairline,
+    borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  list: { padding: 16 },
-  message: { color: COLORS.LIGHT_GREY, marginTop: 12 },
+  list: { padding: SPACING.lg },
+  message: {
+    ...TYPOGRAPHY.body,
+    color: PALETTE.textSecondary,
+    marginTop: SPACING.md,
+  },
   playArea: { alignItems: 'center', flex: 1, flexDirection: 'row' },
-  remove: { padding: 12 },
-  retry: {
-    backgroundColor: COLORS.WHITE,
-    borderRadius: 18,
-    marginTop: 16,
-    paddingHorizontal: 18,
-    paddingVertical: 9,
+  remove: {
+    width: TOUCH_TARGET.minimum,
+    height: TOUCH_TARGET.minimum,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  retryText: { color: COLORS.PRIMARY, fontFamily: 'SF-Semibold' },
-  row: { alignItems: 'center', flexDirection: 'row', marginBottom: 12 },
-  subtitle: { color: COLORS.LIGHT_GREY, fontSize: 13, marginTop: 3 },
-  texts: { flex: 1, marginLeft: 12 },
-  title: { color: COLORS.WHITE, fontFamily: 'SF-Semibold', fontSize: 22 },
-  trackTitle: { color: COLORS.WHITE, fontSize: 15 },
+  retry: {
+    backgroundColor: PALETTE.accent,
+    borderRadius: RADIUS.pill,
+    marginTop: SPACING.lg,
+    minHeight: TOUCH_TARGET.comfortable,
+    justifyContent: 'center',
+    paddingHorizontal: SPACING.xl,
+    paddingVertical: SPACING.sm,
+  },
+  retryText: {
+    ...TYPOGRAPHY.label,
+    color: PALETTE.night900,
+    fontWeight: '700',
+  },
+  row: { alignItems: 'center', flexDirection: 'row', marginBottom: SPACING.md },
+  subtitle: {
+    ...TYPOGRAPHY.caption,
+    color: PALETTE.textSecondary,
+    marginTop: SPACING.xxs,
+  },
+  texts: { flex: 1, marginLeft: SPACING.md },
+  title: {
+    ...TYPOGRAPHY.title,
+    color: PALETTE.textPrimary,
+  },
+  trackTitle: {
+    ...TYPOGRAPHY.body,
+    color: PALETTE.textPrimary,
+  },
 });

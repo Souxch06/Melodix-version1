@@ -67,11 +67,13 @@ export const dtoAlbumToLibraryItem = (
 /** Recherche catalogue complète (pistes + albums). */
 export const backendSearchCatalog = async (
   query: string,
-  limit = 10
+  limit = 10,
+  options: { signal?: AbortSignal } = {}
 ): Promise<SearchResultsModel> => {
   const { results } = await backendGet<{ results: SearchResultsDTO }>(
     '/api/v1/search',
-    { q: query, limit: String(limit), types: 'tracks,albums' }
+    { q: query, limit: String(limit), types: 'tracks,albums' },
+    options.signal ? { signal: options.signal } : {}
   );
 
   return {

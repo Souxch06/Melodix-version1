@@ -11,20 +11,29 @@
  */
 import type { PlayerTrack } from '../player';
 import type { TrackSource } from '../audio/types';
+import { artistsFromSubtitle } from '@models';
 import type { TrackModel } from '@models';
 
 const AUDIUS_PREFIX = 'audius:';
+const YOUTUBE_PREFIX = 'youtube:';
 const SPOTIFY_PREFIX = 'spotify:';
 
-const sourceFromQueueId = (queueId: string): TrackSource =>
-  queueId.startsWith(AUDIUS_PREFIX)
-    ? { provider: 'audius', id: queueId.slice(AUDIUS_PREFIX.length) }
-    : {
-        provider: null,
-        id: queueId.startsWith(SPOTIFY_PREFIX)
-          ? queueId.slice(SPOTIFY_PREFIX.length)
-          : queueId,
-      };
+const sourceFromQueueId = (queueId: string): TrackSource => {
+  if (queueId.startsWith(AUDIUS_PREFIX)) {
+    return { provider: 'audius', id: queueId.slice(AUDIUS_PREFIX.length) };
+  }
+  if (queueId.startsWith(YOUTUBE_PREFIX)) {
+    // V30 : les pistes YouTube natives (recherche catalogue) se rejouent
+    // DIRECTEMENT depuis l'historique, sans matching.
+    return { provider: 'youtube', id: queueId.slice(YOUTUBE_PREFIX.length) };
+  }
+  return {
+    provider: null,
+    id: queueId.startsWith(SPOTIFY_PREFIX)
+      ? queueId.slice(SPOTIFY_PREFIX.length)
+      : queueId,
+  };
+};
 
 export const playerTrackFromHistoryEntry = ({
   id,
@@ -41,9 +50,7 @@ export const playerTrackFromHistoryEntry = ({
 }): PlayerTrack => ({
   id,
   title: snapshot?.title ?? title,
-  artists: snapshot?.subtitle
-    ? snapshot.subtitle.split(', ').filter(Boolean)
-    : [],
+  artists: artistsFromSubtitle(snapshot?.subtitle),
   album: snapshot?.albumName ?? null,
   durationMillis: snapshot?.durationMs ?? null,
   ...(typeof snapshot?.explicit === 'boolean'

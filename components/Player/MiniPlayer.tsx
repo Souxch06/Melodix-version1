@@ -61,8 +61,16 @@ export const MiniPlayer = () => {
     ? Math.min(positionMillis / durationMillis, 1)
     : 0;
 
-  const isBuffering = status === 'loading' || buffering;
+  // Même prédicat que le FullPlayer : préparation, résolution de la source
+  // et chargement du flux sont trois phases sans son — un seul et même
+  // indicateur d'attente.
+  const isBuffering =
+    status === 'loading' ||
+    status === 'resolving' ||
+    status === 'buffering' ||
+    buffering;
   const isPlaying = status === 'playing';
+  const hasEnded = status === 'ended';
 
   return (
     <View style={styles.wrapper}>
@@ -77,7 +85,7 @@ export const MiniPlayer = () => {
           <Text numberOfLines={1} style={styles.noticeText}>
             {notice.kind === 'not-available'
               ? translations.playerTrackUnavailable(notice.title)
-              : translations.playerTrackPlayFailed(notice.title)}
+              : translations.playerTrackPlayFailed(notice.title, notice.code)}
           </Text>
         </View>
       ) : null}
@@ -143,6 +151,18 @@ export const MiniPlayer = () => {
             style={styles.control}
             accessibilityLabel={translations.playerLoading}
           />
+        ) : hasEnded ? (
+          // Fin de file : le mini-lecteur propose de relire, il ne montre
+          // jamais « pause » sur un morceau terminé.
+          <Pressable
+            onPress={togglePlayPause}
+            style={styles.control}
+            accessibilityRole="button"
+            accessibilityLabel={translations.playerPlay}
+            testID="mini-player-replay"
+          >
+            <Ionicons name="reload" size={22} color={COLORS.WHITE} />
+          </Pressable>
         ) : (
           <Pressable
             onPress={togglePlayPause}

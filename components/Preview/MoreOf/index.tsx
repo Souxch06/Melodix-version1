@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useRouter, useSegments } from 'expo-router';
 
 import { Slider } from '../../Slider';
 
@@ -27,6 +28,13 @@ const loadingAlbums = (): LibraryItemModel[] =>
   }));
 
 export const MoreOf = ({ artists }: MoreOfPropsType) => {
+  const router = useRouter();
+  // Onglet COURANT : la page artiste vit sous home/search/library suivant
+  // l'écran d'où vient la Preview.
+  const pathname = useSegments().slice(0, 2).join('/') as
+    | '(tabs)/home'
+    | '(tabs)/search'
+    | '(tabs)/library';
   const [artistsAlbums, setArtistsAlbums] = React.useState<ArtistAlbums[]>([
     { artist: '', albums: loadingAlbums() },
   ]);
@@ -72,14 +80,25 @@ export const MoreOf = ({ artists }: MoreOfPropsType) => {
     };
   }, [checkArtistIDisEmpty, artists]);
 
-  return artistsAlbums.map(({ artist, albums }, index) => (
-    <Slider
-      key={index}
-      title={`${translations.moreOf} ${artist}`}
-      slides={albums}
-      size={Sizes.MEDIUM}
-      shape={Shapes.SQUARE_BORDER}
-      withShowAll={true}
-    />
-  ));
+  return artistsAlbums.map(({ artist, albums }, index) => {
+    // La page artiste porte TOUTE la discographie : c'est le « tout
+    // afficher » de cette section — seulement quand l'id existe.
+    const artistId = artists?.[index]?.id;
+
+    return (
+      <Slider
+        key={index}
+        title={`${translations.moreOf} ${artist}`}
+        slides={albums}
+        size={Sizes.MEDIUM}
+        shape={Shapes.SQUARE_BORDER}
+        withShowAll={Boolean(artistId)}
+        onShowAllPress={
+          artistId
+            ? () => router.push(`/${pathname}/artist/${artistId}`)
+            : undefined
+        }
+      />
+    );
+  });
 };

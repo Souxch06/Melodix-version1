@@ -4,6 +4,7 @@ import { isSpotifySessionActive, SpotifyApiError } from '@services';
 import { audiusGet } from '../audius/client';
 import {
   audiusTrackToTrackModel,
+  artworkUrl,
   type AudiusPlaylistTracksRaw,
 } from '../audius/trending';
 import type { AudiusTrackMatch } from '../audius/searchTracks';
@@ -49,7 +50,9 @@ export const getPlaylist = async (
       ownerId: raw?.user?.handle ?? '',
       info: '',
       description: raw?.description ?? '',
-      imageURL: '',
+      // Pochette RÉELLE de la playlist Audius (même extracteur que les
+      // cartes de la liste) : jamais '' en dur quand Audius la fournit.
+      imageURL: artworkUrl(raw?.artwork),
       tracks: { total: 0 },
     };
   }

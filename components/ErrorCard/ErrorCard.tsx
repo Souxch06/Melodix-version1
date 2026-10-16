@@ -44,6 +44,7 @@ export const ErrorCard = ({
       </Text>
       {body ? <Text style={styles.body}>{body}</Text> : null}
       <Pressable
+        accessibilityLabel={translations.homeRetry}
         accessibilityRole="button"
         onPress={onRetry}
         style={({ pressed }) => [

@@ -7,8 +7,18 @@ set -Eeuo pipefail
 APK=${1:?Usage: verify-android-apk.sh APK [rapport]}
 REPORT=${2:-apk-inspection.txt}
 EXPECTED_PACKAGE=${EXPECTED_PACKAGE:-com.souxch06.melodix}
-EXPECTED_VERSION_CODE=${EXPECTED_VERSION_CODE:-44008}
-EXPECTED_VERSION_NAME=${EXPECTED_VERSION_NAME:-4.4.8-diagnostic}
+# Version attendue : source UNIQUE = app.config.js. Des constantes en dur
+# (45002 / 4.5.0-test.2) divergeaient à chaque bump. `node` est disponible.
+# Les variables EXPECTED_* restent des surcharges explicites (le workflow les
+# passe) ; le repli ne sert qu'à un usage local sans node.
+if [ -z "${EXPECTED_VERSION_CODE:-}" ]; then
+  EXPECTED_VERSION_CODE=$(node -p "require('./app.config.js').expo.android.versionCode" 2>/dev/null || true)
+fi
+[ -n "${EXPECTED_VERSION_CODE:-}" ] || EXPECTED_VERSION_CODE=45003
+if [ -z "${EXPECTED_VERSION_NAME:-}" ]; then
+  EXPECTED_VERSION_NAME=$(node -p "require('./app.config.js').expo.version" 2>/dev/null || true)
+fi
+[ -n "${EXPECTED_VERSION_NAME:-}" ] || EXPECTED_VERSION_NAME=4.5.0-test.3
 EXPECTED_MIN_SDK=${EXPECTED_MIN_SDK:-23}
 EXPECTED_TARGET_SDK=${EXPECTED_TARGET_SDK:-34}
 EXPECTED_SCHEME=${EXPECTED_SCHEME:-melodix}

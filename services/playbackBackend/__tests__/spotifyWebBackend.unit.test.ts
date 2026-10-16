@@ -25,6 +25,37 @@ describe('Spotify Web standards-only Media Session probe', () => {
       /cookie|localStorage|sessionStorage|XMLHttpRequest|\bfetch\b|querySelector|createMediaKeys|setMediaKeys|generateRequest|token/i
     );
   });
+
+  /**
+   * V68 — DEUX propriétés de SÉCURITÉ du script injecté, jusqu'ici non
+   * verrouillées alors que le garde ci-dessus annonce déjà « standards-only ».
+   *
+   * 1) Le refus honnête DOIT rester dans le script. Le pont observe le lecteur
+   *    web via navigator.mediaSession mais ne le PILOTE JAMAIS : toute commande
+   *    reçue répond `no-authorized-execution-surface`. Il n'existe aucune
+   *    surface d'exécution autorisée depuis l'intérieur de la page ; la seule
+   *    façon de piloter le lecteur web serait un contournement (API internes,
+   *    extraction de jeton, usurpation de navigateur) — explicitement interdit.
+   *    Sans cette assertion, un remplacement du refus par un vrai pilote
+   *    passerait inaperçu : les 6 tests qui assertent ce code vérifient sa
+   *    RÉCEPTION par l'app, pas sa présence dans le script.
+   *
+   * 2) La liste d'interdiction était incomplète : `querySelector` y figurait,
+   *    mais pas les autres sélecteurs DOM ni la synthèse d'événements. Un
+   *    pilotage par `getElementById(...).click()` ou par `dispatchEvent`
+   *    serait donc passé au travers d'un garde censé l'empêcher.
+   */
+  it('refuse toute commande au lieu de piloter la page (aucune surface d exécution)', () => {
+    expect(SPOTIFY_WEB_MEDIA_SESSION_PROBE).toContain(
+      'no-authorized-execution-surface'
+    );
+    // Ni sélection DOM, ni synthèse d événement, ni évaluation dynamique :
+    // autant de voies qui permettraient de piloter le lecteur web sans aucun
+    // des jetons déjà interdits ci-dessus.
+    expect(SPOTIFY_WEB_MEDIA_SESSION_PROBE).not.toMatch(
+      /getElementById|getElementsByTagName|getElementsByClassName|dispatchEvent|KeyboardEvent|MouseEvent|\.click\(|\beval\b|new\s+Function\s*\(/
+    );
+  });
 });
 
 describe('Spotify Web playback state normalization', () => {

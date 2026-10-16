@@ -1,7 +1,7 @@
 {
   "name": "melodix",
   "main": "expo-router/entry",
-  "version": "4.4.8-diagnostic",
+  "version": "4.5.0-test.37",
   "engines": {
     "node": ">=20",
     "yarn": ">=1.22.17"
@@ -24,13 +24,17 @@
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
+    "test:online": "jest --testMatch '**/__tests__/**/*.online.test.ts' --runInBand",
     "structure:win": "cmd.exe /C \"tree /F\"",
-    "structure:os": "tree -d ."
+    "structure:os": "tree -d .",
+    "android": "expo run:android",
+    "ios": "expo run:ios"
   },
   "dependencies": {
     "@expo/vector-icons": "^14.0.3",
     "@gorhom/bottom-sheet": "^4.6.4",
     "@react-native-async-storage/async-storage": "1.23.1",
+    "@react-native-community/netinfo": "^12.0.1",
     "@react-navigation/native": "^6.1.18",
     "@react-navigation/stack": "^6.4.1",
     "@shopify/react-native-skia": "1.2.3",
@@ -38,6 +42,7 @@
     "expo-auth-session": "~5.5.2",
     "expo-av": "~14.0.7",
     "expo-blur": "^13.0.2",
+    "expo-clipboard": "~6.0.0",
     "expo-constants": "~16.0.2",
     "expo-crypto": "~13.0.2",
     "expo-file-system": "^17.0.1",

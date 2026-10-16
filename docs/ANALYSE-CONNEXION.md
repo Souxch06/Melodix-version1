@@ -27,10 +27,10 @@ morceau n'est joué.
 Deux méthodes, produisant toutes deux un **token d'API Web Spotify** stocké
 dans `AsyncStorage` :
 
-| Méthode              | Principe                                                                                                                                      | Durée                                                                   |
-| :------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------- | :---------------------------------------------------------------------- |
-| Connexion rapide     | Token copié depuis le tutoriel de developer.spotify.com                                                                                       | 1 h, non renouvelable                                                   |
-| Connexion permanente | OAuth _Authorization Code + PKCE_ (expo-auth-session) avec un **Client ID** saisi par l'utilisateur ou intégré au build (`SPOTIFY_CLIENT_ID`) | Renouvellement auto ; reconnexion demandée par Spotify tous les ~6 mois |
+| Méthode              | Principe                                                                                                                                                                                              | Durée                                                                   |
+| :------------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :---------------------------------------------------------------------- |
+| Connexion rapide     | Token copié depuis le tutoriel de developer.spotify.com                                                                                                                                               | 1 h, non renouvelable                                                   |
+| Connexion permanente | OAuth _Authorization Code + PKCE_ (expo-auth-session) avec le **Client ID** du projet intégré au build (source unique `app.config.js`, override `SPOTIFY_CLIENT_ID`) — jamais saisi par l'utilisateur | Renouvellement auto ; reconnexion demandée par Spotify tous les ~6 mois |
 
 Mécanismes déjà en place et conservés :
 

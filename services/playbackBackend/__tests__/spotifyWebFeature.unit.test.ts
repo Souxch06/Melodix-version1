@@ -16,37 +16,40 @@ const ROOT = path.resolve(__dirname, '../../..');
 const read = (relative: string): string =>
   fs.readFileSync(path.join(ROOT, relative), 'utf8');
 
-describe('feature flag Spotify Web : désactivé par défaut, double verrou', () => {
+describe('activation Spotify Web : technique et physique séparées (audit V21)', () => {
   afterEach(() => {
     resetSpotifyWebPlaybackFeatureForTesting();
   });
 
-  it('le défaut absolu est un flag false et une porte physique fermée', () => {
+  it('le défaut absolu est un flag false et une validation NON TESTÉE (jamais auto-consignée)', () => {
     expect(isSpotifyWebPlaybackEnabled()).toBe(false);
     expect(getSpotifyWebPhysicalValidation()).toBe('NOT_TESTED');
     expect(getSpotifyWebPhysicalValidationEvidence()).toBeNull();
+    const decision = resolveSpotifyWebPlaybackActivation();
+    expect(decision.active).toBe(false);
+    expect(decision.physicalValidation).toBe('NOT_TESTED');
   });
 
-  it('flag désactivé → la sélection ne contient QUE le moteur actuel', () => {
+  it('flag désactivé → inactif, blocker unique « flag-local-desactive », moteur actuel seul', () => {
     const decision = resolveSpotifyWebPlaybackActivation();
     expect(decision.active).toBe(false);
     expect(decision.engines).toEqual(['audius-youtube']);
-    expect(decision.blockers).toEqual([
-      'flag-local-desactive',
-      'validation-physique-non-consignee',
-    ]);
+    expect(decision.blockers).toEqual(['flag-local-desactive']);
   });
 
-  it('flag activé SANS validation physique → toujours le moteur actuel seul', () => {
+  it('V21 — flag activé SANS validation physique → activation technique OUI, statut honnête NOT_TESTED (non bloquant)', () => {
     setSpotifyWebPlaybackEnabled(true);
-    expect(isSpotifyWebPlaybackEnabled()).toBe(true);
     const decision = resolveSpotifyWebPlaybackActivation();
-    expect(decision.active).toBe(false);
-    expect(decision.engines).toEqual(['audius-youtube']);
-    expect(decision.blockers).toEqual(['validation-physique-non-consignee']);
+    expect(decision.active).toBe(true);
+    // Insertion devant le moteur existant, sans le retirer.
+    expect(decision.engines).toEqual(['spotify-web', 'audius-youtube']);
+    expect(decision.blockers).toEqual([]);
+    // Le statut physique est exposé honnêtement — et ne bloque rien.
+    expect(decision.physicalValidation).toBe('NOT_TESTED');
+    expect(getSpotifyWebPhysicalValidation()).toBe('NOT_TESTED');
   });
 
-  it('la porte refuse une validation sans preuve documentée', () => {
+  it('la consigne physique exige une preuve documentée non vide (jamais un booléen)', () => {
     expect(() => recordSpotifyWebPhysicalValidation(true, '   ')).toThrow(
       /preuve documentée/
     );
@@ -54,41 +57,59 @@ describe('feature flag Spotify Web : désactivé par défaut, double verrou', ()
       /preuve documentée/
     );
     expect(getSpotifyWebPhysicalValidation()).toBe('NOT_TESTED');
+    expect(getSpotifyWebPhysicalValidationEvidence()).toBeNull();
   });
 
-  it('double verrou levé → Spotify Web s’INSÈRE sans retirer le fallback', () => {
+  it('consigne PASSED avec preuve → le statut est exposé dans la décision (et l’activation reste technique)', () => {
+    setSpotifyWebPlaybackEnabled(true);
     recordSpotifyWebPhysicalValidation(
       true,
       'phone-run 2026-10-XX: audio réel + source media-session consignés dans docs/SPOTIFY-WEB-PHYSICAL-TEST.md'
     );
-    setSpotifyWebPlaybackEnabled(true);
     const decision = resolveSpotifyWebPlaybackActivation();
     expect(decision.active).toBe(true);
-    expect(decision.blockers).toEqual([]);
-    // Insertion devant le moteur existant : Audius → YouTube reste présent.
+    expect(decision.physicalValidation).toBe('PASSED_ON_DEVICE');
     expect(decision.engines).toEqual(['spotify-web', 'audius-youtube']);
+    expect(decision.blockers).toEqual([]);
     expect(decision.engines[decision.engines.length - 1]).toBe(
       'audius-youtube'
     );
   });
 
-  it('une porte refermée désactive immédiatement, même flag à true', () => {
-    recordSpotifyWebPhysicalValidation(true, 'preuve temporaire');
+  it('V21 — lever la consigne physique ne désactive PAS l’activation (le flag est l’unique verrou)', () => {
     setSpotifyWebPlaybackEnabled(true);
+    recordSpotifyWebPhysicalValidation(true, 'preuve temporaire');
     expect(resolveSpotifyWebPlaybackActivation().active).toBe(true);
     recordSpotifyWebPhysicalValidation(false, null);
     const decision = resolveSpotifyWebPlaybackActivation();
-    expect(decision.active).toBe(false);
-    expect(decision.engines).toEqual(['audius-youtube']);
+    // Statut honnêtement NOT_TESTED…
+    expect(decision.physicalValidation).toBe('NOT_TESTED');
     expect(getSpotifyWebPhysicalValidationEvidence()).toBeNull();
+    // …mais l’activation technique reste levée (flag).
+    expect(decision.active).toBe(true);
+    expect(decision.engines).toEqual(['spotify-web', 'audius-youtube']);
   });
 
-  it('la bascule du flag n’est pas une preuve de lecture : aucun état fabriqué', () => {
+  it('flag désactivé → inactif immédiatement, même consigne PASSED en place', () => {
     setSpotifyWebPlaybackEnabled(true);
-    // Aucun objet backend n’est instancié ni piloté par le module de flag ;
-    // sa seule surface est décisionnelle. On vérifie l’absence d’effets :
+    recordSpotifyWebPhysicalValidation(true, 'preuve');
+    setSpotifyWebPlaybackEnabled(false);
+    const decision = resolveSpotifyWebPlaybackActivation();
+    expect(decision.active).toBe(false);
+    expect(decision.engines).toEqual(['audius-youtube']);
+    expect(decision.blockers).toEqual(['flag-local-desactive']);
+    expect(decision.physicalValidation).toBe('PASSED_ON_DEVICE');
+  });
+
+  it('la bascule du flag n’est pas une preuve : ni lecture, ni consigne physique fabriquées', () => {
+    setSpotifyWebPlaybackEnabled(true);
+    // Aucun objet backend n’est instancié ni piloté par le module ; sa
+    // seule surface est décisionnelle. La consigne physique n’est JAMAIS
+    // un effet du flag (correction V21 de la consigne automatique).
     expect(isSpotifyWebPlaybackEnabled()).toBe(true);
-    expect(resolveSpotifyWebPlaybackActivation().active).toBe(false);
+    expect(resolveSpotifyWebPlaybackActivation().active).toBe(true);
+    expect(getSpotifyWebPhysicalValidation()).toBe('NOT_TESTED');
+    expect(getSpotifyWebPhysicalValidationEvidence()).toBeNull();
   });
 });
 

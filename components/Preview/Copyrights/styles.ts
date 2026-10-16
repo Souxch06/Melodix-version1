@@ -1,19 +1,16 @@
 import { StyleSheet } from 'react-native';
-import { COLORS } from '@config';
+import { APP_BACKGROUND_COLOR, SPACING, TYPOGRAPHY } from '@config';
 
 export const styles = StyleSheet.create({
   view: {
     paddingTop: 20,
     paddingHorizontal: 16,
     flexDirection: 'column',
-    backgroundColor: COLORS.PRIMARY,
+    backgroundColor: APP_BACKGROUND_COLOR,
   },
   text: {
-    marginTop: 5,
-    fontSize: 13,
-    lineHeight: 13,
-    fontFamily: 'SF-Regular',
-    color: COLORS.WHITE,
-    minHeight: 13,
+    ...TYPOGRAPHY.caption,
+    marginTop: SPACING.xxs,
+    minHeight: TYPOGRAPHY.caption.lineHeight,
   },
 });

@@ -273,4 +273,188 @@ describe('api/spotify/playlist — endpoint /items (contrat actuel)', () => {
       sentToScreen: 1,
     });
   });
+
+  it('playlist VIDE : aucune ligne, aucune erreur', async () => {
+    apiMock.mockResolvedValueOnce({ items: [], next: null, total: 0 });
+
+    await expect(getSpotifyPlaylistTracks('pl')).resolves.toEqual([]);
+    expect(apiMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('1 morceau : une seule page, next === null', async () => {
+    apiMock.mockResolvedValueOnce({
+      items: [item('only', 'Unique', ['Solo'])],
+      next: null,
+      total: 1,
+    });
+
+    const tracks = await getSpotifyPlaylistTracks('pl');
+
+    expect(tracks.map(({ id }) => id)).toEqual(['only']);
+    expect(apiMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('51 morceaux : DEUX pages suivies via next, aucun doublon', async () => {
+    const first = Array.from({ length: 50 }, (_, i) =>
+      item(`t${i}`, `S${i}`, ['A'])
+    );
+    const second = [item('t50', 'S50', ['A'])];
+
+    apiMock
+      .mockResolvedValueOnce({
+        items: first,
+        next: 'https://api.spotify.com/v1/playlists/pl/items?limit=50&offset=50',
+        total: 51,
+      })
+      .mockResolvedValueOnce({ items: second, next: null, total: 51 });
+
+    const tracks = await getSpotifyPlaylistTracks('pl');
+
+    expect(tracks).toHaveLength(51);
+    expect(new Set(tracks.map(({ id }) => id)).size).toBe(51);
+    expect(tracks[50].id).toBe('t50');
+    expect(apiMock).toHaveBeenCalledTimes(2);
+    // Le curseur `next` est réutilisé TEL QUEL (aucun offset reconstruit).
+    expect(apiMock.mock.calls[1][0]).toBe(
+      'https://api.spotify.com/v1/playlists/pl/items?limit=50&offset=50'
+    );
+  });
+
+  it('100+ morceaux : toutes les pages jusqu à next === null', async () => {
+    const pageOf = (start: number, size: number, next: string | null) => ({
+      items: Array.from({ length: size }, (_, i) =>
+        item(`t${start + i}`, `S${start + i}`, ['A'])
+      ),
+      next,
+      total: 120,
+    });
+
+    apiMock
+      .mockResolvedValueOnce(
+        pageOf(0, 50, 'https://api.spotify.com/v1/playlists/pl/items?offset=50')
+      )
+      .mockResolvedValueOnce(
+        pageOf(
+          50,
+          50,
+          'https://api.spotify.com/v1/playlists/pl/items?offset=100'
+        )
+      )
+      .mockResolvedValueOnce(pageOf(100, 20, null));
+
+    const tracks = await getSpotifyPlaylistTracks('pl');
+
+    expect(tracks).toHaveLength(120);
+    expect(apiMock).toHaveBeenCalledTimes(3);
+    expect(tracks[119].id).toBe('t119');
+  });
+
+  it('page native à offset 50 : l offset demandé est respecté (contrat écran)', async () => {
+    apiMock.mockResolvedValueOnce({
+      items: [item('mid', 'Milieu', ['A'])],
+      next: null,
+    });
+
+    await getSpotifyPlaylistTracksPage('pl', { limit: 50, offset: 50 });
+
+    const [url] = apiMock.mock.calls[0] as [string];
+    expect(url).toContain('/playlists/pl/items');
+    expect(url).toContain('limit=50');
+    expect(url).toContain('offset=50');
+  });
+
+  it('ISRC présent → conservé ; ISRC absent → null (le morceau reste)', async () => {
+    apiMock.mockResolvedValueOnce({
+      items: [
+        item('avec', 'Avec ISRC', ['A']),
+        {
+          item: {
+            id: 'sans',
+            name: 'Sans ISRC',
+            type: 'track',
+            artists: [{ name: 'B' }],
+            album: { name: 'Album B', images: [] },
+          },
+        },
+      ],
+      next: null,
+    });
+
+    const tracks = await getSpotifyPlaylistTracks('pl');
+
+    expect(tracks.map(({ id }) => id)).toEqual(['avec', 'sans']);
+    expect(tracks[0].isrc).toBe('FRABC2412345');
+    expect(tracks[1].isrc).toBeNull();
+    // Jamais de crash ni de ligne perdue à cause d une métadonnée absente.
+    expect(tracks[1].imageURL).toBeUndefined();
+  });
+});
+
+/**
+ * V65 — ERREUR EN COURS DE PAGINATION.
+ *
+ * `collectAllPages` accumule les pages puis renvoie le tout. Avant V65, une
+ * exception levée à la page N (429 transitoire, 5xx, coupure réseau) se
+ * propageait hors de la fonction : les pistes des pages 1..N-1, pourtant
+ * reçues et valides, étaient JETÉES et l'écran affichait zéro titre avec une
+ * erreur. Une playlist de 500 titres disparaissait donc à cause d'un seul
+ * incident sur la 3e page.
+ *
+ * Attente : ce qui a été réellement reçu est conservé ; l'échec est signalé
+ * par les compteurs de diagnostic, et l'absence totale de donnée reste une
+ * erreur (rien à afficher = l'erreur est l'information utile).
+ */
+describe('api/spotify/playlist — erreur en cours de pagination (V65)', () => {
+  beforeEach(() => {
+    apiMock.mockReset();
+    logMock.mockClear();
+  });
+
+  const page = (from: number, count: number, next: string | null) => ({
+    items: Array.from({ length: count }, (_, i) =>
+      item(`t${from + i}`, `Titre ${from + i}`, ['Artiste'])
+    ),
+    total: 150,
+    next,
+  });
+
+  it('un échec à la page 3 conserve les 100 pistes des pages 1 et 2', async () => {
+    apiMock.mockResolvedValueOnce(page(0, 50, 'p2'));
+    apiMock.mockResolvedValueOnce(page(50, 50, 'p3'));
+    apiMock.mockRejectedValueOnce(
+      new SpotifyApiError('rate-limited', 'Trop de requêtes.', 429)
+    );
+
+    const tracks = await getSpotifyPlaylistTracks('pl-1');
+
+    // LA régression : avant V65 cette promesse REJETAIT et 0 piste survivait.
+    expect(tracks).toHaveLength(100);
+    expect(tracks[0].title).toBe('Titre 0');
+    expect(tracks[99].title).toBe('Titre 99');
+  });
+
+  it('un échec à la page 3 est quand même JOURNALISÉ (pas de perte silencieuse)', async () => {
+    apiMock.mockResolvedValueOnce(page(0, 50, 'p2'));
+    apiMock.mockResolvedValueOnce(page(50, 50, 'p3'));
+    apiMock.mockRejectedValueOnce(
+      new SpotifyApiError('network', 'Spotify est injoignable.')
+    );
+
+    const tracks = await getSpotifyPlaylistTracks('pl-1');
+
+    expect(tracks).toHaveLength(100);
+    const logged = logMock.mock.calls.map((call) => call[0]);
+    expect(logged).toContain('playlist.items.truncated');
+  });
+
+  it('échec dès la PREMIÈRE page : l erreur est propagée (rien à afficher)', async () => {
+    apiMock.mockRejectedValueOnce(
+      new SpotifyApiError('network', 'Spotify est injoignable.')
+    );
+
+    await expect(getSpotifyPlaylistTracks('pl-1')).rejects.toThrow(
+      'Spotify est injoignable.'
+    );
+    expect(apiMock).toHaveBeenCalledTimes(1);
+  });
 });

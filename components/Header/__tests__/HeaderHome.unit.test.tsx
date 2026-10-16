@@ -42,14 +42,17 @@ describe('Header — accueil : salutation + loupe recherche + roue paramètres',
     );
   });
 
-  it("la loupe navigue vers l'onglet Recherche (écran existant)", () => {
+  it("la loupe navigue vers l'onglet Recherche avec auto-focus (écran existant)", () => {
     const { getByTestId } = render(<Header tab={Pages.HOME} />);
 
     fireEvent.press(getByTestId('header-home-search'));
 
+    // `focus=1` : l'utilisateur vient de toucher une LOUPE, il veut taper.
+    // Ouvrir l'onglet Recherche directement n'envoie pas ce paramètre — le
+    // clavier ne s'ouvre alors pas et les genres restent parcourables.
     expect(mockPush).toHaveBeenCalledWith({
       pathname: '/(tabs)/search',
-      params: {},
+      params: { focus: '1' },
     });
   });
 

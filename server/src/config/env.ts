@@ -49,16 +49,13 @@ export const env = {
   },
   spotify: {
     /**
-     * Budget horaire de requêtes vers l'API interne de Spotify.
-     * Technique non officielle — rester conservateur (cf. la politique du
-     * projet de référence : 200/h).
+     * Budget horaire de requêtes vers Spotify.
+     * Rester conservateur (cf. la politique du projet de référence : 200/h).
      */
     maxRequestsPerHour: parsePositiveInt(
       process.env.MELODIX_SPOTIFY_MAX_REQUESTS_PER_HOUR,
       200
     ),
-    /** Surcharge du hash de la persisted query searchDesktop (rotation). */
-    searchHashOverride: process.env.MELODIX_SPOTIFY_SEARCH_HASH ?? '',
   },
   cache: {
     searchTtlSeconds: parsePositiveInt(

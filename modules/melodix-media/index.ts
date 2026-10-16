@@ -30,7 +30,7 @@ export type MediaSessionPayload = {
 };
 
 type NativeMelodixMedia = {
-  updateSession: (payload: MediaSessionPayload) => void;
+  updateSession: (payload: MediaSessionPayload) => boolean;
   stopSession: () => void;
   requestNotificationPermission: () => boolean | null;
   // DIAG 4.4.7 (temporaire) : journal persistant + drapeaux d'isolation.
@@ -65,12 +65,25 @@ const getNativeModule = (): NativeMelodixMedia | null => {
 export const isMelodixMediaAvailable = (): boolean =>
   getNativeModule() !== null;
 
-/** Projette l'état de lecteur vers la MediaSession (5A : métadonnées+état). */
-export const updateSession = (payload: MediaSessionPayload): void => {
+/**
+ * Projette l'état de lecteur vers la MediaSession (5A : métadonnées+état).
+ *
+ * CONTRAT V83 — renvoie `true` UNIQUEMENT si le natif a explicitement confirmé
+ * la remise. Tout le reste vaut `false` : `false`, `undefined` (module absent,
+ * natif plus ancien, wrapper `void`), valeur inattendue, ou exception. **Un
+ * échec n'est jamais interprété comme une réussite** — c'est précisément le
+ * défaut démontré en V82 §4.
+ *
+ * ⚠️ `true` confirme la REMISE au main thread Android, pas l'affichage : le
+ * travail natif réel est différé. Voir
+ * `docs/audits/V83-NATIVE-PROJECTION-FAILURE.md`, §Limites.
+ */
+export const updateSession = (payload: MediaSessionPayload): boolean => {
   try {
-    getNativeModule()?.updateSession(payload);
+    return getNativeModule()?.updateSession(payload) === true;
   } catch {
     // Jamais de crash audio pour une couche de contrôle (phase 5A, §11).
+    return false;
   }
 };
 
@@ -96,6 +109,30 @@ export const requestMediaNotificationPermission = (): boolean | null => {
     return getNativeModule()?.requestNotificationPermission() ?? null;
   } catch {
     return null; // Tolérant : jamais de blocage pour la lecture.
+  }
+};
+
+/**
+ * Abonnement au signal système « casque/Bluetooth débranché »
+ * (ACTION_AUDIO_BECOMING_NOISY, §11). Le natif ne fait que NOTIFIER : c'est
+ * le moteur JS qui met en pause. NO-OP silencieux hors Android natif.
+ */
+export const addAudioBecomingNoisyListener = (
+  listener: () => void
+): (() => void) => {
+  const module = getNativeModule();
+
+  if (!module) {
+    return () => {};
+  }
+
+  try {
+    const emitter = new EventEmitter(module as never);
+    const subscription = emitter.addListener('audioBecomingNoisy', listener);
+
+    return () => subscription.remove();
+  } catch {
+    return () => {};
   }
 };
 
@@ -186,6 +223,7 @@ export default {
   updateSession,
   stopSession,
   requestMediaNotificationPermission,
+  addAudioBecomingNoisyListener,
   addMediaCommandListener,
   setDiagFlags,
   appendDiagLog,

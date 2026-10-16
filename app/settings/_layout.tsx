@@ -12,8 +12,17 @@ export default function SettingsLayout() {
       <Stack.Screen name="about" options={{ headerShown: false }} />
       {/* TEMPORAIRE (4.4.8-diagnostic) : écran « Diagnostic technique ». */}
       <Stack.Screen name="diag" options={{ headerShown: false }} />
+      {/* V24 : diagnostics Spotify — rapport copiable, aucun secret. */}
+      <Stack.Screen
+        name="spotify-diagnostic"
+        options={{ headerShown: false }}
+      />
       <Stack.Screen
         name="spotify-web-player"
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen
+        name="spotify-web-diagnostic"
         options={{ headerShown: false }}
       />
     </Stack>

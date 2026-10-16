@@ -6,7 +6,14 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import Ionicons from '@expo/vector-icons/Ionicons';
 
-import { COLORS } from '@config';
+import {
+  APP_BACKGROUND_COLOR,
+  PALETTE,
+  RADIUS,
+  SPACING,
+  TOUCH_TARGET,
+  TYPOGRAPHY,
+} from '@config';
 
 import { useTranslations } from '@context';
 
@@ -42,7 +49,7 @@ export const SettingsScreen = ({
           style={({ pressed }) => [styles.back, pressed && styles.backPressed]}
           testID="settings-back"
         >
-          <Ionicons color={COLORS.WHITE} name="chevron-back" size={26} />
+          <Ionicons color={PALETTE.textPrimary} name="chevron-back" size={26} />
         </Pressable>
         <Text numberOfLines={1} style={styles.title}>
           {title}
@@ -65,35 +72,34 @@ export const SettingsScreen = ({
 
 const styles = StyleSheet.create({
   container: {
-    backgroundColor: COLORS.PRIMARY,
+    backgroundColor: APP_BACKGROUND_COLOR,
     flex: 1,
   },
   header: {
     alignItems: 'center',
-    borderBottomColor: COLORS.BORDER_GREY,
+    borderBottomColor: PALETTE.hairline,
     borderBottomWidth: StyleSheet.hairlineWidth,
     flexDirection: 'row',
-    paddingBottom: 10,
-    paddingHorizontal: 8,
+    paddingBottom: SPACING.sm,
+    paddingHorizontal: SPACING.sm,
   },
   back: {
     alignItems: 'center',
-    borderRadius: 18,
-    height: 36,
+    borderRadius: RADIUS.pill,
+    height: TOUCH_TARGET.minimum,
     justifyContent: 'center',
-    width: 36,
+    width: TOUCH_TARGET.minimum,
   },
   backPressed: {
-    backgroundColor: COLORS.SECONDARY,
+    backgroundColor: PALETTE.press,
   },
   backPlaceholder: {
-    width: 36,
+    width: TOUCH_TARGET.minimum,
   },
   title: {
-    color: COLORS.WHITE,
+    ...TYPOGRAPHY.heading,
+    color: PALETTE.textPrimary,
     flex: 1,
-    fontFamily: 'SF-Semibold',
-    fontSize: 17,
     textAlign: 'center',
   },
   content: {

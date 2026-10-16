@@ -65,7 +65,7 @@ describe('match cache versionné — provider mémorisé', () => {
     expect(cache['spotify:bad-one'].providerId).toBeNull();
   });
 
-  it('invalide toutes les versions antérieures après une porte stricte', () => {
+  it('invalide toutes les versions antérieures après un changement de moteur', () => {
     const raw = JSON.stringify({
       'spotify:v1': {
         version: 1,
@@ -74,15 +74,18 @@ describe('match cache versionné — provider mémorisé', () => {
         score: 70,
       },
       'spotify:v4': entry({ version: 4, matchId: 'featured-only' }),
-      'spotify:v5': entry(),
+      'spotify:v5': entry({ version: 5, matchId: 'narrow-engine-negative' }),
+      'spotify:v6': entry(),
     });
 
     const cache = loadMatchCache(raw);
 
-    expect(MATCH_CACHE_VERSION).toBe(5);
+    expect(MATCH_CACHE_VERSION).toBe(6);
     expect(cache['spotify:v1']).toBeUndefined();
     expect(cache['spotify:v4']).toBeUndefined();
-    expect(cache['spotify:v5']).toBeDefined();
+    // Le moteur élargi remplace l'ancien : ses décisions négatives aussi.
+    expect(cache['spotify:v5']).toBeUndefined();
+    expect(cache['spotify:v6']).toBeDefined();
   });
 
   it('expire rapidement les négatifs mais conserve les matchs positifs fiables', () => {
@@ -117,6 +120,51 @@ describe('match cache versionné — provider mémorisé', () => {
     );
 
     expect(cache['spotify:old']).toBeUndefined();
+  });
+
+  it('distingue les trois états mémorisables : match Audius, match YouTube, aucun match', () => {
+    // Chaque état est relu avec SON provider : la carte ne melange jamais une
+    // décision Audius avec une décision YouTube.
+    const cache = loadMatchCache(
+      JSON.stringify({
+        'spotify:aud': entry({
+          providerId: 'audius',
+          matchId: 'au-1',
+          score: 78,
+        }),
+        'spotify:yt': entry({
+          providerId: 'youtube',
+          matchId: 'yt-1',
+          score: 62,
+        }),
+        'spotify:none': entry({ providerId: null, matchId: null, score: 0 }),
+      })
+    );
+
+    expect(cache['spotify:aud'].providerId).toBe('audius');
+    expect(cache['spotify:yt'].providerId).toBe('youtube');
+    expect(cache['spotify:none'].matchId).toBeNull();
+  });
+
+  it('un négatif PROUVE reste distinguable d un match (providerId/matchId nuls)', () => {
+    const cache: MatchCache = {};
+    writeMatchCacheEntry(cache, { provider: null, id: 'a' }, null, null, 0);
+    writeMatchCacheEntry(
+      cache,
+      { provider: null, id: 'b' },
+      'audius',
+      'au-9',
+      81
+    );
+
+    expect(cache['spotify:a']).toMatchObject({
+      providerId: null,
+      matchId: null,
+    });
+    expect(cache['spotify:b']).toMatchObject({
+      providerId: 'audius',
+      matchId: 'au-9',
+    });
   });
 
   it('rejects unversioned/corrupted payloads instead of crashing', () => {

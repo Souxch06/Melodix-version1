@@ -1,483 +1,155 @@
 /**
- * I-2 — la résolution UI d'une playlist (badge de disponibilité) utilise
- * les MÊMES métadonnées que le chemin player : album + durée du TrackModel
- * quand la source les fournit, sinon null (jamais inventés).
- * Et sa décision est écrite dans LE cache partagé, sous la clé exacte que
- * le player relit (sourceKeyOf d'une source métadonnée) — zéro re-recherche.
+ * Mission v7 — usePlaylistResolutions : la disponibilité suit la capacité
+ * RÉELLE du moteur (Spotify Web Player = seule source des pistes Spotify).
+ *
+ * Plus de pré-matching Audius/YouTube (le « 2/32 » d'avant v7 mesurait la
+ * présence sur Audius/YouTube, pas la capacité du lecteur) :
+ *  - moteur actif  → chaque piste `eligible` (capacité d'essai — la preuve
+ *    réelle intervient à la lecture, jamais un ratio inventé) ;
+ *  - moteur inactif → `none` honnêtement (pas de secours Audius/YouTube) ;
+ *  - AUCUNE recherche réseau, AUCUNE écriture de cache de matching : une
+ *    vieille entrée `provider: none` du cache ne détermine plus la
+ *    disponibilité d'une piste Spotify (preuve moteur dans
+ *    playerSpotifyWebPlaylist32.unit.test.ts).
  */
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { act, renderHook, waitFor } from '@testing-library/react-native';
 
 import { usePlaylistResolutions } from '../usePlaylistResolutions';
 import {
-  __testSetAudioProviders,
-  MATCH_CACHE_STORAGE_KEY,
-  matchSongs,
-  persistMatchCache,
-  writeMatchCacheEntry,
-} from '../../services/audio';
-import type { AudioProvider, MatchCache } from '../../services/audio';
-import { fingerprintOf } from '../../services/audio/audiusTrackMatcher';
-import type { SongMatchCandidate } from '../../services/audio/audiusTrackMatcher';
+  recordSpotifyWebPhysicalValidation,
+  resetSpotifyWebPlaybackFeatureForTesting,
+  setSpotifyWebPlaybackEnabled,
+} from '../../services/playbackBackend/spotifyWebFeature';
 import type { TrackModel } from '../../models';
 
-const track = (overrides: Partial<TrackModel> = {}): TrackModel => ({
-  id: 't1',
-  title: 'Song',
+// Le réglage utilisateur « Lecture Spotify Web » est piloté séparément du
+// flag local / de la validation physique : un seul levier par test.
+let mockUserSetting = true;
+jest.mock('@context', () => {
+  const actual = jest.requireActual('@context');
+  return {
+    ...actual,
+    usePreferences: () => ({ spotifyWebPlayback: mockUserSetting }),
+  };
+});
+
+const track = (
+  id: string,
+  overrides: Partial<TrackModel> = {}
+): TrackModel => ({
+  id,
+  title: `Song ${id}`,
   subtitle: 'Artist',
   ...overrides,
 });
 
-/** Provider à comportement figé (contrôle total de la décision). */
-const constProvider = (
-  resolveMatch: AudioProvider['resolveMatch']
-): AudioProvider => ({
-  id: 'audius',
-  displayName: 'Audius',
-  matches: async () => [],
-  resolveMatch,
-  resolveSource: async (sourceId: string) => ({
-    uri: `https://stream/${sourceId}`,
-  }),
-});
+/**
+ * Les 33 métadonnées d'une playlist Spotify — la reproduction EXACTE de la
+ * régression physique « 0/33 disponibles » (identifiants `spotify-${i}`).
+ */
+const tracks33: TrackModel[] = Array.from({ length: 33 }, (_, i) =>
+  track(`spotify-${i}`)
+);
 
-/** Provider ADOSSÉ au vrai matcher partagé : la décision dépend alors
- * réellement des métadonnées transmises (durée / album). */
-const matcherBackedProvider = (
-  candidates: SongMatchCandidate[]
-): AudioProvider =>
-  constProvider(async (query) => {
-    const source = fingerprintOf({
-      title: query.title,
-      artistNames: query.artists,
-      album: query.album,
-      durationSec:
-        typeof query.durationMillis === 'number' &&
-        Number.isFinite(query.durationMillis)
-          ? query.durationMillis / 1000
-          : null,
-    });
-    const best = matchSongs(source, candidates);
-    return best
-      ? { sourceId: best.id, score: Math.min(1, best.score / 100) }
-      : null;
-  });
-
-const readStoredCache = async () => {
-  const raw = await AsyncStorage.getItem(MATCH_CACHE_STORAGE_KEY);
-  return raw ? (JSON.parse(raw) as Record<string, unknown>) : null;
+const openGate = (): void => {
+  recordSpotifyWebPhysicalValidation(true, 'preuve test v7');
+  setSpotifyWebPlaybackEnabled(true);
 };
 
-describe('usePlaylistResolutions (I-2)', () => {
-  beforeEach(async () => {
-    await AsyncStorage.clear();
+describe('usePlaylistResolutions (Mission v7 : capacité réelle du moteur)', () => {
+  beforeEach(() => {
+    resetSpotifyWebPlaybackFeatureForTesting();
+    mockUserSetting = true;
   });
 
-  it('transmet album + durée + classification réels du TrackModel à la cascade', async () => {
-    const resolveMatch: AudioProvider['resolveMatch'] = jest.fn(async () => ({
-      sourceId: 'aud-1',
-      score: 0.9,
-    }));
-    __testSetAudioProviders({ audius: constProvider(resolveMatch) });
+  it('moteur actif : 33 pistes éligibles, aucune recherche, aucun compteur', () => {
+    openGate();
+    const { result } = renderHook(() => usePlaylistResolutions(tracks33));
 
-    renderHook(() =>
-      usePlaylistResolutions([
-        track({ durationMs: 200_000, albumName: 'Album X', explicit: true }),
-      ])
-    );
-
-    await waitFor(() => expect(resolveMatch).toHaveBeenCalledTimes(1));
-    expect(resolveMatch).toHaveBeenCalledWith(
-      expect.objectContaining({
-        title: 'Song',
-        artists: ['Artist'],
-        album: 'Album X',
-        durationMillis: 200_000,
-        explicit: true,
-      })
-    );
-  });
-
-  it('déduplique deux occurrences simultanées du même morceau', async () => {
-    let release!: () => void;
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const resolveMatch = jest.fn(async () => {
-      await gate;
-      return { sourceId: 'aud-shared', score: 0.9 };
-    });
-    __testSetAudioProviders({ audius: constProvider(resolveMatch) });
-
-    const { result } = renderHook(() =>
-      usePlaylistResolutions([track(), track()])
-    );
-    await waitFor(() => expect(resolveMatch).toHaveBeenCalledTimes(1));
-    release();
-    await waitFor(() =>
-      expect(result.current.byTrackId.t1?.status).toBe('resolved')
-    );
-
-    expect(resolveMatch).toHaveBeenCalledTimes(1);
-  });
-
-  it('TrackModel sans album/durée : null transmis (matching toujours possible)', async () => {
-    const resolveMatch: AudioProvider['resolveMatch'] = jest.fn(
-      async () => null
-    );
-    __testSetAudioProviders({ audius: constProvider(resolveMatch) });
-
-    renderHook(() => usePlaylistResolutions([track()]));
-
-    await waitFor(() => expect(resolveMatch).toHaveBeenCalledTimes(1));
-    expect(resolveMatch).toHaveBeenCalledWith(
-      expect.objectContaining({ album: null, durationMillis: null })
-    );
-  });
-
-  it('titre/artiste identiques, candidats de durées différentes : la DURÉE transmise départage le bon', async () => {
-    // Le MAUVAIS candidat est placé en premier : sans la durée transmise,
-    // les deux scoreraient à égalité et le premier gagnerait.
-    __testSetAudioProviders({
-      audius: matcherBackedProvider([
-        {
-          id: 'aud-short',
-          title: 'Song',
-          artistNames: ['Artist'],
-          durationSec: 60,
-        },
-        {
-          id: 'aud-right',
-          title: 'Song',
-          artistNames: ['Artist'],
-          durationSec: 200,
-        },
-      ]),
-    });
-
-    const { result } = renderHook(() =>
-      usePlaylistResolutions([track({ durationMs: 200_000 })])
-    );
-
-    await waitFor(() =>
-      expect(result.current.byTrackId.t1).toEqual({
-        status: 'resolved',
-        providerId: 'audius',
-      })
-    );
-
-    await waitFor(
-      async () => {
-        const cache = await readStoredCache();
-        expect(cache?.['spotify:t1']).toMatchObject({ matchId: 'aud-right' });
-      },
-      { timeout: 6000 }
-    );
-  });
-
-  it('candidats identiques en titre/durée : l ALBUM transmis départage le bon', async () => {
-    __testSetAudioProviders({
-      audius: matcherBackedProvider([
-        {
-          id: 'aud-album-b',
-          title: 'Song',
-          artistNames: ['Artist'],
-          album: 'Album Two',
-          durationSec: 200,
-        },
-        {
-          id: 'aud-album-a',
-          title: 'Song',
-          artistNames: ['Artist'],
-          album: 'Album One',
-          durationSec: 200,
-        },
-      ]),
-    });
-
-    const { result } = renderHook(() =>
-      usePlaylistResolutions([
-        track({ durationMs: 200_000, albumName: 'Album One' }),
-      ])
-    );
-
-    await waitFor(() =>
-      expect(result.current.byTrackId.t1?.status).toBe('resolved')
-    );
-
-    await waitFor(
-      async () => {
-        const cache = await readStoredCache();
-        expect(cache?.['spotify:t1']).toMatchObject({ matchId: 'aud-album-a' });
-      },
-      { timeout: 6000 }
-    );
-  });
-
-  it('la décision UI est écrite sous la clé du PLAYER puis relue sans nouvelle recherche', async () => {
-    __testSetAudioProviders({
-      audius: constProvider(async () => ({
-        sourceId: 'aud-shared',
-        score: 0.8,
-      })),
-    });
-
-    const first = renderHook(() => usePlaylistResolutions([track()]));
-    await waitFor(() =>
-      expect(first.result.current.byTrackId.t1?.status).toBe('resolved')
-    );
-
-    // Écriture groupée (flush ~1,5 s) : la clé est EXACTEMENT celle que le
-    // player relit pour une source métadonnée (sourceKeyOf → spotify:<id>).
-    await waitFor(
-      async () => {
-        const cache = await readStoredCache();
-        expect(cache?.['spotify:t1']).toMatchObject({
-          providerId: 'audius',
-          matchId: 'aud-shared',
-          score: 80,
-        });
-      },
-      { timeout: 6000 }
-    );
-    first.unmount();
-
-    // Remontage : la décision est relue du cache partagé — AUCUNE recherche.
-    const resolveAgain: AudioProvider['resolveMatch'] = jest.fn(async () => ({
-      sourceId: 'aud-autre',
-      score: 1,
-    }));
-    __testSetAudioProviders({ audius: constProvider(resolveAgain) });
-
-    const second = renderHook(() => usePlaylistResolutions([track()]));
-    await waitFor(() =>
-      expect(second.result.current.byTrackId.t1).toEqual({
-        status: 'resolved',
-        providerId: 'audius',
-      })
-    );
-    expect(resolveAgain).not.toHaveBeenCalled();
-    second.unmount();
-  });
-
-  it('I-5 : provider EN PANNE → reste retentable, jamais affiché « indisponible »', async () => {
-    __testSetAudioProviders({
-      audius: constProvider(async () => {
-        throw new Error('timeout réseau');
-      }),
-    });
-
-    const first = renderHook(() => usePlaylistResolutions([track()]));
-    await waitFor(() =>
-      expect(first.result.current.byTrackId.t1?.status).toBe('pending')
-    );
-    expect(first.result.current.stats.decided).toBe(0);
-
-    // Même après le flush d'écriture groupée : AUCUNE entrée pour t1.
-    await new Promise((resolve) => setTimeout(resolve, 2_000));
-    const stored = await readStoredCache();
-    expect(stored?.['spotify:t1']).toBeUndefined();
-    first.unmount();
-
-    // La panne réparée, la décision est recherchée pour de vrai (pas un
-    // « indisponible » figé 30 jours).
-    const resolveMatch: AudioProvider['resolveMatch'] = jest.fn(async () => ({
-      sourceId: 'aud-found',
-      score: 0.9,
-    }));
-    __testSetAudioProviders({ audius: constProvider(resolveMatch) });
-
-    const second = renderHook(() => usePlaylistResolutions([track()]));
-    await waitFor(() =>
-      expect(second.result.current.byTrackId.t1).toEqual({
-        status: 'resolved',
-        providerId: 'audius',
-      })
-    );
-    expect(resolveMatch).toHaveBeenCalledTimes(1);
-    second.unmount();
-  });
-
-  it('I-5 : no-match PROUVÉ → négatif durable autorisé (jamais de recherche refaite)', async () => {
-    __testSetAudioProviders({
-      audius: constProvider(async () => null), // catalogue interrogé, rien.
-    });
-
-    const first = renderHook(() => usePlaylistResolutions([track()]));
-    await waitFor(() =>
-      expect(first.result.current.byTrackId.t1?.status).toBe('none')
-    );
-
-    await waitFor(
-      async () => {
-        const cache = await readStoredCache();
-        expect(cache?.['spotify:t1']).toMatchObject({
-          providerId: null,
-          matchId: null,
-        });
-      },
-      { timeout: 6000 }
-    );
-    first.unmount();
-  });
-});
-
-/**
- * I-3 — « Refaire le matching » : invalidation CIBLÉE par clé. La purge
- * globale d'avant détruisait les décisions des autres playlists, des
- * favoris et de l'historique partageant LE MÊME cache.
- */
-describe('usePlaylistResolutions — refresh ciblé (I-3)', () => {
-  /** Écrit des décisions de matching pré-existantes dans LE cache partagé. */
-  const seedCache = async (entries: Record<string, string>): Promise<void> => {
-    const cache: MatchCache = {};
-    for (const [trackId, matchId] of Object.entries(entries)) {
-      writeMatchCacheEntry(
-        cache,
-        { provider: null, id: trackId },
-        'audius',
-        matchId,
-        80
-      );
+    // Les 33 métadonnées sont toutes « éligibles » : capacité d'ESSAI du
+    // moteur — jamais une promesse de lecture (pas de « 33/33 »).
+    const ids = Object.keys(result.current.byTrackId);
+    expect(ids).toHaveLength(33);
+    for (const id of ids) {
+      expect(result.current.byTrackId[id]).toEqual({ status: 'eligible' });
     }
-    await persistMatchCache(cache);
-  };
-
-  beforeEach(async () => {
-    await AsyncStorage.clear();
+    // Contrat exact : la stats ne porte QUE total + spotifyWebActive —
+    // AUCUN compteur `available` (source du faux ratio « N/33 »).
+    expect(result.current.stats).toEqual({
+      total: 33,
+      spotifyWebActive: true,
+    });
   });
 
-  it('refresh A : A invalidée — playlist B et entrée sans rapport INTACTES', async () => {
-    // 1. cache playlist A (a1, a2) — 2. cache playlist B (b1) + sans rapport (z9)
-    await seedCache({ a1: 'm-a1', a2: 'm-a2', b1: 'm-b1', z9: 'm-z9' });
+  it('réglage utilisateur ÉTEINT : 33 pistes « none » — honnêtement', () => {
+    openGate();
+    mockUserSetting = false;
+    const { result } = renderHook(() => usePlaylistResolutions(tracks33));
 
-    const resolveMatch: AudioProvider['resolveMatch'] = jest.fn(async () => ({
-      sourceId: 'm-new',
-      score: 0.7,
-    }));
-    __testSetAudioProviders({ audius: constProvider(resolveMatch) });
+    // L'hôte WebView ne monte pas sans le réglage : le moteur est inactif.
+    // L'UI affichera « Spotify Web désactivé », JAMAIS « 0/33 disponibles ».
+    expect(result.current.stats).toEqual({
+      total: 33,
+      spotifyWebActive: false,
+    });
+    for (const id of Object.keys(result.current.byTrackId)) {
+      expect(result.current.byTrackId[id]).toEqual({ status: 'none' });
+    }
+  });
 
-    const { result } = renderHook(() =>
-      usePlaylistResolutions([track({ id: 'a1' }), track({ id: 'a2' })])
-    );
+  it('porte fermée (validation non consignée) : 33 pistes « none »', () => {
+    // Pas d'ouverture de porte : flag local + validation fermés.
+    const { result } = renderHook(() => usePlaylistResolutions(tracks33));
+    expect(result.current.stats.spotifyWebActive).toBe(false);
+    expect(result.current.stats.total).toBe(33);
+    expect(result.current.byTrackId['spotify-0']).toEqual({ status: 'none' });
+  });
 
-    // Décisions relues du cache partagé : AUCUNE recherche initiale.
-    await waitFor(() =>
-      expect(result.current.byTrackId.a1?.status).toBe('resolved')
-    );
-    expect(resolveMatch).not.toHaveBeenCalled();
+  it('bascule en direct : refermée → « none » ; rouverte → « eligible »', async () => {
+    openGate();
+    const { result } = renderHook(() => usePlaylistResolutions(tracks33));
+    expect(result.current.byTrackId['spotify-0']).toEqual({
+      status: 'eligible',
+    });
 
-    // 3. refresh playlist A (promesse réelle : le retrait est déjà persisté).
     await act(async () => {
-      await (result.current.refresh as unknown as () => Promise<void>)();
+      setSpotifyWebPlaybackEnabled(false);
     });
-
-    // 4. A est invalidée — 5. B reste intacte — 6. sans rapport intact.
-    const cache = await readStoredCache();
-    expect(cache?.['spotify:a1']).toBeUndefined();
-    expect(cache?.['spotify:a2']).toBeUndefined();
-    expect(cache?.['spotify:b1']).toMatchObject({ matchId: 'm-b1' });
-    expect(cache?.['spotify:z9']).toMatchObject({ matchId: 'm-z9' });
-
-    // Et la file de CETTE liste est relancée (re-résolution d'a1 et a2).
-    await waitFor(() => expect(resolveMatch).toHaveBeenCalledTimes(2));
-  });
-
-  it('morceau PARTAGÉ A∩B : refresh A invalide sa clé (cache par morceau), le reste de B intact', async () => {
-    await seedCache({ s1: 'm-s1', a1: 'm-a1', b2: 'm-b2' });
-
-    __testSetAudioProviders({
-      audius: constProvider(jest.fn(async () => null)),
-    });
-
-    // Playlist A = { s1 (partagé avec B), a1 } ; B possède aussi s1, et b2.
-    const { result } = renderHook(() =>
-      usePlaylistResolutions([track({ id: 's1' }), track({ id: 'a1' })])
-    );
     await waitFor(() =>
-      expect(result.current.byTrackId.s1?.status).toBe('resolved')
+      expect(result.current.byTrackId['spotify-0']).toEqual({
+        status: 'none',
+      })
     );
 
     await act(async () => {
-      await (result.current.refresh as unknown as () => Promise<void>)();
+      setSpotifyWebPlaybackEnabled(true);
     });
-
-    const cache = await readStoredCache();
-    // Le cache étant PAR MORCEAU, « refaire le matching » de s1 (dans A)
-    // retire sa clé — B le verra comme « à refaire » : comportement cohérent.
-    expect(cache?.['spotify:s1']).toBeUndefined();
-    expect(cache?.['spotify:a1']).toBeUndefined();
-    // Mais les morceaux propres à B n'ont RIEN perdu.
-    expect(cache?.['spotify:b2']).toMatchObject({ matchId: 'm-b2' });
-  });
-});
-
-describe('usePlaylistResolutions — durée de vie des timers (perf)', () => {
-  beforeEach(async () => {
-    await AsyncStorage.clear();
+    await waitFor(() =>
+      expect(result.current.byTrackId['spotify-0']).toEqual({
+        status: 'eligible',
+      })
+    );
   });
 
-  it('démontage avec file NON vide : TOUS les intervals de l effet meurent (zéro timer orphelin)', async () => {
-    // t1 : décision rapide ; t2 : résolution JAMAIS finie → la file reste
-    // non vide, le watcher auto-nettoyant ne passe JAMAIS : sans cleanup de
-    // l effet, flush+watch cochaient indéfiniment dans un composant mort.
-    const originalSetInterval = global.setInterval;
-    const originalClearInterval = global.clearInterval;
-    const setIntervalSpy = jest
-      .spyOn(global, 'setInterval')
-      .mockImplementation(((handler: unknown, timeout?: unknown) =>
-        originalSetInterval(
-          handler as (...args: unknown[]) => void,
-          timeout as number
-        )) as typeof setInterval);
-    const clearIntervalSpy = jest
-      .spyOn(global, 'clearInterval')
-      .mockImplementation(((handle: unknown) =>
-        originalClearInterval(
-          handle as Parameters<typeof originalClearInterval>[0]
-        )) as typeof clearInterval);
+  it('liste vide : stats cohérentes, aucune entrée', () => {
+    openGate();
+    const { result } = renderHook(() => usePlaylistResolutions([]));
+    expect(result.current.stats).toEqual({ total: 0, spotifyWebActive: true });
+    expect(result.current.byTrackId).toEqual({});
+  });
 
-    try {
-      __testSetAudioProviders({
-        audius: constProvider(
-          jest.fn(async (query) => {
-            if (query.title.includes('Fast')) {
-              return { sourceId: 'm-fast', score: 0.9 };
-            }
-            return new Promise(() => undefined); // jamais résolu
-          })
-        ),
-      });
-
-      const { unmount } = renderHook(() =>
-        usePlaylistResolutions([
-          track({ id: 'fast1', title: 'Fast Song' }),
-          track({ id: 'slow1', title: 'Never Resolving Song' }),
-        ])
-      );
-
-      // Laisser t1 se résoudre et les deux intervals s armer.
-      await act(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 200));
-      });
-
-      // Les deux intervals du hook existent (la file n est pas vide pour t2).
-      expect(setIntervalSpy.mock.results.length).toBeGreaterThanOrEqual(2);
-
-      unmount();
-
-      // APRÈS le démontage, chaque interval créé a été nettoyé EXACTEMENT.
-      // (RNTL en crée d autres pour waitFor : on ne vérifie que ceux du
-      // hook = les handles retournés par nôtre espion de setInterval.)
-      const handles = setIntervalSpy.mock.results
-        .map((result) => result.value)
-        .filter((value) => value !== undefined);
-      for (const handle of handles) {
-        expect(clearIntervalSpy.mock.calls.flat()).toContain(handle);
-      }
-    } finally {
-      setIntervalSpy.mockRestore();
-      clearIntervalSpy.mockRestore();
-    }
-  }, 10_000);
+  it('refresh() : stable (plus de matching à refaire)', () => {
+    openGate();
+    const { result } = renderHook(() => usePlaylistResolutions(tracks33));
+    act(() => {
+      result.current.refresh();
+    });
+    expect(result.current.stats).toEqual({
+      total: 33,
+      spotifyWebActive: true,
+    });
+    expect(result.current.byTrackId['spotify-32']).toEqual({
+      status: 'eligible',
+    });
+  });
 });

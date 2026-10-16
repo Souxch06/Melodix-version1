@@ -13,6 +13,7 @@ import {
   FR_FR_LOGIN,
   FR_FR_PLAYER,
   FR_FR_PLAYLIST,
+  FR_FR_SEARCH,
   FR_FR_SETTINGS,
 } from './fr-fr';
 
@@ -30,6 +31,7 @@ export const translations = {
   ...EN_GB_SETTINGS,
   ...FR_FR_ACCOUNT,
   ...FR_FR_HOME,
+  ...FR_FR_SEARCH,
   ...FR_FR_PLAYER,
   ...FR_FR_LOGIN,
   ...FR_FR_PLAYLIST,

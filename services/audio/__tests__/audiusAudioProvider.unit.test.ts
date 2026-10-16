@@ -44,7 +44,15 @@ describe('AudiusAudioProvider', () => {
     });
 
     expect(mockSearch).toHaveBeenCalled();
-    expect(match).toEqual({ sourceId: 'aud-1', score: expect.any(Number) });
+    // Le provider transmet désormais AUSSI les codes du diagnostic positif
+    // (moyen / variante / nb requêtes) — le resolver les grave.
+    expect(match).toEqual({
+      sourceId: 'aud-1',
+      score: expect.any(Number),
+      matchKind: 'exact-title',
+      variantClass: 'original',
+      searchQueryCount: expect.any(Number),
+    });
     expect(match?.score).toBeGreaterThan(0.5);
   });
 

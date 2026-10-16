@@ -1,8 +1,11 @@
 export { HomeScreen } from './HomeScreen';
 export { HistoryScreen } from './HistoryScreen';
+export { SeeAllScreen } from './SeeAllScreen';
+export type { SeeAllScreenPropsType } from './SeeAllScreen';
 export { SearchScreen } from './SearchScreen';
 export { LibraryScreen } from './LibraryScreen';
 export { FavoritesScreen } from './FavoritesScreen';
+export { LikedSongsScreen } from './LikedSongsScreen';
 export { PlaylistScreen } from './PlaylistScreen';
 export { AlbumScreen } from './AlbumScreen';
 export { ArtistScreen } from './ArtistScreen';

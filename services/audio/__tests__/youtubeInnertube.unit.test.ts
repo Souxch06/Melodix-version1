@@ -200,7 +200,7 @@ describe('youtubeInnertube — searchYouTubeSongs', () => {
 });
 
 describe('youtubeInnertube — getYouTubeAudioStreamUrl', () => {
-  it('interroge le client ANDROID_MUSIC et rend l\u2019URL audio dirécte', async () => {
+  it('interroge le client TVHTML5 (chaîne 2026) et rend l\u2019URL audio directe', async () => {
     const fetchMock = jest.fn(async () => ({
       ok: true,
       json: async () => ({
@@ -228,7 +228,7 @@ describe('youtubeInnertube — getYouTubeAudioStreamUrl', () => {
       context: { client: { clientName: string } };
     };
     expect(body.videoId).toBe('VID1');
-    expect(body.context.client.clientName).toBe('ANDROID_MUSIC');
+    expect(body.context.client.clientName).toBe('TVHTML5');
     expect(uri).toBe('https://stream/audio.mp4');
   });
 

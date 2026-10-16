@@ -1,11 +1,11 @@
 import { StyleSheet } from 'react-native';
-import { COLORS, Shapes, Sizes } from '@config';
+import { PALETTE, Shapes, Sizes, SPACING, TYPOGRAPHY } from '@config';
 
 export const styling = (size: Sizes, shape: Shapes) =>
   StyleSheet.create({
     card: {
       width: size,
-      marginVertical: 8,
+      marginVertical: SPACING.sm,
     },
     cardImageView: {
       overflow: 'hidden',
@@ -13,28 +13,26 @@ export const styling = (size: Sizes, shape: Shapes) =>
       width: size,
       height: size,
       borderRadius: shape,
-      backgroundColor: COLORS.SECONDARY,
+      backgroundColor: PALETTE.night600,
+      borderWidth: 1,
+      borderColor: PALETTE.hairline,
       justifyContent: 'center',
       alignItems: 'center',
     },
     cardImage: {
       ...StyleSheet.absoluteFillObject,
-      color: COLORS.GREY,
+      color: PALETTE.textSecondary,
     },
     cardTitleText: {
-      fontSize: 13,
-      lineHeight: 13,
-      fontFamily: 'SF-Bold',
-      color: COLORS.WHITE,
+      ...TYPOGRAPHY.body,
+      color: PALETTE.textPrimary,
       maxWidth: size,
-      marginTop: 10,
+      marginTop: SPACING.sm,
     },
     cardSubtitleText: {
+      ...TYPOGRAPHY.caption,
       flexDirection: 'row',
-      marginTop: 5,
-      fontSize: 13,
-      lineHeight: 13,
-      fontFamily: 'SF-Regular',
-      color: COLORS.LIGHT_GREY,
+      marginTop: SPACING.xxs,
+      color: PALETTE.textSecondary,
     },
   });

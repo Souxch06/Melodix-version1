@@ -1,0 +1,139 @@
+# ============================================================================
+# V33 — BANC DE COUVERTURE EN LIGNE (mesures RÉELLES sur réseau réel)
+#
+# Workflow INDÉPENDANT du build APK.
+#
+# V37 : en PLUS du déclenchement manuel, le banc se lance automatiquement sur
+# les pushes de la branche de travail arena (mesures avant/après des
+# améliorations catalogue) — l'environnement de développement n'ayant ni
+# accès réseau sortant vers les services mesurés, ni le droit de déclencher
+# workflow_dispatch (403), le push est le seul levier de mesure réelle.
+# Déclenchement manuel toujours disponible :
+#   Actions → « Banc réseau Melodix » → Run workflow
+#
+# Rôle : exécuter `npm run test:online` sur un runner GitHub (accès sortant
+# réel) et publier le rapport de mesures (JSON + TEXTE) comme artefact,
+# MÊME si le banc échoue (if: always()) — un échec de mesure est une
+# information, pas quelque chose à cacher.
+#
+# Garanties :
+#   - le CODE DE SORTIE réel du banc est conservé : le job échoue quand le
+#     banc conclut autre chose que « real-measures » (aucun faux succès) ;
+#   - aucun secret requis : ni compte Spotify Premium, ni jeton privé — les
+#     sondes n'utilisent que des points d'accès PUBLICS ;
+#   - le workflow APK Android n'est PAS modifié par ce fichier ;
+#   - durée bornée (timeout-minutes), AUCUNE boucle de retry ;
+#   - le commit testé est identifié précisément (github.sha + rapport).
+# ============================================================================
+
+name: Banc réseau Melodix
+
+on:
+  workflow_dispatch:
+    inputs:
+      campagne:
+        description: 'Identifiant libre de campagne (ex. v33-run2)'
+        required: false
+        default: ''
+  # V37 : mesures avant/après sur la branche de travail — le push est le
+  # seul levier disponible depuis l'environnement de développement (pas de
+  # sortie réseau vers les services mesurés, workflow_dispatch refusé 403).
+  push:
+    branches:
+      - 'arena/*'
+
+permissions:
+  contents: write
+
+jobs:
+  mesures-reseau:
+    name: Mesures réseau réelles (Audius / YouTube / Spotify / iTunes)
+    runs-on: ubuntu-latest
+    # Borne raisonnable : le banc séquentiel (3 sondes + 14 cas + contrôles
+    # de flux bornés) prend quelques minutes ; 20 min couvrent largement les
+    # réseaux lents sans laisser un job bloqué indéfiniment.
+    timeout-minutes: 20
+    env:
+      # Identifiant de campagne transmis au rapport (jamais une donnée
+      # sensible : libellé libre saisi par l'opérateur).
+      MELODIX_BENCH_CAMPAIGN: ${{ inputs.campagne }}
+      # V34 — même source de configuration que le build APK (vars de dépôt) :
+      # le banc teste le backend SI ET SEULEMENT SI l'app en reçoit un. La
+      # valeur n'apparaît jamais dans le rapport (état configuré/non
+      # configuré uniquement). Variable absente → backend déclaré « non
+      # configuré » et sauté volontairement, sans requête ni erreur.
+      MELODIX_BACKEND_URL: ${{ vars.MELODIX_BACKEND_URL }}
+      # V47 — Jamendo (API officielle) : le banc mesure la source SI ET
+      # SEULEMENT SI l'app en reçoit un identifiant, exactement comme pour le
+      # backend. La valeur n'apparaît JAMAIS dans le rapport (seuls l'état
+      # armée/non armée et le nombre de résultats réellement obtenus le sont).
+      # Variable absente → la source n'émet aucune requête et le banc rend 0 :
+      # c'est une mesure réelle « source non armée », jamais une simulation.
+      EXPO_PUBLIC_JAMENDO_CLIENT_ID: ${{ vars.MELODIX_JAMENDO_CLIENT_ID }}
+    steps:
+      - name: Récupérer le code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # workflow_dispatch : github.sha EST le commit effectivement testé.
+          ref: ${{ github.sha }}
+
+      - name: Installer Node.js 20
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Installer les dépendances (lockfile)
+        # Reproductible : npm ci depuis package-lock.json, mêmes drapeaux que
+        # le workflow APK.
+        run: npm ci --legacy-peer-deps
+
+      - name: Exécuter le banc en ligne
+        # Le code de sortie réel du banc EST le code de sortie de l'étape :
+        # - real-measures              → étape verte, mesures publiées ;
+        # - network-unavailable /
+        #   test-incomplete /
+        #   functional-failure         → étape ROUGE (mesure impossible ou
+        #                                 panne constatée) — rapport publié
+        #                                 quand même par l'étape suivante.
+        # Pas de retry automatique : une seconde campagne se lance à la
+        # main, en connaissance de cause.
+        run: npm run test:online
+
+      - name: Publier le rapport de mesures (même en cas d'échec)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          # Le nom identifie précisément le commit testé et la campagne.
+          name: online-benchmark-${{ github.sha }}-${{ github.run_id }}
+          path: artifacts/online-benchmark/
+          if-no-files-found: warn
+
+      - name: Publier le rapport en commentaire du commit testé (même en cas d'échec)
+        # Miroire lisible via l'API GitHub (le rapport texte est déjà expurgé :
+        # ni requêtes, ni jetons, ni URL, ni identifiant personnel).
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TXT=$(ls artifacts/online-benchmark/benchmark-*.txt 2>/dev/null | head -n1 || true)
+          if [ -z "$TXT" ]; then
+            echo "Aucun rapport texte produit : commentaire non publié."
+            exit 0
+          fi
+          {
+            echo "## Banc réseau Melodix — rapport de mesures réelles"
+            echo ""
+            echo "- Commit testé : \`${GITHUB_SHA}\`"
+            echo "- Campagne : ${MELODIX_BENCH_CAMPAIGN:-(sans identifiant)}"
+            echo "- Exécution : https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            echo ""
+            echo '```'
+            head -c 60000 "$TXT"
+            echo '```'
+          } > /tmp/bench-report.md
+          jq -Rs '{body: .}' /tmp/bench-report.md > /tmp/bench-comment.json
+          gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/comments" \
+            --input /tmp/bench-comment.json > /dev/null
+          echo "Rapport publié en commentaire du commit ${GITHUB_SHA}."

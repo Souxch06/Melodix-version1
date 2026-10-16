@@ -5,6 +5,7 @@ export { SettingsScreen } from './SettingsScreen';
 export type { SettingsScreenPropsType } from './SettingsScreen';
 export { SettingsSection } from './SettingsSection';
 export type { SettingsSectionPropsType } from './SettingsSection';
+export { SearchDiagSection } from './SearchDiagSection';
 export { SettingsSelect } from './SettingsSelect';
 export type {
   SettingsSelectOption,

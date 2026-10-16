@@ -18,6 +18,11 @@ import { fireEvent, render } from '@testing-library/react-native';
 import { translations } from '@data';
 import type { PlayerTrack } from '@services';
 
+import {
+  resetJamendoStreamCache,
+  searchJamendoTracks,
+} from '../../../api/jamendo/searchTracks';
+
 import { FullPlayer } from '../FullPlayer';
 
 const mockBack = jest.fn();
@@ -770,5 +775,124 @@ describe('FullPlayer — file centrale et états finaux (phase 4)', () => {
     // FlatList windowSize/initialNumToRender bornés : la vue n'instancie pas
     // les 150 lignes d'un coup.
     expect(getByTestId('queue-count')).toBeTruthy();
+  });
+});
+
+/**
+ * V50 — Intégration RÉELLE de l'attribution Jamendo dans le lecteur plein
+ * écran. Ces tests passent par le chemin de production : le cache
+ * d'attribution est alimenté par `searchJamendoTracks` avec un `fetch`
+ * remplacé (aucun réseau, aucune écriture directe dans le cache).
+ *
+ * ⚠️ Simulé : aucune mesure réseau n'est produite ici.
+ */
+const ORIGINAL_FETCH = global.fetch;
+
+/**
+ * La source est armée par la variable d'environnement DOCUMENTÉE
+ * (`api/jamendo/config.ts` lit `EXPO_PUBLIC_JAMENDO_CLIENT_ID`, non inlinée
+ * en test grâce à `preserveEnvVars: true`). Aucune valeur n'est écrite dans
+ * le dépôt : c'est un identifiant de test, jeté après chaque test.
+ */
+const seedJamendoAttribution = async (): Promise<void> => {
+  process.env.EXPO_PUBLIC_JAMENDO_CLIENT_ID = 'id-de-test';
+
+  global.fetch = jest.fn(async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      headers: { status: 'success', results_count: 1 },
+      results: [
+        {
+          id: '480531',
+          name: 'Night Drive',
+          artist_name: 'Some Independent Artist',
+          album_name: 'Open Roads',
+          image: 'https://img.example/480531.jpg',
+          audio: 'https://mp3d.example/480531.mp3',
+          duration: 214,
+          shareurl: 'https://www.jamendo.com/track/480531',
+          license_ccurl: 'http://creativecommons.org/licenses/by-nc-nd/3.0/',
+        },
+      ],
+    }),
+  })) as unknown as typeof fetch;
+
+  await searchJamendoTracks('night drive');
+  global.fetch = ORIGINAL_FETCH;
+};
+
+describe('FullPlayer — attribution Jamendo (V50, clause 4.1)', () => {
+  beforeEach(async () => {
+    resetJamendoStreamCache();
+    await seedJamendoAttribution();
+    // Ce `describe` est un FRÈRE de la suite existante, pas un enfant : son
+    // `beforeEach` ne s'applique pas ici. L'état doit donc être complet.
+    mockPlayerState = {
+      current: {
+        id: 'jamendo:480531',
+        title: 'Night Drive',
+        artists: ['Some Independent Artist'],
+        album: 'Open Roads',
+        durationMillis: 214000,
+        imageURL: '',
+        source: { provider: null, id: '480531' },
+      },
+      queue: [
+        {
+          id: 'jamendo:480531',
+          title: 'Night Drive',
+          artists: ['Some Independent Artist'],
+          album: 'Open Roads',
+          durationMillis: 214000,
+          imageURL: '',
+          source: { provider: null, id: '480531' },
+        },
+      ],
+      index: 0,
+      status: 'playing',
+      buffering: false,
+      positionMillis: 0,
+      durationMillis: 214000,
+      shuffle: false,
+      repeat: 'off',
+      volume: 0.5,
+      providerName: 'Jamendo',
+      notice: null,
+    };
+  });
+
+  afterEach(() => {
+    global.fetch = ORIGINAL_FETCH;
+    delete process.env.EXPO_PUBLIC_JAMENDO_CLIENT_ID;
+    resetJamendoStreamCache();
+  });
+
+  it('affiche le crédit, la mention fournisseur et le lien d’origine', () => {
+    const { getByTestId, getByText } = render(<FullPlayer />);
+
+    expect(getByTestId('jamendo-attribution')).toBeTruthy();
+    expect(
+      getByText(
+        translations.jamendoAttributionCredit('Some Independent Artist')
+      )
+    ).toBeTruthy();
+    expect(getByTestId('jamendo-attribution-link')).toBeTruthy();
+    expect(getByTestId('jamendo-attribution-license')).toBeTruthy();
+  });
+
+  it('n’affiche AUCUN crédit Jamendo pour une piste Spotify', () => {
+    // Piste Spotify (id `spotify:…`) alors qu'une attribution Jamendo EST en
+    // cache : le crédit ne doit pas déborder sur une autre source.
+    mockPlayerState = {
+      ...mockPlayerState,
+      current: mkTrack('one', 'Take Me Away'),
+      queue: [mkTrack('one', 'Take Me Away')],
+      providerName: 'Audius',
+    };
+
+    const { queryByTestId } = render(<FullPlayer />);
+
+    expect(queryByTestId('jamendo-attribution')).toBeNull();
   });
 });

@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useRouter } from 'expo-router';
 
 import { LibraryItemModel } from '@models';
 import { getRecommendations } from '@api';
@@ -19,6 +20,7 @@ export const Recommendations = ({
   size = Sizes.MEDIUM,
   shape = Shapes.SQUARE,
 }: RecommendationsPropsType) => {
+  const router = useRouter();
   const [recommendedAlbums, setRecommendedAlbums] = React.useState<
     LibraryItemModel[] | null
   >(null);
@@ -58,6 +60,13 @@ export const Recommendations = ({
       size={size}
       shape={shape}
       withShowAll={true}
+      // Même source (le seed) en liste verticale : aucune donnée inventée.
+      onShowAllPress={() =>
+        router.push({
+          pathname: '/home/see-all/[kind]',
+          params: { kind: 'recommendations', seed, type },
+        })
+      }
     />
   );
 };

@@ -33,10 +33,106 @@ export {
 } from './recommendations';
 
 export { getBrowseCategories, SEARCH_LIMIT, searchCatalog } from './search';
+export {
+  searchCatalogProgressive,
+  resetProgressiveSearchEngine,
+  playableQueueIdOf,
+  SOURCE_TIMEOUTS_MS,
+  SEARCH_HARD_LIMIT_MS,
+  AUDIUS_SEARCH_LIMIT,
+  BACKEND_SEARCH_LIMIT,
+  mergeAndRankResults,
+  normalizeForSearch,
+  rankItems,
+  dedupeItems,
+  matchScore,
+  trackDedupeKey,
+  SEARCH_SOURCE_PRIORITY,
+  configureSearchCache,
+  getSearchCacheTtlMs,
+  getSearchCacheEntry,
+  putSearchCacheEntry,
+  clearSearchCache,
+  searchCacheSize,
+  searchCacheEntryAgeMs,
+  DEFAULT_SEARCH_CACHE_TTL_MS,
+  SEARCH_CACHE_MAX_ENTRIES,
+  isSpotifySearchCircuitOpen,
+  openSpotifySearchCircuit,
+  resetSpotifySearchCircuit,
+  classifySpotifySearchError,
+  SPOTIFY_SEARCH_CIRCUIT_TTL_MS,
+  // V31 — disjoncteurs génériques par source + vide confirmé + timings.
+  getSourceCircuitStates,
+  resetSourceCircuits,
+  SOURCE_CIRCUIT_MAX_FAILURES,
+  SOURCE_CIRCUIT_OPEN_MS,
+  CONFIRMED_EMPTY_TTL_MS,
+  searchCacheEntryTtlMs,
+} from './search';
+export type {
+  ProgressiveSearchUpdate,
+  ProgressiveSearchHandle,
+  ProgressiveSearchOptions,
+  ProgressiveSearchSourceState,
+  ProgressiveSearchTimings,
+  SearchSourceId,
+  SearchCacheEntry,
+  GenericCircuitSource,
+  SourceErrorVerdict,
+} from './search';
+
+// YouTube Music (source de catalogue V30 — lecture via le provider existant)
+export {
+  searchYouTubeTracks,
+  youtubeTrackToLibraryItem,
+  YOUTUBE_SEARCH_LIMIT,
+} from './youtube';
+
+// iTunes Search API (source de catalogue V37 — extraits 30 s jouables,
+// publique et sans clé ; lecture directe via le provider `itunes`)
+export {
+  ITUNES_SEARCH_LIMIT,
+  getItunesPreviewUrl,
+  itunesTrackToLibraryItem,
+  searchItunesTracks,
+} from './itunes';
+
+// API officielle Jamendo v3.0 (source de catalogue V47 — catalogue
+// indépendant à flux audio COMPLET ; lecture directe via le provider
+// `jamendo`. Inactive sans `client_id` : dégradation propre, aucun backend
+// payant obligatoire, aucune clé dans le dépôt ni dans l'UI.)
+export {
+  JAMENDO_SEARCH_LIMIT,
+  JamendoRequestError,
+  getJamendoClientIdInfo,
+  getRenderableJamendoAttribution,
+  isJamendoConfigured,
+  resolveJamendoStreamUrl,
+  sanitizeJamendoLicenseUrl,
+  sanitizeJamendoShareUrl,
+  searchJamendoTracks,
+} from './jamendo';
+export type { RenderableJamendoAttribution } from './jamendo';
+
+export { SEE_ALL_KINDS, SEE_ALL_SOURCES, isSeeAllKind } from './seeAll';
+export type {
+  SeeAllFetchContext,
+  SeeAllItem,
+  SeeAllKind,
+  SeeAllSource,
+} from './seeAll';
 
 export { getSavedShows } from './shows';
 
-export { checkSavedTracks, getSavedTracks } from './tracks';
+export {
+  checkSavedTracks,
+  getSavedTracks,
+  getSpotifySavedTracks,
+  getSpotifySavedTracksCount,
+  getSpotifySavedTracksPage,
+} from './tracks';
+export type { SpotifySavedTracksPage } from './tracks';
 
 export { checkSavedItems } from './library';
 export type { LibraryItemType } from './library';
@@ -46,6 +142,7 @@ export {
   getUserPlaylists,
   invalidateUserPlaylistsCache,
 } from './spotify/userPlaylists';
+export type { GetUserPlaylistsOptions } from './spotify/userPlaylists';
 export {
   getSpotifyPlaylist,
   getSpotifyPlaylistTracks,

@@ -216,7 +216,7 @@ describe('youtubeAudioProvider', () => {
     warn.mockRestore();
   });
 
-  it('échec honnête : requêtes bornées incluant official audio et album', async () => {
+  it('échec honnête : requêtes BORNÉES incluant official audio, topic et album', async () => {
     const provider = createYouTubeAudioProvider();
     const fetchMock = fetchReturning([]);
     setFetch(fetchMock);
@@ -231,9 +231,17 @@ describe('youtubeAudioProvider', () => {
       const body = JSON.parse(String(options.body)) as { query: string };
       return body.query;
     });
-    expect(queries.length).toBeLessThanOrEqual(5);
+    // Bornée : aucune boucle infinie, aucune rafale de requêtes.
+    expect(queries.length).toBeLessThanOrEqual(7);
     expect(queries.some((query) => /official audio/i.test(query))).toBe(true);
     expect(queries.some((query) => query.includes('After Hours'))).toBe(true);
+    // Les formulations élargies ne sortent qu'en dernier recours : après les
+    // formulations « artiste + titre » et après celle portant l'album.
+    const topicIndex = queries.findIndex((query) => /topic/i.test(query));
+    expect(topicIndex).toBeGreaterThanOrEqual(0);
+    expect(topicIndex).toBeGreaterThan(
+      queries.findIndex((query) => query.includes('After Hours'))
+    );
   });
 
   it('resolveSource : URL audio directe rendue pour expo-av, null si UNPLAYABLE', async () => {

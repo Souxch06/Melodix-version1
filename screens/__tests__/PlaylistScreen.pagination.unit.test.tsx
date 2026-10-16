@@ -52,6 +52,8 @@ jest.mock('react-native-safe-area-context', () => ({
 type PreviewProps = {
   tracks?: { id: string }[];
   fetchTracks?: () => void;
+  recommendationsSeed?: string;
+  recommendationsType?: string;
 };
 
 const mockCaptured: {
@@ -125,6 +127,8 @@ describe('PlaylistScreen — pagination (I-6/I-7)', () => {
     expect(mockCaptured.current.tracks).toHaveLength(PAGE);
     expect(mockCaptured.current.tracks?.[0].id).toBe('t0');
     expect(mockCaptured.current.tracks?.[PAGE - 1].id).toBe('t49');
+    expect(mockCaptured.current.recommendationsSeed).toBe('t0');
+    expect(mockCaptured.current.recommendationsType).toBe('tracks');
   });
 
   it('arrivée en bas → page 1 ajoutée SANS doublons (ids t0..t99 uniques)', async () => {

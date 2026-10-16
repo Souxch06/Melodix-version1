@@ -1,7 +1,14 @@
 import * as React from 'react';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { COLORS } from '@config';
+import {
+  ELEVATION,
+  PALETTE,
+  RADIUS,
+  SPACING,
+  TOUCH_TARGET,
+  TYPOGRAPHY,
+} from '@config';
 import { usePlayer } from '@context';
 import { translations } from '@data';
 
@@ -88,62 +95,68 @@ export const ResumeSessionCard = () => {
 const styles = StyleSheet.create({
   card: {
     alignItems: 'center',
-    backgroundColor: COLORS.SECONDARY,
-    borderRadius: 12,
+    backgroundColor: PALETTE.night600,
+    borderRadius: RADIUS.lg,
+    borderWidth: 1,
+    borderColor: PALETTE.hairline,
     flexDirection: 'row',
-    marginBottom: 16,
-    padding: 12,
+    marginBottom: SPACING.lg,
+    padding: SPACING.md,
+    ...ELEVATION.card,
   },
   artwork: {
-    borderRadius: 6,
+    borderRadius: RADIUS.sm,
     height: 52,
     width: 52,
   },
   artworkFallback: {
-    backgroundColor: COLORS.BORDER_GREY,
+    backgroundColor: PALETTE.night500,
   },
   info: {
     flex: 1,
-    paddingHorizontal: 12,
+    paddingHorizontal: SPACING.md,
   },
   title: {
-    color: COLORS.TINT,
-    fontSize: 12,
+    ...TYPOGRAPHY.caption,
+    color: PALETTE.accent,
     fontWeight: '700',
-    marginBottom: 2,
+    marginBottom: SPACING.xxs,
     textTransform: 'uppercase',
   },
   track: {
-    color: COLORS.WHITE,
-    fontSize: 14,
+    ...TYPOGRAPHY.body,
+    color: PALETTE.textPrimary,
     fontWeight: '600',
   },
   position: {
-    color: COLORS.LIGHT_GREY,
-    fontSize: 12,
-    marginTop: 2,
+    ...TYPOGRAPHY.caption,
+    color: PALETTE.textSecondary,
+    marginTop: SPACING.xxs,
   },
   actions: {
     alignItems: 'flex-end',
   },
   resumeButton: {
-    backgroundColor: COLORS.TINT,
-    borderRadius: 16,
-    paddingHorizontal: 14,
-    paddingVertical: 7,
+    backgroundColor: PALETTE.accent,
+    borderRadius: RADIUS.pill,
+    minHeight: TOUCH_TARGET.minimum - 4,
+    justifyContent: 'center',
+    paddingHorizontal: SPACING.md,
+    paddingVertical: SPACING.sm,
   },
   resumeText: {
-    color: COLORS.BLACK,
-    fontSize: 13,
+    ...TYPOGRAPHY.label,
+    color: PALETTE.night900,
     fontWeight: '700',
   },
   dismissButton: {
-    marginTop: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 3,
+    marginTop: SPACING.sm,
+    minHeight: TOUCH_TARGET.minimum - 8,
+    justifyContent: 'center',
+    paddingHorizontal: SPACING.sm,
   },
   dismissText: {
-    color: COLORS.LIGHT_GREY,
-    fontSize: 12,
+    ...TYPOGRAPHY.caption,
+    color: PALETTE.textSecondary,
   },
 });

@@ -1,6 +1,10 @@
 import type { AudiusTrackMatch } from '@api';
 
-import type { AudioSourceQuery } from './types';
+import type {
+  AudioSourceQuery,
+  SongMatchKind,
+  TrackVariantClass,
+} from './types';
 
 /**
  * Reliability-first matching of a source track (Spotify metadata) against
@@ -12,7 +16,15 @@ import type { AudioSourceQuery } from './types';
  * - comparisons happen on TYPOGRAPHICALLY NORMALIZED variants (case, accents,
  *   dashes, ellipses, silence-padding metadata) so that titles like
  *   "Tame (feat. X) — Remastered 2024" still line up;
- * - artist agreement and duration agreement each contribute bounded weight.
+ * - artist agreement and duration agreement each contribute bounded weight;
+ * - the VERSION of a track is classified DETERMINISTICALLY
+ *   (`classifyVariantTitle`, classes `TrackVariantClass`) and a candidate
+ *   whose variant differs from the source is rejected BEFORE scoring — a
+ *   textual score can never make a remix beat the original;
+ * - ISRC is the strongest identity signal: an EXACT ISRC match wins over
+ *   every other signal; a DIFFERENT known ISRC is a penalty (the candidate
+ *   proves to be another recording) and can only survive with an otherwise
+ *   near-perfect match.
  */
 
 export type SongMatchCandidate = {
@@ -24,6 +36,16 @@ export type SongMatchCandidate = {
   isrc?: string | null;
   /** Classification fournie par le provider, sinon inférée du titre. */
   explicit?: boolean | null;
+  /**
+   * Pertinence éditoriale du support (0..1), quand le provider sait la
+   * reconnaître : une chaîne « Topic » ou un « Official Audio » désigne le
+   * morceau lui-même, alors qu'une compilation ou un mix désigne autre chose.
+   *
+   * Sert UNIQUEMENT à départager deux candidats de score ÉGAL : elle ne
+   * franchit jamais le seuil à elle seule et ne peut donc pas transformer un
+   * candidat insuffisant en match.
+   */
+  contentQuality?: number | null;
 };
 
 export type SongFingerprint = {
@@ -35,16 +57,27 @@ export type SongFingerprint = {
   /** `null` signifie que la version ne publie aucune classification fiable. */
   explicit: boolean | null;
   /**
-   * Marqueurs de variante dure détectés dans le titre SOURCE
-   * (« remix », « live », « instrumental », « karaoke », « acoustic »).
+   * Classes de variante DURE détectées dans le titre SOURCE (classes
+   * `TrackVariantClass`, `original`/`remastered`/`unknown` exclus — ils ne
+   * désignent pas un enregistrement différent).
    */
   hardVariants: string[];
+  /**
+   * Classe de variante DOMINANTE du titre SOURCE (classification
+   * déterministe) : `original` quand aucun marqueur, `remix` pour
+   * « Song (Remix) », etc. Alimente le diagnostic de résolution.
+   */
+  variantClass: TrackVariantClass;
 };
 
 export type SongMatchResult = {
   id: string;
   score: number;
   candidate: SongMatchCandidate;
+  /** MOYEN de la décision (isrc / exact-title / title-artist-duration / fuzzy). */
+  matchKind: SongMatchKind;
+  /** Classe de variante du candidat ACCEPTÉ (ce qui sera réellement joué). */
+  variantClass: TrackVariantClass;
 };
 
 export type SongCandidateDecision = {
@@ -58,6 +91,7 @@ export type SongCandidateDecision = {
     | 'duration-mismatch'
     | 'variant-mismatch'
     | 'content-rating-mismatch'
+    | 'isrc-conflict'
     | 'below-threshold'
     | 'candidate-scored';
   score?: number;
@@ -80,7 +114,7 @@ const devMatcherLog = (
 };
 
 const DASH_APPENDAGE_RX =
-  /(?:\s[-–—−:]\s+(?:(?:[^\-–—−]*?\b(?:remix|mix|edit|remaster(?:ed)?|remake|version|vip|extend(?:ed)?|radio|live|acoustic|demo|mono|stereo|original|deluxe|single|instrumental|a cappella|censored|clean|explicit|reprise|session[s]?|official\s+(?:audio|video)|lyric(?:s|\s+video)?|visuali[sz]er|version\s+\d{4}|\d{4})\b[^\-–—−]*)|.*?\d{4}.*?))$/iu;
+  /(?:\s[-–—−:]\s+(?:(?:[^\-–—−]*?\b(?:remix|mix|edit|remaster(?:ed)?|remake|version|vip|extend(?:ed)?|radio|live|acoustic|demo|mono|stereo|original|deluxe|single|instrumental|a cappella|acapella|censored|clean|explicit|reprise|session[s]?|official\s+(?:audio|video)|lyric(?:s|\s+video)?|visuali[sz]er|cover|tribute|piano|re-?recording|version\s+\d{4}|\d{4})\b[^\-–—−]*)|.*?\d{4}.*?))$/iu;
 const EMPTY_PLACEHOLDER_RX =
   /^(?:\(?\s*(?:untitled|unknown|tba|track)\s*\)?)$/iu;
 const FEATURE_MARKER_RX = /^(?:feat\.?|ft\.?|featuring|with|w\/|&)$/i;
@@ -198,6 +232,36 @@ export const stripFeatureSuffix = (title: string): string =>
     .replace(/\s+(?:feat\.?|ft\.?|featuring|with|w\/)\s.+$/i, '')
     .trim();
 
+/**
+ * Suffixes ÉDITORIAUX sans séparateur (« Song Official Audio », « Song HD »,
+ * « Song Topic »). Ils ne désignent jamais une version musicale différente —
+ * seulement la façon dont le support a été publié — mais sans ce retrait le
+ * titre restait « partiel », donc 0 point de titre, et le bon candidat était
+ * rejeté.
+ *
+ * Garde-fous : `\s+` initial (un titre mono-mot comme « Audio » n'est jamais
+ * amputé) et `length >= 2` (le titre ne peut pas disparaître).
+ */
+const EDITORIAL_TAIL_RX =
+  /\s+\b(?:official\s+(?:audio|video|music\s+video|lyric\s+video|visuali[sz]er)|color\s+coded\s+lyrics?|extended\s+audio|full\s+(?:album|video|ep|set)|prod\.?\s+by\s+.+|lyrics?|visuali[sz]er|audio|video|topic|hq|hd|edit)\s*$/iu;
+
+const stripEditorialTail = (text: string): string => {
+  let out = text;
+
+  // Borné : quelques passes suffisent (« Song Official Audio HD »).
+  for (let pass = 0; pass < 6; pass += 1) {
+    const stripped = out.replace(EDITORIAL_TAIL_RX, '').trim();
+
+    if (stripped === out || stripped.length < 2) {
+      break;
+    }
+
+    out = stripped;
+  }
+
+  return out;
+};
+
 /** Longest title variant after removing parentheticals and remix/live tails. */
 export const canonicalizeFromTitle = (normalizedTitle: string): string => {
   let text = stripFeatureSuffix(normalizedTitle);
@@ -215,14 +279,26 @@ export const canonicalizeFromTitle = (normalizedTitle: string): string => {
     }
   }
 
+  text = stripEditorialTail(text);
+
   return cleanupWhitespace(text);
 };
 
-/** Normalized artist/name for fuzzy equality (articles and featuring dropped). */
+/**
+ * Normalized artist/name for fuzzy equality (articles and featuring dropped).
+ *
+ * Le suffixe de chaîne « … - Topic » (piste publiée automatiquement par le
+ * distributeur) est retiré : ce n'est pas une partie du nom d'artiste, et sans
+ * ce retrait la porte artiste rejetait la source audio la plus fiable du
+ * catalogue. `Topic` seul (entrée de liste) est écarté pour la même raison.
+ */
 export const normalizeArtistText = (raw: string): string => {
   const text = normalizeTitleText(raw).replace(/^the\s+/i, '');
 
-  return text.replace(/\.$/, '').trim();
+  return text
+    .replace(/\s*[-–—−]\s*topic\s*$/u, '')
+    .replace(/\.$/, '')
+    .trim();
 };
 
 const parseFeaturedArtists = (normalizedTitle: string): string[] => {
@@ -242,44 +318,146 @@ const parseFeaturedArtists = (normalizedTitle: string): string[] => {
   return featured;
 };
 
+/**
+ * Découpe une chaîne d'artistes. Les séparateurs couvrent les formes que les
+ * catalogues utilisent réellement : virgule, « & », « x », « and/et/en »,
+ * « vs » — et les marqueurs de featuring (« feat. », « ft. », « featuring »,
+ * « with ») qui apparaissent DANS la liste d'artistes d'un support
+ * (« Dua Lipa feat. DaBaby »). Le marqueur disparaît, seuls les noms restent.
+ */
 const splitArtistNames = (raw: string): string[] =>
   raw
     .split(
-      /(?:\s*,\s*|\s*[&+|×⋅]\s*|\s+vs\.?\s+|\s+x\s+|\s+(?:and|et|en)\s+)/iu
+      /(?:\s*,\s*|\s*[&+|×⋅]\s*|\s+vs\.?\s+|\s+x\s+|\s+(?:and|et|en)\s+|\s+(?:feat\.?|ft\.?|featuring|with|w\/)\s+)/iu
     )
     .map((piece) => normalizeArtistText(piece))
-    .filter(Boolean);
+    .filter((piece) => piece && piece !== 'topic');
 
 /** Builds the normalized fingerprint of a source query or a candidate. */
 /**
- * Variantes « dures » : un remix / live / instrumental / karaoke / acoustic
- * N'EST PAS une correspondance exacte automatique quand la source n'est pas
- * cette version (point 4 : « Song » vs « Song (Remix) » → pénalité forte).
- * Remastered/radio edit/extended/officiel/lyrics = versions acceptées (bruit
- * d'édition géré par canonicalizeFromTitle comme avant).
+ * CLASSIFICATION DÉTERMINISTE des variantes de titre.
+ *
+ * Chaque marqueur reconnu mappe vers EXACTEMENT une classe
+ * `TrackVariantClass` (liste fermée, verrouillée par les tests) :
+ *
+ * - classes « DURES » : remix, live, acoustic, instrumental, radio_edit,
+ *   extended, club, vip, sped_up, slowed, reverb, karaoke, demo, mashup,
+ *   bootleg, alternate — un enregistrement DIFFÉRENT : la porte
+ *   `variant-mismatch` les rejette quand la source n'est pas cette version
+ *   (« Song » ≠ « Song (Remix) »), et réciproquement ;
+ * - `remastered` / `unknown` : bruit d'édition (même enregistrement, ou
+ *   marqueur ambigu) — classés mais JAMAIS rejettés à eux seuls ;
+ * - `original` : aucun marqueur détecté.
+ *
+ * La détection se fait sur le titre NORMALISÉ (minuscules, accents retirés) :
+ * « (REMASTERED 2011) » et « (Remastered 2011) » donnent la même classe.
+ * `nightcore` mappe sur `sped_up` (c'est littéralement une version accélérée)
+ * pour rester dans l'enum de la mission.
  */
-const HARD_VARIANT_RX =
-  /\b(remix|live|instrumental|karaoke|acoustic|radio\s+edit|extended(?:\s+(?:mix|version))?|sped\s+up|slowed(?:\s+down)?|nightcore)\b/giu;
-const canonicalVariantTag = (raw: string): string => {
-  const tag = raw.toLowerCase().replace(/\s+/g, ' ').trim();
-  if (tag.startsWith('extended')) return 'extended';
-  if (tag.startsWith('slowed')) return 'slowed';
-  return tag;
-};
+const VARIANT_MARKERS: readonly { rx: RegExp; cls: TrackVariantClass }[] = [
+  { rx: /\bmashup\b/iu, cls: 'mashup' },
+  { rx: /\bbootleg\b/iu, cls: 'bootleg' },
+  { rx: /\bremix\b/iu, cls: 'remix' },
+  { rx: /\bclub\s+(?:mix|version|edit)\b/iu, cls: 'club' },
+  { rx: /\blive\b/iu, cls: 'live' },
+  { rx: /\bacoustic\b/iu, cls: 'acoustic' },
+  { rx: /\binstrumental\b/iu, cls: 'instrumental' },
+  { rx: /\ba\s*c?ap{1,2}ella\b/iu, cls: 'acapella' },
+  { rx: /\bpiano\b/iu, cls: 'piano' },
+  { rx: /\bkaraoke\b/iu, cls: 'karaoke' },
+  { rx: /\bradio\s+edit\b/iu, cls: 'radio_edit' },
+  { rx: /\bedit(?:ed)?\b/iu, cls: 'edit' },
+  { rx: /\bextended\b/iu, cls: 'extended' },
+  { rx: /\bvip\b/iu, cls: 'vip' },
+  { rx: /\bsped\s+up\b/iu, cls: 'sped_up' },
+  { rx: /\bnightcore\b/iu, cls: 'sped_up' },
+  { rx: /\bslowed(?:\s+down)?\b/iu, cls: 'slowed' },
+  { rx: /\breverb\b/iu, cls: 'reverb' },
+  { rx: /\bdemo\b/iu, cls: 'demo' },
+  {
+    rx: /\b(?:alternate|alternative)\s+(?:version|mix)\b/iu,
+    cls: 'alternate',
+  },
+  { rx: /\bcover\b/iu, cls: 'cover' },
+  { rx: /\btribute\b/iu, cls: 'tribute' },
+  { rx: /\bre-?\s?recor(?:ding|ded)\b/iu, cls: 'rerecording' },
+  { rx: /\bremaster(?:ed)?\b/iu, cls: 'remastered' },
+];
 
-export const hardVariantsOfTitle = (title: string): string[] => {
+/**
+ * Ordre de PRÉCÉDENCE pour la classe DOMINANTE d'un titre multi-marqueurs
+ * (fixe → déterministe) : le marqueur le plus spécifique gagne, par exemple
+ * « Song (Mashup Remix) » → `mashup`.
+ */
+const VARIANT_CLASS_PRIORITY: readonly TrackVariantClass[] = [
+  'mashup',
+  'bootleg',
+  'remix',
+  'club',
+  'live',
+  'acoustic',
+  'instrumental',
+  'acapella',
+  'piano',
+  'karaoke',
+  'radio_edit',
+  'edit',
+  'extended',
+  'vip',
+  'sped_up',
+  'slowed',
+  'reverb',
+  'demo',
+  'alternate',
+  'cover',
+  'tribute',
+  'rerecording',
+  'remastered',
+  'unknown',
+];
+
+/**
+ * Classes détectées dans un titre, dans l'ordre de l'enum (stable).
+ * « Version » générique sans marqueur connu (« Version 2024 », « (Version 2)
+ * ») → `unknown` (édition ambiguë : classée, jamais porte dure).
+ */
+export const variantClassesOfTitle = (title: string): TrackVariantClass[] => {
   const normalized = normalizeTitleText(title);
-  const found: string[] = [];
+  const found = new Set<TrackVariantClass>();
 
-  for (const match of normalized.matchAll(HARD_VARIANT_RX)) {
-    const tag = canonicalVariantTag(match[1] ?? '');
-    if (tag && !found.includes(tag)) {
-      found.push(tag);
+  for (const { rx, cls } of VARIANT_MARKERS) {
+    if (rx.test(normalized)) {
+      found.add(cls);
     }
   }
 
-  return found;
+  if (!found.size && /\bversion\b/iu.test(normalized)) {
+    found.add('unknown');
+  }
+
+  return VARIANT_CLASS_PRIORITY.filter((cls) => found.has(cls));
 };
+
+/**
+ * Classe DOMINANTE d'un titre : la première classe détectée dans
+ * `VARIANT_CLASS_PRIORITY`, `original` quand aucun marqueur n'est présent.
+ * MÊME titre → MÊME classe, toujours (déterminisme verrouillé par les tests).
+ */
+export const classifyVariantTitle = (title: string): TrackVariantClass => {
+  const classes = variantClassesOfTitle(title);
+
+  return classes.length ? classes[0] : 'original';
+};
+
+/** Classes DURES uniquement (les seules qui alimentent la porte de variante). */
+const HARD_VARIANT_CLASSES: ReadonlySet<TrackVariantClass> = new Set(
+  VARIANT_CLASS_PRIORITY.filter(
+    (cls) => cls !== 'remastered' && cls !== 'unknown'
+  )
+);
+
+export const hardVariantsOfTitle = (title: string): string[] =>
+  variantClassesOfTitle(title).filter((cls) => HARD_VARIANT_CLASSES.has(cls));
 
 const hardVariantMismatch = (a: string[], b: string[]): boolean => {
   if (!a.length && !b.length) {
@@ -331,6 +509,7 @@ export const fingerprintOf = (input: {
         ? input.explicit
         : contentRatingOfTitle(input.title),
     hardVariants: hardVariantsOfTitle(input.title),
+    variantClass: classifyVariantTitle(input.title),
   };
 };
 
@@ -350,6 +529,15 @@ export const normalizeAlbumText = (raw: string): string => {
   return cleanupWhitespace(text);
 };
 
+/**
+ * Accord artiste. Le dénominateur est la taille de l'ensemble ATTENDU (les
+ * artistes de la source), pas la plus grande des deux listes : un support qui
+ * cite PLUS d'artistes que Spotify (invités, remixeur, chaîne « … - Topic »)
+ * ne doit pas être dilué — c'est exactement le cas « YouTube/Audius représente
+ * différemment les artistes secondaires ». La porte dure sur l'artiste
+ * PRINCIPAL (`primaryArtistAgreement`) reste, elle, inchangée : un featuring
+ * seul ne suffit toujours pas à identifier un enregistrement.
+ */
 const artistOverlapScore = (
   sourceArtists: string[],
   candidateArtists: string[]
@@ -369,7 +557,7 @@ const artistOverlapScore = (
   return Math.min(
     1,
     shared.reduce((sum, score) => sum + score, 0) /
-      Math.max(sourceArtists.length, candidateArtists.length) +
+      Math.max(1, sourceArtists.length) +
       (includesMain ? 0.25 : 0) +
       (shared.length ? 0.1 : 0)
   );
@@ -410,6 +598,84 @@ const titleAgreement = (
   return 'none';
 };
 
+/**
+ * Pertinence éditoriale d'un candidat (0..1).
+ *
+ * - 1.0 : chaîne « … - Topic » (publiée automatiquement par le distributeur) ou
+ *   « Official Audio » / « Official Video » → le morceau lui-même ;
+ * - 0.6 : marqueur audio générique (audio, lyrics, visualizer) ;
+ * - 0.3 : supports qui CONTIENNENT plusieurs morceaux ou du hors-sujet
+ *   (compilation, mix, full album, playlist, interview, reaction…) ;
+ * - 0.5 : défaut neutre, aucune reconnaissance.
+ *
+ * Sert UNIQUEMENT de départage entre deux candidats de score égal : elle ne
+ * peut à aucun moment faire franchir le seuil d'acceptation.
+ */
+const TOPIC_CHANNEL_RX = /(?:^|\s)-\s*topic\s*$/iu;
+const OFFICIAL_SOURCE_RX =
+  /\bofficial\s+(?:audio|video|music\s+video|lyric\s+video|visuali[sz]er)\b/iu;
+const GENERIC_AUDIO_RX = /\b(?:audio|lyrics?|visuali[sz]er)\b/iu;
+const NOISE_CONTENT_RX =
+  /\b(?:compilation|mix|full\s+(?:album|video|ep|set|mixtape)|playlist|nonstop|medley|megamix|hours?|interview|behind\s+the\s+scenes|reaction|review|essay|documentary|live\s+at|concert|tour|karaoke\s+version|tribute|cover\s+by|top\s+\d+|best\s+of)\b/iu;
+
+export const candidateContentQuality = (
+  candidate: Pick<SongMatchCandidate, 'title' | 'artistNames'>
+): number => {
+  const title = normalizeTitleText(candidate.title ?? '');
+  const artists = (candidate.artistNames ?? [])
+    .map((name) => normalizeTitleText(name))
+    .join(' ');
+
+  if (TOPIC_CHANNEL_RX.test(artists) || OFFICIAL_SOURCE_RX.test(title)) {
+    return 1;
+  }
+
+  if (NOISE_CONTENT_RX.test(title) || NOISE_CONTENT_RX.test(artists)) {
+    return 0.3;
+  }
+
+  if (GENERIC_AUDIO_RX.test(title)) {
+    return 0.6;
+  }
+
+  return 0.5;
+};
+
+/**
+ * Groupes parenthésés/bracketés qui NE désignent PAS un artiste : marqueurs de
+ * variante (« Remix », « Live »), de featuring (déjà traité à part),
+ * d'édition (« Deluxe », « Remastered »), de classification (« Explicit ») ou
+ * simple millésime. Tout le reste est une mention d'artiste exploitable
+ * (« (Dua Lipa) Levitating », « Levitating [Dua Lipa] »).
+ */
+const NON_ARTIST_GROUP_RX =
+  /\b(?:feat\.?|ft\.?|featuring|with|w\/|remix|mix|edit|remaster(?:ed)?|remake|version|live|acoustic|instrumental|a\s*c?ap{1,2}ella|piano|karaoke|radio|extended|sped\s+up|slowed|nightcore|demo|mono|stereo|original|deluxe|single|bonus|session|official|lyrics?|visuali[sz]er|audio|video|explicit|clean|censored|uncensored|prod\.?|from|performed|cover|tribute|anniversary|expanded|re-?recording|re-?recorded)\b|^\d{4}$/iu;
+
+/**
+ * Artistes mentionnés entre parenthèses ou crochets dans le titre du support.
+ * `canonicalizeFromTitle` supprime déjà ces groupes du TITRE ; on les récupère
+ * ici comme source d'artiste, sans quoi un support intitulé
+ * « (Artiste) Titre » était rejeté par la porte artiste alors que le titre,
+ * lui, correspondait exactement.
+ */
+const artistGroupsOfTitle = (normalizedTitle: string): string[] => {
+  const found: string[] = [];
+
+  for (const match of normalizedTitle.matchAll(
+    /\(([^()]*)\)|\[([^[\]]*)\]/gu
+  )) {
+    const content = (match[1] ?? match[2] ?? '').trim();
+
+    if (content.length < 2 || NON_ARTIST_GROUP_RX.test(content)) {
+      continue;
+    }
+
+    found.push(...splitArtistNames(content));
+  }
+
+  return found.filter(Boolean);
+};
+
 const candidateTitleViews = (
   rawTitle: string,
   sourceTitle: string
@@ -421,9 +687,14 @@ const candidateTitleViews = (
     .map((piece) => canonicalizeFromTitle(piece))
     .filter((piece) => piece.length >= 2);
   const titles = Array.from(new Set([full, ...pieces].filter(Boolean)));
-  const inferredArtists = pieces
-    .filter((piece) => textSimilarity(piece, sourceTitle) < 0.7)
-    .flatMap(splitArtistNames);
+  const inferredArtists = Array.from(
+    new Set([
+      ...pieces
+        .filter((piece) => textSimilarity(piece, sourceTitle) < 0.7)
+        .flatMap(splitArtistNames),
+      ...artistGroupsOfTitle(normalized),
+    ])
+  );
   return { titles, inferredArtists };
 };
 
@@ -449,6 +720,16 @@ const albumAgreement = (
   return a.startsWith(b) || b.startsWith(a) ? 'partial' : 'none';
 };
 
+/**
+ * Tolérance de durée CALIBRÉE sur les écarts réels entre catalogues : un
+ * morceau Spotify de 3:42 face à une source de 3:45 (silences d'entrée, fondu
+ * différent) ne doit pas être pénalisé, alors qu'un écart de plusieurs dizaines
+ * de secondes désigne presque toujours un autre enregistrement.
+ *
+ * La porte DURE (`durationGateRejects`) reste le garde-fou définitif : au-delà
+ * de la tolérance documentée (45 s absolues ou 25 % relatifs), le candidat
+ * est rejeté quel que soit son score.
+ */
 const durationScore = (
   expectedSec: number | null | undefined,
   actualSec: number | null | undefined
@@ -471,20 +752,38 @@ const durationScore = (
   }
 
   if (diff <= 8) {
-    return 0.6;
+    return 0.8;
   }
 
   if (diff <= 15) {
-    return 0.25;
+    return 0.45;
+  }
+
+  if (diff <= 30) {
+    return 0.15;
   }
 
   return 0;
 };
 
 /**
- * Porte durée DURE : un écart > 60 s ET > 30 % ne peut être qu'un autre
- * enregistrement (extended mix, version club, reprise ralongée) — jamais le
- * même morceau. Durée inconnue d'un côté ou de l'autre : la porte ne dit rien.
+ * Porte durée DURE (calibration mission « exactitude ») : la durée Spotify
+ * est la référence de l'enregistrement DEMANDÉ. Un écart au-delà de la
+ * tolérance documentée ci-dessous ne peut être qu'un autre enregistrement
+ * (extended mix, version club, reprise ralongée, édition différente) —
+ * jamais le même morceau, même si le titre et l'artiste sont quasi parfaits.
+ *
+ * Tolérance documentée :
+ *  - écart absolu > 45 s → REJET : les écarts « fondu/outro différent » entre
+ *    distributeurs restent en deçà (~10-30 s) ; 45 s est au-delà de cette
+ *    bande, dans la zone des éditions allongées ;
+ *  - écart relatif ≥ 25 % de la plus longue durée → REJET : un candidat d'un
+ *    quart plus long/plus court est une autre édition (ex. 3:42 demandé /
+ *    4:55 servi = +33 % → rejet, même titre exact et artiste identique) ;
+ *  - sinon → admissible : 3:42 / 3:41 (1 s) est accepté, 5:00 / 5:25
+ *    (25 s, 8 %) reste admissible si les autres signaux concordent.
+ *
+ * Durée inconnue d'un côté ou de l'autre : la porte ne dit rien.
  */
 const durationGateRejects = (
   expectedSec: number | null | undefined,
@@ -503,7 +802,7 @@ const durationGateRejects = (
 
   const diff = Math.abs(expectedSec - actualSec);
 
-  return diff > 60 && diff / Math.max(expectedSec, actualSec) > 0.3;
+  return diff > 45 || diff / Math.max(expectedSec, actualSec) >= 0.25;
 };
 
 export const matchSongs = (
@@ -520,6 +819,7 @@ export const matchSongs = (
   }
 
   let best: SongMatchResult | null = null;
+  let bestQuality = -1;
 
   for (const candidate of candidates) {
     if (!candidate.id) {
@@ -529,6 +829,18 @@ export const matchSongs = (
 
     const candidateIsrc = normalizeIsrc(candidate.isrc);
     const isrcExact = Boolean(source.isrc && candidateIsrc === source.isrc);
+    // CONFLIT ISRC : les deux côtés publient un ISRC et ils DIFFÈRENT.
+    // L'ISRC est l'identifiant d'un ENREGISTREMENT : un ISRC différent est
+    // la preuve qu'il s'agit d'un autre enregistrement (édition régionale,
+    // release séparée…), même quand titre/artiste/durée s'accordent.
+    // Règles (verrouillées par les tests) :
+    //  - jamais préféré à un ISRC IDENTIQUE (celui-ci vaut 100, ici ≤ 99) ;
+    //  - pénalité forte : le candidat ne survit QUE si le reste est quasi
+    //    parfait (titre exact + artiste quasi parfait + durée ≤ 3 s) —
+    //    l'« échappatoire » aux ISRC erronés côté distributeur ;
+    //  - ISRC différent + marqueur de variante → rejeté par la porte
+    //    variante ci-dessous, quel que soit le reste.
+    const isrcConflict = !isrcExact && Boolean(source.isrc && candidateIsrc);
     const views = candidateTitleViews(candidate.title, source.title);
     const bestTitle = views.titles.reduce(
       (best, title) =>
@@ -570,8 +882,18 @@ export const matchSongs = (
       continue;
     }
 
-    const candidateArtistNames =
-      candidate.artistNames?.map((name) => normalizeArtistText(name)) ?? [];
+    // DÉCOUPAGE SYMÉTRIQUE des artistes (cas D) : la source EST déjà découpée
+    // par `splitArtistNames` (dans `fingerprintOf`). Le candidat l'était pas —
+    // il était seulement normalisé — si bien qu'un « A & B » (ou « A and B »)
+    // en UN seul nom ne correspondait jamais à la source « A, B », MÊME
+    // identique des deux côtés : la porte artiste rejetait le bon morceau.
+    // On applique ici le MÊME découpage qu'à la source (et sa normalisation,
+    // incluse). AUCUNE protection n'est retirée : l'accord du principal
+    // (`primaryArtistAgreement`) et le score d'ensemble restent les portes
+    // ci-dessous — le featuring seul ne suffit toujours pas.
+    const candidateArtistNames = (candidate.artistNames ?? []).flatMap((name) =>
+      splitArtistNames(name)
+    );
     const comparableArtists = Array.from(
       new Set([
         ...candidateArtistNames,
@@ -682,27 +1004,68 @@ export const matchSongs = (
         : titleStatus === 'partial'
           ? 0
           : titleConfidence * 35;
+    const base =
+      titlePoints +
+      (exactTitle ? 5 : 0) +
+      artistAgreement * 25 +
+      (albumStatus === 'exact' ? 15 : albumStatus === 'partial' ? 7 : 0) +
+      durationConfidence * 20;
+    // ISRC exact = 100, TOUJOURS au-dessus de tout le reste. Sans ISRC
+    // exact, le score est borné à 99 (un ISRC identique prime toujours) et
+    // réduit de 25 points quand les deux ISRCs sont connus et différents.
+    // Calibrage (verrouillé par les tests) :
+    //  - « correspondance stricte » (titre exact + artiste ≥ 0.82 + durée
+    //    ≤ 8 s) : base ≥ 81.5 → 56.5 ≥ seuil → ACCEPTÉ (échappatoire aux
+    //    ISRC erronés côté distributeur, que la mission autorise) ;
+    //  - titre partiel, artiste flou ou durée > 8 s : base ≤ 74.5 →
+    //    49.5 < seuil → REJETÉ ;
+    //  - un ISRC identique (100) bat toujours un ISRC conflictuel (≤ 74)
+    //    et un candidat sans ISRC (≤ 99) est préféré à un ISRC
+    //    conflictuel avec le même profil de métadonnées.
     const score = isrcExact
       ? 100
-      : Math.round(
-          titlePoints +
-            (exactTitle ? 5 : 0) +
-            artistAgreement * 25 +
-            (albumStatus === 'exact' ? 15 : albumStatus === 'partial' ? 7 : 0) +
-            durationConfidence * 20
-        );
+      : Math.max(0, Math.min(99, Math.round(base - (isrcConflict ? 25 : 0))));
+    // MOYEN de la décision — alimente le diagnostic « pourquoi ce morceau
+    // a été choisi » (codes courts, sans métadonnée d'écoute).
+    const matchKind: SongMatchKind = isrcExact
+      ? 'isrc'
+      : titleStatus === 'exact'
+        ? 'exact-title'
+        : artistAgreement >= 0.82 &&
+            durationConfidence >= 0.8 &&
+            titleConfidence >= MIN_FUZZY_TITLE_SIMILARITY
+          ? 'title-artist-duration'
+          : 'fuzzy';
+    const variantClass = classifyVariantTitle(candidate.title);
 
     decide({
       id: candidate.id,
       accepted: score >= acceptScore,
-      reason: score >= acceptScore ? 'candidate-scored' : 'below-threshold',
+      // ISRC différent connu : le motif est EXPLICITE dans le diagnostic
+      // (le score a déjà été raboté de 25 points) — le « pourquoi » n'est
+      // pas dilué dans un « below-threshold » générique.
+      reason:
+        score >= acceptScore
+          ? 'candidate-scored'
+          : isrcConflict
+            ? 'isrc-conflict'
+            : 'below-threshold',
       score,
     });
 
     // Keep a running best; hard gates are the same as acceptScore + a title
     // agreement floor so two remixes can't outrank an exact original.
+    // À score ÉGAL, la qualité éditoriale du support départage (une chaîne
+    // « Topic » ou un « Official Audio » désigne le morceau lui-même) — elle
+    // ne fait JAMAIS franchir le seuil à un candidat insuffisant.
+    const quality = candidateContentQuality(candidate);
+
     if (!best || score > best.score) {
-      best = { id: candidate.id, score, candidate };
+      best = { id: candidate.id, score, candidate, matchKind, variantClass };
+      bestQuality = quality;
+    } else if (score === best.score && quality > bestQuality) {
+      best = { id: candidate.id, score, candidate, matchKind, variantClass };
+      bestQuality = quality;
     }
   }
 
@@ -742,6 +1105,35 @@ const sec = (durationMillis?: number | null): number | null =>
 
 /** No reliable match: the player reports "track not available" and skips. */
 export const UNKNOWN_MATCH: SongMatchResult | null = null;
+
+/**
+ * Piste Audius brute → candidat scoré. UNE SEULE définition, partagée par le
+ * matcher (`findBestAudiusMatch`) et par le provider (`matches()`, badges UI) :
+ * les deux voient donc EXACTEMENT les mêmes champs — sinon l'écran pouvait
+ * annoncer « disponible » là où la lecture ne trouvait rien (et inversement).
+ *
+ * L'album reste `null` : l'endpoint de recherche Audius v1 n'expose pas le
+ * titre d'album de façon fiable. Ce n'est pas un signal perdu pour le
+ * matching — c'est un champ NEUTRE (voir `albumAgreement`), le titre, les
+ * artistes et la durée portent la décision.
+ */
+export const audiusCandidateFromTrack = (
+  track: AudiusTrackMatch
+): SongMatchCandidate => ({
+  id: track.id,
+  title: track.title ?? '',
+  artistNames: [track.user?.name ?? track.user?.handle ?? ''].filter(Boolean),
+  album: null,
+  durationSec:
+    typeof track.duration === 'number' && Number.isFinite(track.duration)
+      ? track.duration
+      : null,
+  isrc: track.isrc ?? null,
+  contentQuality: candidateContentQuality({
+    title: track.title ?? '',
+    artistNames: [track.user?.name ?? track.user?.handle ?? ''].filter(Boolean),
+  }),
+});
 
 /**
  * Search → score → best-of for the Audius provider. Returns the best match
@@ -788,12 +1180,24 @@ export const findBestAudiusMatch = async (
 
   // ISRC est le signal le plus précis lorsqu'il est indexé par Audius. Les
   // formulations textuelles restent indispensables car ce champ est rare.
+  //
+  // Les formulations ALBUM (parité avec le fournisseur YouTube) : quand le
+  // titre seul ou « Artiste Titre » reste muet, l'album disambiguise — c'est
+  // la clé des morceaux peu diffusés dont l'upload Audius porte un titre
+  // légèrement différent du catalogue Spotify.
+  const album = query.album?.replace(/\s{2,}/g, ' ').trim() ?? '';
   pushAttempt(source.isrc ?? null);
   pushAttempt(primary ? `${primary} ${titleWithoutFeature}` : null);
   pushAttempt(`${titleWithoutFeature} ${primary ?? ''}`);
+  if (album) {
+    pushAttempt(primary ? `${primary} ${titleWithoutFeature} ${album}` : null);
+  }
   pushAttempt(
     canonicalTitle && primary ? `${primary} ${canonicalTitle}` : canonicalTitle
   );
+  if (album) {
+    pushAttempt(primary ? `${primary} ${album}` : album);
+  }
   pushAttempt(titleWithoutFeature || canonicalTitle);
 
   let allCandidates: AudiusTrackMatch[] = [];
@@ -814,19 +1218,7 @@ export const findBestAudiusMatch = async (
       }
 
       seen.add(track.id);
-      candidates.push({
-        id: track.id,
-        title: track.title ?? '',
-        artistNames: [track.user?.name ?? track.user?.handle ?? ''].filter(
-          Boolean
-        ),
-        album: null, // Audius v1 tracks do not expose the album title reliably.
-        durationSec:
-          typeof track.duration === 'number' && Number.isFinite(track.duration)
-            ? track.duration
-            : null,
-        isrc: track.isrc ?? null,
-      });
+      candidates.push(audiusCandidateFromTrack(track));
     }
 
     return matchSongs(source, candidates, {
@@ -838,11 +1230,13 @@ export const findBestAudiusMatch = async (
     });
   };
 
-  // Boucle STRICTEMENT bornée (≤ 5 requêtes, ISRC compris) : un lot
-  // NON VIDE mais sans candidat ADMISSIBLE n'arrête plus la cascade — la
-  // formulation suivante peut trouver le bon. On ne s'arrête tôt que sur
-  // match admissible (zéro requête superflue quand le 1er lot suffit).
-  for (const attempt of attempts.slice(0, 5)) {
+  // Boucle STRICTEMENT bornée (≤ 7 requêtes, ISRC compris — 5 sans album,
+  // 7 avec) : un lot NON VIDE mais sans candidat ADMISSIBLE n'arrête plus
+  // la cascade — la formulation suivante peut trouver le bon. On ne
+  // s'arrête tôt que sur match admissible (zéro requête superflue quand le
+  // 1er lot suffit). Les requêtes additionnelles ne jouent QUE pour les
+  // titres que les 5 premières formulations n'ont pas résolus.
+  for (const attempt of attempts.slice(0, 7)) {
     try {
       const batch = await search(attempt);
       devMatcherLog('search', {

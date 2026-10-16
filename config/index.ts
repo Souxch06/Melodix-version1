@@ -9,6 +9,7 @@ export {
   AuthResponse,
   SEPARATOR,
   explicit_SIGN,
+  LOCAL_USER_ID,
   BOTTOM_NAVIGATION_HEIGHT,
   COMMON_HEADER_HEIGHT,
   HEADER_HEIGHT,
@@ -21,9 +22,26 @@ export {
   BROWSE_CATEGORY_IMAGE_SIZE,
   APP_SCHEME,
   AUTH_REDIRECT_PATH,
-  SPOTIFY_SCOPES,
 } from './constants';
-export { COLORS, BROWSE_CATEGORIES_COLORS } from './colors';
+export {
+  COLORS,
+  BROWSE_CATEGORIES_COLORS,
+  BROWSE_CATEGORY_OVERLAY_ALPHA,
+} from './colors';
+export {
+  APP_BACKGROUND_COLOR,
+  ELEVATION,
+  LAYOUT,
+  MOTION,
+  PALETTE,
+  RADIUS,
+  SECTION_LABEL,
+  SPACING,
+  TOUCH_TARGET,
+  TYPOGRAPHY,
+  theme,
+} from './theme';
+export type { Theme } from './theme';
 export {
   type ExpoConfigType,
   type AlbumResponseType,

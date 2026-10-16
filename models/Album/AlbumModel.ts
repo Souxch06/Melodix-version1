@@ -17,6 +17,8 @@ export type AlbumModel = {
       /** Métadonnées de matching (I-2) propagées à PlayerTrack → matcher. */
       durationMs?: number | null;
       albumName?: string | null;
+      /** ISRC Spotify (signal fort de matching) quand la source l'expose. */
+      isrc?: string | null;
     }[];
   };
   duration: number;

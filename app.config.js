@@ -14,13 +14,17 @@
  * - AUDIUS_API_KEY : clé API Audius (gratuite, dashboard Audius) intégrée à
  *   l'application par le mainteneur — jamais par l'utilisateur. Sans elle,
  *   l'app interroge les nœuds publics de découverte Audius.
- * - SPOTIFY_CLIENT_ID : Client ID de l'application Spotify « Melodix » du
- *   mainteneur (OAuth Authorization Code + PKCE ; aucun Client Secret —
- *   PKCE l'exclut). Rôle UNIQUE : l'écran de connexion. Jamais saisi par
- *   l'utilisateur. ABSENT : l'app compile quand même et l'écran affiche
- *   proprement « Connexion Spotify non configurée » (rien d'autre ne
- *   change : recherche, favoris, historique et lecture Audius/YouTube
- *   restent pleinement fonctionnels sans compte).
+ * - SPOTIFY_CLIENT_ID : override BUILD du Client ID. La valeur par défaut
+ *   (application Spotify « Melodix » du projet — information publique,
+ *   client public OAuth, PKCE exclut tout Client Secret) est COMMITTÉE en
+ *   source unique dans ce fichier (DEFAULT_SPOTIFY_CLIENT_ID) : tout build
+ *   embarque donc la config de connexion sans variable. Définir
+ *   SPOTIFY_CLIENT_ID (env locale ou variable de dépôt CI) remplace cette
+ *   valeur — utile pour éprouver une autre application Spotify sans
+ *   toucher au code. Rôle UNIQUE du Client ID : l'écran de connexion.
+ *   Jamais saisi ni affiché par l'utilisateur. Le redirect de production
+ *   `melodix://callback` doit être déclaré tel quel dans le dashboard de
+ *   l'application par défaut (voir docs/ANALYSE-CONNEXION.md).
  * - SPOTIFY_REDIRECT_URI : redirect URI OAuth (défaut de PRODUCTION :
  *   'melodix://callback' — le scheme `melodix` est déclaré dans le
  *   manifest). À déclarer identique dans le dashboard Spotify. Sert aussi
@@ -37,11 +41,50 @@
  */
 const melodixBackendUrl = process.env.MELODIX_BACKEND_URL || '';
 const audiusApiKey = process.env.AUDIUS_API_KEY || '';
-// ▸ Client ID intégré au build : UNIQUEMENT la variable d'environnement du
-//   mainteneur. AUCUN identifiant tiers/exemple n'est embarqué en
-//   production : sans variable, la valeur reste vide et l'app signale
-//   proprement « Connexion Spotify non configurée » (PKCE — aucun secret).
-const spotifyClientId = (process.env.SPOTIFY_CLIENT_ID || '').trim();
+// ▸ V48 — Client ID Jamendo (API officielle v3.0). Identifiant PUBLIC par
+//   conception : l'API l'exige en clair dans la querystring de chaque requête
+//   GET (`?client_id=…`), ce n'est donc PAS un secret. Variable de dépôt
+//   OPTIONNELLE : sans elle, la source Jamendo reste désactivée et l'app
+//   fonctionne exactement comme avant (aucun backend payant obligatoire).
+//   Jamais saisie ni affichée par l'utilisateur, jamais journalisée.
+//   Défaillance corrigée (V48) : api/jamendo/config.ts documentait cette voie
+//   `extra.jamendoClientId`, mais rien ne la peuplait — elle était morte.
+const jamendoClientId = (process.env.JAMENDO_CLIENT_ID || '').trim();
+
+// V75 — Commit court du build, pour distinguer un APK ANCIEN d'un bug.
+// GITHUB_SHA est fourni automatiquement par GitHub Actions ; hors CI (build
+// local) la valeur reste vide et l'écran de diagnostic le dit tel quel au lieu
+// d'inventer une version.
+//
+// Pourquoi c'est nécessaire : `expo.version` (`4.5.0-test.37`) et le
+// `versionCode` (45037) sont quasi constants d'un build à l'autre — SEUL le
+// commit discrimine deux APK. Sans lui, un diagnostic incomplet (par exemple
+// l'absence du champ `edge=` ajouté en 9acdcae) est indiscernable d'un
+// véritable bug.
+//
+// Non sensible : un SHA de commit public n'est ni un secret ni une donnée
+// personnelle. Borné à 12 caractères et restreint à l'hexadécimal pour
+// qu'aucune valeur arbitraire ne puisse être inlinée dans le bundle.
+const buildCommit = (process.env.GITHUB_SHA || '')
+  .trim()
+  .toLowerCase()
+  .replace(/[^0-9a-f]/g, '')
+  .slice(0, 12);
+// ▸ Client ID : application Spotify « Melodix » du projet. Information
+//   PUBLIQUE par conception (client public OAuth — PKCE exclut tout
+//   Client Secret). SOURCE UNIQUE COMMITTÉE ci-dessous ; la variable
+//   d'environnement SPOTIFY_CLIENT_ID (env de build / variable de dépôt
+//   CI) reste l'OVERRIDE pour éprouver une autre application Spotify
+//   sans modifier le code. Jamais saisi ni affiché par l'utilisateur.
+// V67 — Client ID de l'application Spotify « Melodix » à utiliser. C'est un
+// identifiant PUBLIC (client PKCE public : aucun Client Secret dans l'app),
+// jamais saisi ni affiché par l'utilisateur. Valeur fournie et confirmée par
+// le mainteneur ; elle remplace l'ancienne `7c5af4cd…` qui pointait vers une
+// application différente — avec elle, l'allowlist « Users and Access » et le
+// redirect URI configurés au tableau de bord ne s'appliquaient pas au build.
+const DEFAULT_SPOTIFY_CLIENT_ID = '97a67c9433454489837ba5a1d680b3ed';
+const spotifyClientId =
+  (process.env.SPOTIFY_CLIENT_ID || '').trim() || DEFAULT_SPOTIFY_CLIENT_ID;
 // ▸ Redirect OAuth PAR DÉFAUT : celui de production de Melodix
 //   (`melodix://callback` — le scheme natif `melodix` est TOUJOURS déclaré
 //   dans le manifest via la clé `scheme` ci-dessous). Un redirect
@@ -83,7 +126,7 @@ module.exports = {
   expo: {
     name: 'Melodix',
     slug: 'melodix',
-    version: '4.4.8-diagnostic',
+    version: '4.5.0-test.37',
     orientation: 'portrait',
     icon: './assets/images/icon.png',
     scheme: 'melodix',
@@ -96,6 +139,10 @@ module.exports = {
       // Phase 5A : MediaSession/Foreground Service Android (manifest généré,
       // idempotent). android/ reste NON versionné (prebuild).
       './modules/melodix-media/plugin/withMelodixMedia',
+      // Thème Android DÉTERMINISTE : anti « double sombre » (forced dark de
+      // l'OS sur thème Light généré) + fenêtre/bars #121212 + texte natif
+      // clair. Regarde le fichier plugin pour la racine exacte du problème.
+      './plugins/withMelodixTheme',
     ],
     splash: {
       image: './assets/images/splash.png',
@@ -104,8 +151,26 @@ module.exports = {
     },
     android: {
       package: 'com.souxch06.melodix',
-      versionCode: 44008,
+      versionCode: 45037,
       intentFilters: extraIntentFilters,
+      /**
+       * MODE CLAVIER — `resize` est OBLIGATOIRE et désormais explicite.
+       *
+       * Bug d'origine : l'application ne déclarait aucun
+       * `softwareKeyboardLayoutMode`. À l'ouverture de la recherche, le
+       * clavier Android poussait la barre d'onglets vers le haut et celle-ci
+       * venait recouvrir les résultats — aucun `KeyboardAvoidingView`, aucun
+       * abonnement clavier, et une hauteur de conteneur calculée en PIXELS
+       * FIXES qui ne pouvait pas suivre la fenêtre.
+       *
+       * `resize` (WindowSoftInputMode = adjustResize) fait se REDIMENSIONNER
+       * la fenêtre : `useWindowDimensions()` rend la nouvelle hauteur et un
+       * conteneur `flex: 1` suit automatiquement. Combiné au masquage de la
+       * barre d'onglets pendant la saisie (app/(tabs)/_layout.tsx), les
+       * résultats défilent AU-DESSUS du clavier et la barre ne recouvre plus
+       * rien. Aucune marge arbitraire, aucun `position: absolute`.
+       */
+      softwareKeyboardLayoutMode: 'resize',
       // Le lecteur streame via le stockage privé d'expo-av : aucun accès au
       // stockage partagé ni overlay système n'est nécessaire en production.
       blockedPermissions: [
@@ -136,6 +201,12 @@ module.exports = {
       spotifyClientId,
       spotifyRedirectUri,
       audiusApiKey,
+      // V48 — voir `jamendoClientId` ci-dessus : voie « asset natif » lue par
+      // api/jamendo/config.ts (l'autre voie est l'inlinage Metro EXPO_PUBLIC_*).
+      jamendoClientId,
+      // V75 — commit court du build (voir ci-dessus) : seul discriminant fiable
+      // entre deux APK, `expo.version` et `versionCode` étant quasi constants.
+      buildCommit,
       router: {
         origin: false,
       },

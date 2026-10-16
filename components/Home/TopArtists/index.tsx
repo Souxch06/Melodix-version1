@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useRouter } from 'expo-router';
 
 import { Slider } from '../../Slider';
 
@@ -10,6 +11,7 @@ import { translations } from '@data';
 export type TopArtistsPropsType = {};
 
 export const TopArtists = () => {
+  const router = useRouter();
   const [topArtists, setTopArtists] = React.useState<LibraryItemModel[] | null>(
     [
       ...Array(3).fill({
@@ -52,6 +54,11 @@ export const TopArtists = () => {
       size={Sizes.MEDIUM}
       shape={Shapes.CIRCLE}
       withShowAll={true}
+      // Les identifiants d'artistes sont LOCAUX et synthétiques
+      // (`local-artist:<nom>`) : aucune page artiste ne peut les résoudre.
+      // « Tout afficher » ouvre donc l'HISTORIQUE, la source réelle de cet
+      // agrégat — jamais une page morte.
+      onShowAllPress={() => router.push('/home/history')}
       // Contrat (M-6) : pas de page artiste dans l'application — les cartes
       // sont donc EXPLICITEMENT inertes (no-op), jamais une navigation vers
       // une route stub /artist/{id}. À retirer le jour où la page existe.

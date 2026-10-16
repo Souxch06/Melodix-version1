@@ -1,5 +1,5 @@
 import { StyleSheet } from 'react-native';
-import { BOTTOM_NAVIGATION_HEIGHT, COLORS } from '@config';
+import { BOTTOM_NAVIGATION_HEIGHT, COLORS, PALETTE } from '@config';
 
 export const styles = StyleSheet.create({
   container: {
@@ -25,7 +25,9 @@ export const styles = StyleSheet.create({
   },
   tintVeil: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(18, 18, 18, 0.72)',
+    // Voile bleu nuit : la barre reste lisible sur n'importe quelle pochette
+    // sans devenir un bloc gris opaque.
+    backgroundColor: PALETTE.veil,
   },
   topHairline: {
     position: 'absolute',
@@ -33,7 +35,7 @@ export const styles = StyleSheet.create({
     left: 0,
     right: 0,
     height: StyleSheet.hairlineWidth,
-    backgroundColor: 'rgba(255, 255, 255, 0.12)',
+    backgroundColor: PALETTE.hairlineStrong,
   },
   pressable: {
     height: '100%',

@@ -60,8 +60,9 @@ reviens automatiquement dans l'app, connecté.
 
 - **Aucune clé à saisir, jamais** : ni Client ID, ni Client Secret, ni token,
   ni code OAuth. L'app est « cliente publique » : aucun Client Secret n'existe
-  sur le mobile (PKCE le remplace). Le Client ID est une simple CONFIGURATION DE
-  BUILD du mainteneur (variable de dépôt `SPOTIFY_CLIENT_ID`).
+  sur le mobile (PKCE le remplace). Le Client ID de Melodix est la CONFIGURATION
+  DE BUILD du projet (intégré dans `app.config.js`, source unique) ; il peut
+  être remplacé par `SPOTIFY_CLIENT_ID` pour éprouver une autre application.
 - **Session persistante** : au prochain lancement, tu restes connecté (tokens
   dans le Keystore Android chiffré via `expo-secure-store`, refresh silencieux,
   jamais une ligne de token dans les logs). Si la session expire sans
@@ -78,26 +79,24 @@ reviens automatiquement dans l'app, connecté.
 - **Déconnexion** propre depuis l'avatar : session + caches playlists supprimés,
   favoris et historique locaux **conservés** (ils sont sur l'appareil, pas
   liés au compte).
-- **Connexion Spotify propre dès qu'elle est configurée** : OAuth
+- **Connexion Spotify propre, active par défaut** : OAuth
   Authorization Code + PKCE (aucun Client Secret, jamais de champ côté
-  utilisateur). Le Client ID vient **uniquement** de la configuration du
-  build — Melodix n'embarque **JAMAIS** l'identifiant d'une application
-  tierce ou d'exemple. Sans variable, l'app affiche clairement
-  **« Connexion Spotify non configurée »** et tout le reste reste
-  fonctionnel (recherche, favoris, historique, lecture Audius/YouTube).
-  Pour configurer ta **propre application Spotify** (dashboard
+  utilisateur). Le Client ID de Melodix est intégré au build (source unique
+  `app.config.js`) : l'app est donc connectable **sans aucune variable**.
+  Pour éprouver une **autre application Spotify** (dashboard
   [developer.spotify.com](https://developer.spotify.com/dashboard), le
   redirect natif `melodix://callback` y déclaré tel quel, voir
-  `docs/ANALYSE-CONNEXION.md`), définis les variables du dépôt
-  (_Settings → Secrets and variables → Actions → Variables_) ou `.env`
-  local :
+  `docs/ANALYSE-CONNEXION.md`), définis l'override `SPOTIFY_CLIENT_ID` dans
+  les variables du dépôt (_Settings → Secrets and variables → Actions →
+  Variables_) ou `.env` local :
   ```
+  # optionnel — remplace le Client ID de Melodix intégré au build
   SPOTIFY_CLIENT_ID=<ton client id>
   # optionnel — défaut de production : melodix://callback
   SPOTIFY_REDIRECT_URI=melodix://callback
   ```
-  La variable de build passe toujours avant le défaut ; le scheme natif
-  `melodix` est déclaré dans le manifest en permanence.
+  La variable de build passe toujours avant le défaut intégré ; le scheme
+  natif `melodix` est déclaré dans le manifest en permanence.
 - **Aucune promesse de « Premium gratuit »** : l'audio ne vient jamais de
   Spotify ; rien n'est contourné ni réhébergé ; aucun secret n'existe dans
   l'APK, Git ou les logs.

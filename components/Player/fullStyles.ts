@@ -1,11 +1,12 @@
 import { StyleSheet } from 'react-native';
 
-import { COLORS } from '@config';
+import { COLORS, PALETTE, RADIUS, TYPOGRAPHY } from '@config';
 
 export const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: COLORS.PRIMARY,
+    // Fond bleu nuit profond : identité Melodix (config/theme.ts).
+    backgroundColor: PALETTE.night900,
     paddingHorizontal: 20,
   },
   header: {
@@ -21,10 +22,9 @@ export const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   headerTitle: {
+    ...TYPOGRAPHY.label,
     flex: 1,
     color: COLORS.LIGHT_GREY,
-    fontSize: 13,
-    fontWeight: '600',
     textAlign: 'center',
   },
   artworkWrap: {
@@ -34,16 +34,15 @@ export const styles = StyleSheet.create({
   artwork: {
     width: 280,
     height: 280,
-    borderRadius: 8,
-    backgroundColor: COLORS.SECONDARY,
+    borderRadius: RADIUS.md,
+    backgroundColor: PALETTE.night600,
   },
   metaWrap: {
     marginBottom: 14,
   },
   title: {
+    ...TYPOGRAPHY.title,
     color: COLORS.WHITE,
-    fontSize: 20,
-    fontWeight: '700',
   },
   subtitle: {
     color: COLORS.LIGHT_GREY,
@@ -51,7 +50,7 @@ export const styles = StyleSheet.create({
     marginTop: 4,
   },
   providerBadge: {
-    color: COLORS.TINT,
+    color: PALETTE.violet300,
     fontSize: 11.5,
     fontWeight: '600',
     marginTop: 6,
@@ -81,7 +80,7 @@ export const styles = StyleSheet.create({
   },
   seekRest: {
     height: 3,
-    backgroundColor: COLORS.BORDER_GREY,
+    backgroundColor: PALETTE.night500,
     borderTopRightRadius: 2,
     borderBottomRightRadius: 2,
   },
@@ -119,7 +118,7 @@ export const styles = StyleSheet.create({
   playButton: {
     width: 62,
     height: 62,
-    borderRadius: 31,
+    borderRadius: RADIUS.pill,
     backgroundColor: COLORS.WHITE,
     alignItems: 'center',
     justifyContent: 'center',
@@ -203,9 +202,8 @@ export const styles = StyleSheet.create({
     textAlign: 'center',
   },
   queueTitle: {
+    ...TYPOGRAPHY.heading,
     color: COLORS.WHITE,
-    fontSize: 15,
-    fontWeight: '700',
     marginBottom: 8,
   },
   queueList: {

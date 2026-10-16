@@ -29,7 +29,12 @@ jest.mock('@services', () => ({
   toggleSavedTrack: jest.fn(async () => true),
 }));
 
-type PreviewProps = { summaryTitle?: string; tracks?: unknown[] };
+type PreviewProps = {
+  summaryTitle?: string;
+  tracks?: unknown[];
+  recommendationsSeed?: string;
+  recommendationsType?: string;
+};
 
 const captured: { current: PreviewProps } = { current: {} };
 
@@ -139,5 +144,7 @@ describe('AlbumScreen — états d’erreur récupérables (zone 11)', () => {
     });
     expect(getArtistMock).toHaveBeenCalledWith('ar1');
     expect(captured.current.tracks).toHaveLength(2);
+    expect(captured.current.recommendationsSeed).toBe('ar1');
+    expect(captured.current.recommendationsType).toBe('artists');
   });
 });

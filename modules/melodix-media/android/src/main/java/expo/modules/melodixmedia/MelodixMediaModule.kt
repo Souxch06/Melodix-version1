@@ -3,7 +3,9 @@ package expo.modules.melodixmedia
 import android.Manifest
 import android.app.NotificationManager
 import android.content.Context
+import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.media.AudioManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -27,6 +29,55 @@ class MelodixMediaModule : Module() {
   private val mainHandler = Handler(Looper.getMainLooper())
   private var permissionPollGeneration = 0
   private var applicationContext: Context? = null
+
+  /** Récepteur « casque débranché » (enregistré tant que l'app vit). */
+  private var noisyAudioReceiver: MelodixNoisyAudioReceiver? = null
+
+  /**
+   * §11 — casque filaire débranché / Bluetooth perdu : Android diffuse
+   * ACTION_AUDIO_BECOMING_NOISY. On enregistre un récepteur DYNAMIQUE (aucune
+   * permission, aucune entrée de manifeste, broadcast système uniquement) et
+   * on remonte l'événement au JS. Le natif n'agit pas sur la lecture : le
+   * moteur JS décide la pause, comme pour toute commande système.
+   */
+  private fun registerNoisyAudioReceiver(context: Context) {
+    if (noisyAudioReceiver != null) return
+
+    val receiver = MelodixNoisyAudioReceiver {
+      MelodixDiagLog.step("AUDIO_BECOMING_NOISY", "relayedToJs=true")
+      try {
+        this@MelodixMediaModule.sendEvent("audioBecomingNoisy", emptyMap<String, Any>())
+      } catch (t: Throwable) {
+        MelodixDiagLog.error("AUDIO_BECOMING_NOISY_SEND_FAIL", t)
+      }
+    }
+
+    try {
+      ContextCompat.registerReceiver(
+        context,
+        receiver,
+        IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY),
+        ContextCompat.RECEIVER_NOT_EXPORTED
+      )
+      noisyAudioReceiver = receiver
+      MelodixDiagLog.step("NOISY_RECEIVER_REGISTERED")
+    } catch (t: Throwable) {
+      // Jamais bloquant : sans récepteur, l'application fonctionne comme avant.
+      MelodixDiagLog.error("NOISY_RECEIVER_REGISTER_FAIL", t)
+    }
+  }
+
+  private fun unregisterNoisyAudioReceiver(context: Context) {
+    val receiver = noisyAudioReceiver ?: return
+    noisyAudioReceiver = null
+
+    try {
+      context.unregisterReceiver(receiver)
+      MelodixDiagLog.step("NOISY_RECEIVER_UNREGISTERED")
+    } catch (t: Throwable) {
+      MelodixDiagLog.error("NOISY_RECEIVER_UNREGISTER_FAIL", t)
+    }
+  }
 
   /**
    * ActivityCompat ne renvoie pas le résultat au Module Expo. On observe donc
@@ -66,15 +117,64 @@ class MelodixMediaModule : Module() {
     private const val REQUEST_CODE_POST_NOTIFICATIONS = 0x4D58 // "MX"
   }
 
+  /**
+   * V37 — état du verrou de visibilité de la notification (aucune donnée
+   * sensible : versions/booléens/importance). Cause démontrée du défaut
+   * terrain « la notification n'apparaît pas » : sur Android 13+, sans
+   * POST_NOTIFICATIONS accordée, la notification du foreground service est
+   * masquée du tiroir (visible uniquement dans le gestionnaire de tâches
+   * FGS). `channelImportance=0` (NONE) ou `notificationsActivees=false`
+   * signalent un blocage dans les réglages système de l'appareil.
+   */
+  private fun notificationGateStatus(context: Context): String {
+    val sdk = Build.VERSION.SDK_INT
+    val manager =
+      context.getSystemService(NotificationManager::class.java)
+        ?: return "notificationGate=managerAbsent"
+    val enabled =
+      try {
+        androidx.core.app.NotificationManagerCompat.from(context)
+          .areNotificationsEnabled()
+      } catch (t: Throwable) {
+        null
+      }
+    val permissionGranted =
+      if (sdk >= 33) {
+        ContextCompat.checkSelfPermission(
+          context,
+          Manifest.permission.POST_NOTIFICATIONS
+        ) == PackageManager.PERMISSION_GRANTED
+      } else {
+        true // la permission n'existe pas avant Android 13
+      }
+    val channelImportance =
+      if (sdk >= 26) {
+        manager.getNotificationChannel(
+          MelodixMediaNotificationProvider.CHANNEL_ID
+        )?.importance
+      } else {
+        null
+      }
+    val activeCount =
+      if (sdk >= 23) manager.activeNotifications?.size ?: 0 else -1
+    return "notificationGate=sdk$sdk permissionAccordee=$permissionGranted " +
+      "notificationsActivees=$enabled channelImportance=$channelImportance " +
+      "notificationsActives=$activeCount"
+  }
+
   override fun definition() = ModuleDefinition {
     Name("MelodixMedia")
 
-    Events("mediaCommand")
+    Events("mediaCommand", "audioBecomingNoisy")
 
     OnCreate {
       // Retenir uniquement le contexte application : le ReactContext d'Expo
       // est une WeakReference et peut déjà avoir disparu à OnDestroy.
       applicationContext = appContext.reactContext?.applicationContext
+
+      // §11 : casque débranché → pause. Enregistré dès que l'app vit, la
+      // décision de pause restant entièrement côté moteur JS.
+      applicationContext?.let { registerNoisyAudioReceiver(it) }
 
       // 4.4.7-diagnostic : journal persistant + piège d'exceptions non
       // rattrapées (tous threads) — critique pour le diagnostic sans ADB.
@@ -174,10 +274,20 @@ class MelodixMediaModule : Module() {
     /**
      * Statut instantané de la couche MediaSession (booléens internes du
      * contrôleur — aucune donnée sensible), pour l'écran Réglages.
+     *
+     * V37 : le statut du VERROU DE VISIBILITÉ de la notification est joint —
+     * sur Android 13+, une notification foreground est MASQUÉE du tiroir tant
+     * que POST_NOTIFICATIONS n'est pas accordée (le service tourne, mais la
+     * notification n'est visible que dans le gestionnaire de tâches FGS).
+     * Un diagnostic appareil en UN SEUL écran : état service + verrou.
      */
     Function("readDiagStatus") {
       try {
-        return@Function MelodixMediaController.diagStatus()
+        val context = appContext.reactContext?.applicationContext
+        val gate =
+          if (context != null) notificationGateStatus(context)
+          else "notificationGate=contexteAbsent"
+        return@Function "${MelodixMediaController.diagStatus()} | $gate"
       } catch (t: Throwable) {
         android.util.Log.e("MXDIAG", "readDiagStatus ignoré", t)
         return@Function "indisponible"
@@ -187,6 +297,9 @@ class MelodixMediaModule : Module() {
     OnDestroy {
       permissionPollGeneration += 1
       mainHandler.removeCallbacksAndMessages(null)
+      // Le contexte React n'existe plus : plus aucun événement ne peut être
+      // délivré au JS, le récepteur doit donc être retiré du système.
+      applicationContext?.let { unregisterNoisyAudioReceiver(it) }
       MelodixDiagLog.step("MODULE_ONDESTROY")
       MelodixMediaController.commandListener = null
       // Une instance React détruite ne peut plus recevoir les commandes
@@ -202,13 +315,19 @@ class MelodixMediaModule : Module() {
      * Blindage 5C.2 : JAMAIS de throw vers le JS — l'audio n'en dépend pas.
      */
     Function("updateSession") { payload: Map<String, Any?> ->
+      // CONTRAT V83 — renvoie `true` si la remise a été acceptée, `false` en cas
+      // d'échec détectable. ⚠️ `true` confirme la REMISE, pas l'affichage : le
+      // travail réel est différé par `mainHandler.post` côté Controller.
+      // Blindage 5C.2 conservé : JAMAIS de throw vers le JS.
       try {
         // DIAG 4.4.5-diagnostic : la Function Expo est bien atteinte.
         android.util.Log.i("MXDIAG", "MEDIA_SESSION_UPDATE_CALL")
         val context = appContext.reactContext
         if (context == null) {
+          // Échec DÉTECTABLE : sans contexte React aucune projection n'est
+          // possible. Le JS doit le savoir pour ne pas graver sa signature.
           MelodixDiagLog.step("NATIVE_UPDATE_NO_REACT_CONTEXT")
-          return@Function
+          return@Function false
         }
         MelodixDiagLog.step(
           "NATIVE_UPDATE_RECEIVED",
@@ -217,6 +336,7 @@ class MelodixMediaModule : Module() {
         MelodixMediaController.updateSession(context, payload)
       } catch (t: Throwable) {
         android.util.Log.e(TAG, "updateSession ignoré — lecture préservée", t)
+        false
       }
     }
 

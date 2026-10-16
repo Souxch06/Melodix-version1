@@ -15,9 +15,18 @@
 
 import Constants from 'expo-constants';
 
+import {
+  classifyDiagnosticError,
+  recordSearchDiagnostic,
+} from '../diagnostics/searchDiagnostics';
+import {
+  isExternalAbort,
+  linkAbortSignals,
+} from '../../utils/common/abortSignals';
+
 const REQUEST_TIMEOUT_MS = 8000;
 
-export type BackendErrorKind = 'unavailable' | 'http' | 'network';
+export type BackendErrorKind = 'unavailable' | 'http' | 'network' | 'aborted';
 
 export class BackendError extends Error {
   constructor(
@@ -43,15 +52,62 @@ export const getBackendBaseUrl = (): string => {
 
 export const isBackendConfigured = (): boolean => getBackendBaseUrl() !== '';
 
+/** Libellé d'opération : segment STABLE de chemin, jamais un identifiant
+ * (« /api/v1/tracks/<id> » → « tracks »). */
+const backendOpLabel = (path: string): string => {
+  const segments = path.split('/').filter(Boolean);
+  return segments[2] ?? 'call';
+};
+
 export const backendGet = async <T>(
   path: string,
-  params: Record<string, string> = {}
+  params: Record<string, string> = {},
+  options: { signal?: AbortSignal; timeoutMs?: number } = {}
 ): Promise<T> => {
   const baseUrl = getBackendBaseUrl();
   if (!baseUrl) {
     throw new BackendError('unavailable', 'Backend Melodix non configuré.');
   }
+  return backendGetConfigured<T>(baseUrl, path, params, options);
+};
 
+const backendGetConfigured = async <T>(
+  baseUrl: string,
+  path: string,
+  params: Record<string, string>,
+  options: { signal?: AbortSignal; timeoutMs?: number }
+): Promise<T> => {
+  const op = backendOpLabel(path);
+  const startedAt = Date.now();
+
+  try {
+    const data = await backendFetch<T>(baseUrl, path, params, options);
+    // V32 : diagnostic PRIVÉ — classe + durée, jamais la requête ni d'URL.
+    recordSearchDiagnostic({
+      scope: 'backend',
+      op,
+      cls: 'ok',
+      ms: Date.now() - startedAt,
+    });
+    return data;
+  } catch (error) {
+    recordSearchDiagnostic({
+      scope: 'backend',
+      op,
+      cls: classifyDiagnosticError(error),
+      ms: Date.now() - startedAt,
+      httpStatus: error instanceof BackendError ? error.status : undefined,
+    });
+    throw error;
+  }
+};
+
+const backendFetch = async <T>(
+  baseUrl: string,
+  path: string,
+  params: Record<string, string>,
+  options: { signal?: AbortSignal; timeoutMs?: number }
+): Promise<T> => {
   const url = new URL(`${baseUrl}${path}`);
   for (const [key, value] of Object.entries(params)) {
     if (value !== '') {
@@ -62,7 +118,11 @@ export const backendGet = async <T>(
   // Timeout manuel : AbortSignal.timeout n'est pas disponible sur toutes les
   // cibles (Hermes / environnements de test).
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const detach = linkAbortSignals(controller, options.signal ?? null);
+  const timer = setTimeout(
+    () => controller.abort(),
+    options.timeoutMs ?? REQUEST_TIMEOUT_MS
+  );
 
   let response: Response;
   try {
@@ -72,6 +132,12 @@ export const backendGet = async <T>(
       signal: controller.signal,
     });
   } catch (error) {
+    // V31 : une annulation DEMANDÉE (nouvelle saisie, budget dépassé) n'est
+    // ni une panne ni une indisponibilité : kind 'aborted', jamais compté
+    // comme échec par les circuits.
+    if (isExternalAbort(error, options.signal)) {
+      throw new BackendError('aborted', 'Requête backend annulée.');
+    }
     const isTimeout =
       error instanceof Error &&
       (error.name === 'AbortError' || error.name === 'TimeoutError');
@@ -81,6 +147,7 @@ export const backendGet = async <T>(
     );
   } finally {
     clearTimeout(timer);
+    detach();
   }
 
   if (!response.ok) {

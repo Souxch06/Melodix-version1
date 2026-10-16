@@ -92,6 +92,10 @@ jest.mock('@services', () => ({
       mockActions.restoreSession(...(args as [])),
     getState: () => mockActions.getState(),
     subscribe: (...args: never[]) => mockActions.subscribe(...(args as [])),
+    // Le contexte lecteur câble le port Spotify Web au moteur (attach au
+    // montage, detach au démontage). Le mock @services n'a pas la factory
+    // réelle : le contexte doit donc tolérer son absence (source nulle).
+    attachSpotifyWebSource: () => {},
   },
 }));
 

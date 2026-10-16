@@ -8,8 +8,14 @@ import { RecentlyPlayed } from './RecentlyPlayed';
 import { FeaturedPlaylists } from './FeaturedPlaylists';
 import { TopAlbums } from './TopAlbums';
 import { TopArtists } from './TopArtists';
+import { BasedOnTopArtists } from './BasedOnTopArtists';
+import { AfterListeningTopArtist } from './AfterListeningTopArtist';
 import { EmptySection } from '../EmptySection';
-import { BOTTOM_NAVIGATION_HEIGHT, COLORS, HEADER_HEIGHT } from '@config';
+import {
+  APP_BACKGROUND_COLOR,
+  BOTTOM_NAVIGATION_HEIGHT,
+  HEADER_HEIGHT,
+} from '@config';
 import { View } from 'react-native';
 import { useApplicationDimensions } from '@hooks';
 
@@ -29,7 +35,7 @@ export const Home = () => {
   return (
     <View
       style={{
-        backgroundColor: COLORS.PRIMARY,
+        backgroundColor: APP_BACKGROUND_COLOR,
         height: height - BOTTOM_NAVIGATION_HEIGHT - HEADER_HEIGHT,
       }}
     >
@@ -41,6 +47,11 @@ export const Home = () => {
         <FeaturedPlaylists />
         <TopAlbums />
         <TopArtists />
+        {/* Recommandations dérivées des écoutes RÉELLES : plusieurs artistes
+            du moment (entrelacés) puis les propositions de l'artiste le plus
+            écouté. Chaque section se masque d'elle-même sans contenu réel. */}
+        <BasedOnTopArtists />
+        <AfterListeningTopArtist />
         <EmptySection />
       </ScrollView>
     </View>

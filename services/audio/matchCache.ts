@@ -8,6 +8,12 @@ import { sourceKeyOf } from './sourceKey';
  * JSON unique (des centaines d'entrées restent très en dessous des limites
  * AsyncStorage).
  *
+ * v6 : le moteur de matching a été ÉLARGI (suffixes éditoriaux sans
+ *      séparateur, artistes mentionnés entre parenthèses, artistes cités en
+ *      plus grand nombre, suffixe de chaîne « - Topic », tolérance de durée
+ *      calibrée). Les décisions négatives calculées par l'ancien moteur
+ *      maintiendraient à tort des morceaux désormais trouvables : toute la
+ *      carte est invalidée pour être rematchée une fois avec le nouveau moteur.
  * v5 : invalide les décisions antérieures à la porte d'artiste principal ;
  *      un featuring seul ne suffit plus à identifier un enregistrement.
  * v4 : ajoutait les portes strictes radio/extended/sped/slowed.
@@ -27,7 +33,7 @@ import { sourceKeyOf } from './sourceKey';
  *   mieux vaut rematcher que conserver un ancien faux positif.
  */
 
-export const MATCH_CACHE_VERSION = 5;
+export const MATCH_CACHE_VERSION = 6;
 
 export type MatchCacheEntry = {
   version: number;

@@ -20,6 +20,7 @@ import { getFallbackImage } from '@utils';
 import type { PlayerTrack } from '@services';
 
 import { DragSlider } from './DragSlider';
+import { JamendoAttribution } from './JamendoAttribution';
 import { QueueActionMenu } from './QueueActionMenu';
 import { QueueRow } from './QueueRow';
 import { styles } from './fullStyles';
@@ -175,7 +176,19 @@ export const FullPlayer = () => {
   const isMuted = volume <= 0;
   const seekShownMillis = seekPreviewMillis ?? positionMillis;
   const isPlaying = status === 'playing';
-  const isBuffering = status === 'loading' || buffering;
+  // Un seul prédicat « en attente » couvre les trois phases où aucun son
+  // ne sort encore : préparation (loading), résolution de la source
+  // (resolving), chargement du flux (buffering). La barre de progression
+  // reste neutralisée pendant ces phases — une position fantaisiste pendant
+  // une résolution serait pire qu'une barre figée.
+  const isBuffering =
+    status === 'loading' ||
+    status === 'resolving' ||
+    status === 'buffering' ||
+    buffering;
+  // Fin de file atteinte : le bouton principal propose de RELIRE, et la
+  // barre affiche l'état réel au lieu de rester sur « lecture ».
+  const hasEnded = status === 'ended';
   // Durée réelle pas encore connue (avant le 1er statut expo-av ou sans
   // métadonnée Spotify) : « —:-- » honnête + seek désactivé — jamais « 0:00 »
   // présenté comme une durée réelle (phase 1, section 4).
@@ -272,11 +285,17 @@ export const FullPlayer = () => {
             {translations.playerStreamedWith(providerName)}
           </Text>
         ) : null}
+        {/* V50 — Attribution Jamendo (clause 4.1 des conditions d'utilisation
+            de l'API) : crédit du créateur, mention de Jamendo comme
+            fournisseur et lien vers la page d'origine. Rendu UNIQUEMENT pour
+            une piste Jamendo dont l'attribution est connue : `null` pour
+            Audius, YouTube, iTunes et Spotify — jamais de faux crédit. */}
+        <JamendoAttribution trackId={current.id} />
         {notice ? (
           <Text numberOfLines={2} style={styles.noticeText}>
             {notice.kind === 'not-available'
               ? translations.playerTrackUnavailable(notice.title)
-              : translations.playerTrackPlayFailed(notice.title)}
+              : translations.playerTrackPlayFailed(notice.title, notice.code)}
           </Text>
         ) : null}
       </View>
@@ -341,6 +360,17 @@ export const FullPlayer = () => {
             style={styles.playButton}
             accessibilityLabel={translations.playerLoading}
           />
+        ) : hasEnded ? (
+          // Fin de file : rejouer le morceau affiché depuis le début.
+          <Pressable
+            onPress={() => handlePlayQueueIndex(currentIndex)}
+            style={styles.playButton}
+            accessibilityRole="button"
+            accessibilityLabel={translations.playerPlay}
+            testID="full-player-replay"
+          >
+            <Ionicons name="reload" size={30} color={COLORS.BLACK} />
+          </Pressable>
         ) : (
           <Pressable
             onPress={togglePlayPause}

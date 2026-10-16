@@ -5,24 +5,37 @@ import { Redirect } from 'expo-router';
 import { COLORS } from '@config';
 import {
   clearSession,
-  getValidAccessToken,
-  loadSession,
+  resolveStartupSession,
   runAccountlessMigration,
 } from '@services';
 
 /**
- * Point d'entrée — protection du démarrage :
+ * Point d'entrée — protection du démarrage V29 :
  *
- *   chargement → vérification de session (avec REFRESH SILENCIEUX si le
- *   token d'accès a expiré) :
- *     session valide        → accueil
- *     aucune session        → écran de connexion
- *     refresh IMPOSSIBLE    → session supprimée (nettoyage) → connexion
+ *   La connexion Spotify est FACULTATIVE : l'app démarre TOUJOURS sur
+ *   l'accueil. Le mode local (recherche + lecture Audius → YouTube,
+ *   favoris et historique locaux) ne dépend d'AUCUN endpoint Spotify ;
+ *   l'onglet/les écrans « compte » affichent leur propre état explicite
+ *   (restoring / identité non vérifiée + Réessayer / connexion) via le
+ *   SpotifyDataPlan — jamais d'écran de chargement infini, jamais de
+ *   redirection obligatoire vers /login.
  *
- * Une session morte n'envoie JAMAIS l'utilisateur vers l'accueil.
+ *   Le démarrage nettoie uniquement ce qui DOIT l'être :
+ *     token valide                    → accueil (session Spotify active)
+ *     aucune session                  → accueil EN MODE LOCAL
+ *     session MORTE (refresh refusé
+ *     par Spotify / absent)           → session purgée → accueil local
+ *     refresh IMPOSSIBLE par le RÉSEAU→ session CONSERVÉE → accueil ; la
+ *       vérification d'identité se retente via « Réessayer » sur les
+ *       écrans de compte (plus jamais de session saine jetée par une
+ *       coupure WiFi au boot — contrat V23 conservé).
+ *
+ *   Le callback OAuth froid (`melodix://callback?code=…`) n'est PLUS traité
+ *   ici : le flux de connexion vit dans `SpotifyAuthProvider` monté à la
+ *   racine (V29), donc le cold start est géré quel que soit l'écran affiché.
  */
 export default function App() {
-  const [target, setTarget] = React.useState<'/login' | '/home' | null>(null);
+  const [ready, setReady] = React.useState(false);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -35,18 +48,31 @@ export default function App() {
         console.warn('Migration de démarrage interrompue', error);
       }
 
-      // getValidAccessToken tente le refresh si nécessaire. Si une session
-      // existe mais n'est plus rafraîchissable → SUPPRESSION DE LA SESSION,
-      // jamais de redirection vers l'accueil sans preuve de token valide.
-      const session = await loadSession();
-      const token = session ? await getValidAccessToken() : null;
-
-      if (session && !token) {
-        await clearSession();
+      // Filet « aucun blocage permanent » (V29) : une EXCEPTION inattendue
+      // du gate ne doit jamais geler le démarrage sur un loader éternel —
+      // on continue sans rien purger et l'app s'ouvre en mode local.
+      let resolution: Awaited<ReturnType<typeof resolveStartupSession>>;
+      try {
+        resolution = await resolveStartupSession();
+      } catch (error) {
+        console.warn('Vérification de session interrompue', error);
+        resolution = { kind: 'no-session' };
       }
 
+      if (resolution.kind === 'session-dead') {
+        // Spotify a DÉFINITIVEMENT rejeté cette session (refresh token
+        // mort ou absent) : nettoyage complet des credentials morts — puis
+        // l'app continue en mode local (la session morte ne doit plus rien
+        // bloquer ; « Se connecter » reste disponible dans l'app).
+        await clearSession();
+      }
+      // 'session-kept-unverified' (transitoire) : la session est conservée
+      // telle quelle — le prochain démarrage ou la prochaine lecture du
+      // token retentera le refresh, et les écrans de compte offrent
+      // « Réessayer ».
+
       if (!cancelled) {
-        setTarget(token ? '/home' : '/login');
+        setReady(true);
       }
     })();
 
@@ -55,7 +81,7 @@ export default function App() {
     };
   }, []);
 
-  if (!target) {
+  if (!ready) {
     // Chargement : écran pénétré, sobre (ni page blanche ni contenu à demi chargé).
     return (
       <View style={styles.loader} testID="startup-loader">
@@ -64,9 +90,7 @@ export default function App() {
     );
   }
 
-  return (
-    <Redirect href={{ pathname: target as '/login' | '/home', params: {} }} />
-  );
+  return <Redirect href={{ pathname: '/home', params: {} }} />;
 }
 
 const styles = StyleSheet.create({

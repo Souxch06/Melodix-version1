@@ -50,11 +50,15 @@ export type PreferencesContextType = {
   accentId: string;
   backgroundAudio: boolean;
   startupVolume: number;
+  /** Lecture via le lecteur Spotify Web (hôte WebView) — voir la porte
+   * d'activation : ce réglage seul ne suffit pas. */
+  spotifyWebPlayback: boolean;
   setLanguage: (language: AppLanguage) => void;
   setThemeMode: (mode: ThemeMode) => void;
   setAccent: (accentId: string) => void;
   setBackgroundAudio: (enabled: boolean) => void;
   setStartupVolume: (volume: number) => void;
+  setSpotifyWebPlayback: (enabled: boolean) => void;
 };
 
 const PreferencesContext = React.createContext<PreferencesContextType>({
@@ -66,11 +70,13 @@ const PreferencesContext = React.createContext<PreferencesContextType>({
   accentId: ACCENT_PRESETS[0].id,
   backgroundAudio: true,
   startupVolume: 100,
+  spotifyWebPlayback: true,
   setLanguage: () => {},
   setThemeMode: () => {},
   setAccent: () => {},
   setBackgroundAudio: () => {},
   setStartupVolume: () => {},
+  setSpotifyWebPlayback: () => {},
 });
 
 export const PreferencesProvider = ({
@@ -146,6 +152,9 @@ export const PreferencesProvider = ({
         update({ startupVolume });
         void melodixPlayer.setVolume(startupVolume / 100);
       },
+      spotifyWebPlayback: prefs.spotifyWebPlayback,
+      setSpotifyWebPlayback: (spotifyWebPlayback) =>
+        update({ spotifyWebPlayback }),
     }),
     [loading, prefs, update]
   );

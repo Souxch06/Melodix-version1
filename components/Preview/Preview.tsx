@@ -1,7 +1,8 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { Text, View } from 'react-native';
 
-import { ArtistModel, TrackModel } from '@models';
+import { ArtistModel, artistsFromSubtitle } from '@models';
+import type { TrackModel } from '@models';
 import { useApplicationDimensions } from '@hooks';
 import Animated, {
   useAnimatedScrollHandler,
@@ -21,6 +22,7 @@ import { Recommendations } from '../Recommendations';
 import { EmptySection } from '../EmptySection';
 
 import { BOTTOM_NAVIGATION_HEIGHT } from '@config';
+import { translations } from '@data';
 
 import { styles } from './styles';
 import { usePlayer, useUserData } from '@context';
@@ -49,10 +51,16 @@ export type PreviewPropsType = {
   summaryDescription?: string;
   /** Statistique dynamique « 85/100 morceaux disponibles ». */
   summaryAvailability?: string;
-  /** État de résolution par track.id (badge discret de ligne). */
+  /**
+   * État de disponibilité par track.id (badge discret de ligne). Mission v7 :
+   * `spotify-web` = le Spotify Web Player est la source (pas de badge — la
+   * preuve réelle intervient à la lecture) ; `none` = aucune source.
+   * Les valeurs `audius`/`youtube`/`pending`/`resolving` restent typées pour
+   * la rétrocompatibilité (plus d'écran ne les produit pour les playlists).
+   */
   availabilityById?: Record<
     string,
-    'audius' | 'youtube' | 'none' | 'pending' | 'resolving'
+    'spotify-web' | 'audius' | 'youtube' | 'none' | 'pending' | 'resolving'
   >;
   /** Tap sur une ligne indisponible → message clair, jamais de crash. */
   onUnavailableTrackPress?: (track: TrackModel) => void;
@@ -85,6 +93,7 @@ export const Preview = ({
   tracks,
   fetchTracks,
   artists,
+  recommendationsType,
   recommendationsSeed,
   onToggleTrackSaved,
 }: PreviewPropsType) => {
@@ -110,9 +119,7 @@ export const Preview = ({
         .map((track) => ({
           id: queueIdOf(track.id),
           title: track.title,
-          artists: track.subtitle
-            ? track.subtitle.split(', ').filter(Boolean)
-            : [],
+          artists: artistsFromSubtitle(track.subtitle),
           album: track.albumName ?? (type === 'album' ? summaryTitle : null),
           durationMillis: track.durationMs ?? null,
           isrc: track.isrc ?? null,
@@ -145,6 +152,15 @@ export const Preview = ({
     [player, playableQueue]
   );
 
+  // En-tête « ⋯ » : met en file TOUT le lot réellement chargé (playlist ou
+  // album paginé compris) via l'API de file existante — déduplication et
+  // émissions atomiques restent la responsabilité du moteur.
+  const handleAddAllToQueue = React.useCallback(() => {
+    if (playableQueue.length) {
+      player.addTracksToQueue(playableQueue);
+    }
+  }, [player, playableQueue]);
+
   // Menu d'actions « ⋯ » de la ligne : un seul état, un seul composant
   // réutilisable (jamais de menu dupliqué par écran).
   const [actionTrack, setActionTrack] = React.useState<PlayerTrack | null>(
@@ -160,7 +176,7 @@ export const Preview = ({
       setActionTrack({
         id: queueIdForTrackId(item.id),
         title: item.title,
-        artists: item.subtitle ? item.subtitle.split(', ').filter(Boolean) : [],
+        artists: artistsFromSubtitle(item.subtitle),
         album: item.albumName ?? (type === 'album' ? summaryTitle : null),
         durationMillis: item.durationMs ?? null,
         isrc: item.isrc ?? null,
@@ -279,8 +295,20 @@ export const Preview = ({
               availabilityInfo={summaryAvailability}
               imageURL={imageURL}
               forceDisableSaveIcon={!!(ownerId && ownerId === userData.id)}
+              loadedTrackCount={playableQueue.length}
+              onAddAllToQueue={handleAddAllToQueue}
             />
           </>
+        }
+        ListEmptyComponent={
+          <View style={styles.emptyState} testID="preview-empty-state">
+            <Text style={styles.emptyTitle}>
+              {translations.previewNoTracksTitle}
+            </Text>
+            <Text style={styles.emptyBody}>
+              {translations.previewNoTracksBody}
+            </Text>
+          </View>
         }
         ListFooterComponent={
           <>
@@ -288,7 +316,10 @@ export const Preview = ({
             {artists && <Artists artists={artists} />}
             {artists && <MoreOf artists={artists} />}
             {recommendationsSeed && (
-              <Recommendations type="artist" seed={recommendationsSeed} />
+              <Recommendations
+                type={recommendationsType === 'tracks' ? 'tracks' : 'artist'}
+                seed={recommendationsSeed}
+              />
             )}
             {copyrightTexts && <Copyrights copyrightTexts={copyrightTexts} />}
             <EmptySection />

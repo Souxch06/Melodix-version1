@@ -19,6 +19,12 @@ export type SliderPropsType = {
   size?: Sizes;
   shape?: Shapes;
   withShowAll: boolean;
+  /**
+   * Destination du bouton « Tout afficher ». Le bouton n'est rendu QUE si un
+   * handler est fourni : un « Tout afficher » sans destination est un bouton
+   * mort (§18) — mieux vaut ne rien afficher.
+   */
+  onShowAllPress?: () => void;
   // Replaces card navigation for every slide (e.g. playing Audius tracks).
   onSlidePress?: (slide: LibraryItemModel, index: number) => void;
   /** Menu d'actions par appui long (ex. file d'attente) — optionnel. */
@@ -31,6 +37,7 @@ export const Slider = ({
   size = Sizes.BIG,
   shape = Shapes.SQUARE,
   withShowAll = false,
+  onShowAllPress,
   onSlidePress,
   onSlideLongPress,
 }: SliderPropsType) => {
@@ -43,13 +50,18 @@ export const Slider = ({
         <Text numberOfLines={1} style={styles.headerTitleText}>
           {title}
         </Text>
-        {withShowAll && (
-          <Pressable>
+        {withShowAll && onShowAllPress ? (
+          <Pressable
+            accessibilityLabel={translations.showAll}
+            accessibilityRole="button"
+            onPress={onShowAllPress}
+            testID="slider-show-all"
+          >
             <Text style={styles.headerPressableText}>
               {translations.showAll}
             </Text>
           </Pressable>
-        )}
+        ) : null}
       </View>
       <ScrollView
         style={styles.scrollView}

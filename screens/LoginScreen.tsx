@@ -1,12 +1,17 @@
 /**
- * Écran de connexion — CONNEXION SPOTIFY OBLIGATOIRE.
+ * LoginScreen — CONNEXION SPOTIFY FACULTATIVE (V29).
  *
  * Objectif UX : l'utilisateur a simplement l'impression de « se connecter à
  * Melodix avec son compte Spotify », comme sur n'importe quelle application.
  * AUCUN détail technique n'est affiché (jamais de redirect_uri, PKCE, token,
- * code d'erreur ou « diagnostic » — le diagnostic vit uniquement en logcat).
+ * code d'erreur ou « diagnostic » — le diagnostic vit en logcat et dans le
+ * rapport copiable de Réglages).
  *
- * Parcours :
+ * La connexion ouvre les données de COMPTE Spotify (profils, playlists,
+ * titres aimés) ; elle n'est plus une porte d'entrée du lecteur. Le bouton
+ * « Continuer sans Spotify » ferme cet écran vers l'accueil (mode local :
+ * recherche + lecture Audius → YouTube, favoris et historiques locaux).
+ *
  *
  *    [Logo Melodix]
  *    Bienvenue sur Melodix
@@ -17,7 +22,13 @@
  *
  * - Appui → EXACTEMENT le système OAuth Spotify actuel (+ PKCE), inchangé.
  * - Pendant : « Connexion à Spotify… » puis « Finalisation de la connexion… ».
- * - Erreur : message HUMAIN + bouton « Réessayer » (jamais de cause codée).
+ * - Erreur : message HUMAIN + bouton « Réessayer ».
+ * - MODE DIAGNOSTIC (temporaire, mission) : SI le hook a produit un
+ *   diagnostic, un bouton « Voir les détails » apparaît sous la carte
+ *   d'erreur. Il affiche des détails techniques NON SENSIBLES (étape, type,
+ *   HTTP, code, description, message) et « Masquer les détails » referme.
+ *   Chaque champ est contrôlé : jamais de token, code, code_verifier,
+ *   secret, cookie, header ; jamais de « undefined » ni d'objet illisible.
  * - Config absente : « La connexion Spotify n'est pas disponible pour le
  *   moment. Réessaie plus tard. » — jamais de champ Client ID/secret.
  * - Succès : confirmation brève « Connexion réussie ! » puis l'accueil,
@@ -38,13 +49,19 @@ import Constants from 'expo-constants';
 import { useRouter } from 'expo-router';
 
 import { COLORS } from '@config';
-import { useUserData } from '@context';
+// V29 — le flux OAuth vit dans SpotifyAuthProvider (racine) : cet écran
+// CONSOMME le contexte, il ne monte plus le hook lui-même. Un seul flux
+// tournant, même si la route de connexion est remontée/démontée.
+import { useSpotifyAuthContext, useUserData } from '@context';
 // Import direct (hors barrel @context) : l'accent vient des préférences mais
 // l'écran doit rester fonctionnel quand le seul contexte utilisateur est
 // simulé dans les tests historiques du parcours de connexion.
 import { useAccent } from '../context/PreferencesContext';
 import { translations } from '@data';
-import { isSpotifyLoginConfigured, useSpotifyAuth } from '@services';
+import {
+  isSensitiveDiagnosticValue,
+  isSpotifyLoginConfigured,
+} from '@services';
 
 /** Messages HUMAINS uniquement — dérivés du LoginOutcome, sans cause dupliquée. */
 type ErrorCard = {
@@ -61,13 +78,16 @@ const SUCCESS_DISPLAY_MS = 1300;
 export const LoginScreen = () => {
   const router = useRouter();
   const { state, isBusy, isAuthRequestPending, startLogin, resetError } =
-    useSpotifyAuth();
+    useSpotifyAuthContext();
   const { sessionStatus } = useUserData();
   // Accent choisi dans les paramètres (teinte Spotify historique par défaut).
   const accent = useAccent();
   const configured = React.useMemo(() => isSpotifyLoginConfigured(), []);
   const [successShown, setSuccessShown] = React.useState(false);
   const successHandledRef = React.useRef(false);
+  // Mode diagnostic (temporaire) : les détails restent FERMÉS par défaut et
+  // se remettent à zéro à chaque changement d'état/erreur.
+  const [detailsOpen, setDetailsOpen] = React.useState(false);
 
   // La session vient d'être ouverte (OAuth terminé côté hook) : petite
   // confirmation « Connexion réussie ! » puis l'accueil — sans écran
@@ -102,6 +122,85 @@ export const LoginScreen = () => {
     ]).start();
   }, [fadeAnim, slideAnim]);
 
+  // Clé d'identité de l'erreur courante : le diagnostic s'y raccroche (et
+  // se referme quand l'erreur change ou disparaît).
+  const errorKey =
+    state.status === 'error'
+      ? `${state.outcome.kind}:${state.outcome.cause}`
+      : '';
+  React.useEffect(() => {
+    setDetailsOpen(false);
+  }, [state.status, errorKey]);
+
+  // Lignes du diagnostic visible — construites UNIQUEMENT à partir des
+  // champs déjà non sensibles portés par le hook. Aucune valeur nulle ni
+  // vide n'est rendue (pas de « undefined ») ; toute valeur qui ressemblerait
+  // à un secret est masquée (défense en profondeur).
+  const diagLines: string[] = React.useMemo(() => {
+    if (state.status !== 'error') {
+      return [];
+    }
+    const d = state.outcome.diagnostic;
+    if (!d) {
+      return [];
+    }
+    const field = (
+      label: string,
+      value: string | number | null | undefined
+    ): string | null => {
+      if (value === null || value === undefined) {
+        return null;
+      }
+      const text = typeof value === 'number' ? String(value) : value.trim();
+      if (!text) {
+        return null;
+      }
+      const safe = isSensitiveDiagnosticValue(text)
+        ? translations.loginDiagRedacted
+        : text.length > 120
+          ? `${text.slice(0, 117)}…`
+          : text;
+      return `${label} : ${safe}`;
+    };
+    // V75 — Version du build. `expo.version` (4.5.0-test.37) et le versionCode
+    // (45037) sont quasi constants d'un APK à l'autre : SEUL le commit les
+    // discrimine. Sans cette ligne, un diagnostic incomplet est indiscernable
+    // d'un véritable bug. Valeur non sensible (SHA public), déjà bornée et
+    // filtrée à l'hexadécimal dans app.config.js, et re-vérifiée par `field`.
+    const extra = Constants.expoConfig?.extra as
+      | { buildCommit?: unknown }
+      | undefined;
+    const buildCommit =
+      typeof extra?.buildCommit === 'string' ? extra.buildCommit.trim() : '';
+
+    // V75 — Détection d'un APK ANCIEN. `describeHttpEvidence` émet `corps=` et
+    // `edge=` dans la MÊME chaîne ; `edge=` a été ajouté en 9acdcae. Une preuve
+    // qui porte `corps=` mais pas `edge=` vient donc d'un build antérieur.
+    //
+    // Le test porte sur les DEUX champs à dessein : un 403 JSON avec message
+    // Spotify affiche le message à la place de la preuve brute, donc sans
+    // `corps=` — exiger `edge=` seul condamnerait à tort ces builds récents.
+    // (`req=`, lui, est conditionnel à la présence de l'en-tête x-request-id :
+    // son absence ne prouve rien et n'est volontairement PAS utilisée ici.)
+    const description = typeof d.description === 'string' ? d.description : '';
+    const staleApk =
+      description.includes('corps=') && !description.includes('edge=');
+
+    return [
+      field(translations.loginDiagStage, d.stage),
+      field(translations.loginDiagType, state.outcome.kind),
+      field(translations.loginDiagHttp, d.httpStatus),
+      field(translations.loginDiagCode, d.errorCode),
+      field(translations.loginDiagDescription, d.description),
+      field(translations.loginDiagMessage, d.message),
+      field(translations.loginDiagBuild, buildCommit || null),
+      staleApk ? translations.loginDiagOldApk : null,
+    ].filter((line): line is string => line !== null);
+    // `translations` vient de la portée externe (non réactive) : l'ajouter aux
+    // dépendances déclenche react-hooks/exhaustive-deps sans rien apporter.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state]);
+
   const errorCard: ErrorCard = React.useMemo(() => {
     if (!configured) {
       // Config absente : message humain dédié — JAMAIS de champ Client ID.
@@ -125,6 +224,30 @@ export const LoginScreen = () => {
         return {
           title: translations.loginOAuthRefusedTitle,
           body: translations.loginOAuthRefusedBody,
+          retryable: true,
+        };
+      case 'profile-forbidden':
+        // V27 — échange OAuth réussi mais /v1/me refusé (HTTP 403) : le
+        // message dit EXACTEMENT cela (refus d'accès de configuration, pas
+        // réseau, pas « erreur inattendue »). Réessai manuel autorisé après
+        // correction dans le tableau de bord — aucune boucle automatique.
+        return {
+          title: translations.loginProfileForbiddenTitle,
+          body: translations.loginProfileForbiddenBody,
+          retryable: true,
+        };
+      case 'network-blocked':
+        // V59 — HTTP 403 au corps NON JSON. ÉTABLI : la connexion a réussi et
+        // /v1/me a renvoyé un 403 dont la réponse n'a pas le format Spotify.
+        // NON ÉTABLI : l'origine du refus. Le commentaire V39 affirmait une
+        // couche intermédiaire et écartait l'API Spotify comme la
+        // configuration — conclusion non prouvée, et contraire à la doc
+        // officielle (« Quota modes » : 403 attendu pour un utilisateur
+        // absent de « Users and Access »). Le message oriente désormais vers
+        // les DEUX vérifications utiles et vers la preuve des détails.
+        return {
+          title: translations.loginNetworkBlockedTitle,
+          body: translations.loginNetworkBlockedBody,
           retryable: true,
         };
       case 'not-configured':
@@ -166,6 +289,18 @@ export const LoginScreen = () => {
     }
     void startLogin(); // ← l'OAuth Spotify actuel, inchangé
   }, [buttonDisabled, startLogin]);
+
+  // V29 — « Continuer sans Spotify » : ferme cet écran SANS OAuth. Depuis la
+  // racine, canGoBack() est faux → accueil ; ouvert depuis l'app (Header,
+  // Réglages) → retour à l'écran d'origine. Jamais désactivé : il doit
+  // rester possible de sortir même si la config Spotify manque.
+  const handleSkipPress = React.useCallback(() => {
+    if (router.canGoBack()) {
+      router.back();
+      return;
+    }
+    router.replace({ pathname: '/(tabs)/home', params: {} });
+  }, [router]);
 
   const handleRetryPress = React.useCallback(() => {
     resetError();
@@ -240,6 +375,48 @@ export const LoginScreen = () => {
                 </Text>
               </Pressable>
             )}
+
+            {/* Mode diagnostic (temporaire) : détails NON sensibles, masqués
+                par défaut. N'apparaît que si le hook a produit un
+                diagnostic — jamais de valeur sensible (garde par champ). */}
+            {diagLines.length > 0 && (
+              <View style={styles.diagWrap} testID="login-diag-wrap">
+                {detailsOpen && (
+                  <View style={styles.diagCard} testID="login-diag-card">
+                    <Text style={styles.diagTitle}>
+                      {translations.loginDetailsTitle}
+                    </Text>
+                    {diagLines.map((line) => (
+                      // V61 — `selectable` : sans lui, un <Text> Android ne
+                      // peut être NI sélectionné NI copié. Or tout l'intérêt de
+                      // ce panneau est de pouvoir rapporter la ligne
+                      // `Description` au mainteneur pour trancher l'origine du
+                      // 403 (V58). Les valeurs sont déjà sanitisées à la source
+                      // puis re-vérifiées par le garde ci-dessus : rendre le
+                      // texte copiable n'expose donc aucun secret.
+                      <Text key={line} selectable style={styles.diagLine}>
+                        {line}
+                      </Text>
+                    ))}
+                  </View>
+                )}
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => setDetailsOpen((open) => !open)}
+                  style={({ pressed }) => [
+                    styles.diagToggle,
+                    pressed && styles.diagTogglePressed,
+                  ]}
+                  testID={detailsOpen ? 'login-diag-hide' : 'login-diag-show'}
+                >
+                  <Text style={styles.diagToggleText}>
+                    {detailsOpen
+                      ? translations.loginDetailsHide
+                      : translations.loginDetailsShow}
+                  </Text>
+                </Pressable>
+              </View>
+            )}
           </View>
         ) : (
           <>
@@ -279,6 +456,21 @@ export const LoginScreen = () => {
             )}
           </>
         )}
+
+        {/* V29 — issue facultative, rendue HORS condition d'erreur : même
+            sans config Spotify ou après un échec, l'utilisateur peut toujours
+            sortir vers le lecteur local (jamais de piège sur cet écran). */}
+        <Pressable
+          accessibilityRole="button"
+          onPress={handleSkipPress}
+          style={({ pressed }) => [
+            styles.skipButton,
+            pressed && styles.skipButtonPressed,
+          ]}
+          testID="login-skip-button"
+        >
+          <Text style={styles.skipButtonText}>{translations.loginSkip}</Text>
+        </Pressable>
 
         <View style={styles.footer}>
           <Ionicons color={COLORS.GREY} name="lock-closed-outline" size={13} />
@@ -330,6 +522,23 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 22,
     marginTop: 14,
+  },
+  skipButton: {
+    alignSelf: 'center',
+    marginTop: 18,
+    paddingVertical: 12,
+    paddingHorizontal: 18,
+    borderRadius: 999,
+  },
+  skipButtonPressed: {
+    opacity: 0.7,
+  },
+  skipButtonText: {
+    color: COLORS.LIGHT_GREY,
+    fontFamily: 'SF-Regular',
+    fontSize: 14,
+    letterSpacing: 0.3,
+    textDecorationLine: 'underline',
   },
   primaryButton: {
     backgroundColor: COLORS.TINT,
@@ -407,6 +616,49 @@ const styles = StyleSheet.create({
     color: COLORS.BLACK,
     fontFamily: 'SF-Semibold',
     fontSize: 15,
+  },
+  diagWrap: {
+    alignItems: 'center',
+    marginTop: 16,
+  },
+  diagCard: {
+    alignItems: 'flex-start',
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    borderRadius: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(255, 255, 255, 0.14)',
+    marginBottom: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    width: '100%',
+  },
+  diagTitle: {
+    color: COLORS.LIGHT_GREY,
+    fontFamily: 'SF-Semibold',
+    fontSize: 12,
+    letterSpacing: 0.3,
+    marginBottom: 6,
+  },
+  diagLine: {
+    color: COLORS.WHITE,
+    fontFamily: 'SF-Regular',
+    fontSize: 13,
+    lineHeight: 20,
+  },
+  diagToggle: {
+    borderRadius: 999,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(255, 255, 255, 0.28)',
+    paddingHorizontal: 18,
+    paddingVertical: 9,
+  },
+  diagTogglePressed: {
+    opacity: 0.85,
+  },
+  diagToggleText: {
+    color: COLORS.LIGHT_GREY,
+    fontFamily: 'SF-Regular',
+    fontSize: 13,
   },
   footer: {
     alignItems: 'center',

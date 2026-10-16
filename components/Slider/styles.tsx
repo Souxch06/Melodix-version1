@@ -1,9 +1,9 @@
 import { StyleSheet } from 'react-native';
-import { COLORS } from '@config';
+import { APP_BACKGROUND_COLOR, PALETTE, SPACING, TYPOGRAPHY } from '@config';
 
 export const styles = StyleSheet.create({
   container: {
-    backgroundColor: COLORS.PRIMARY,
+    backgroundColor: APP_BACKGROUND_COLOR,
     paddingTop: 35,
   },
   header: {
@@ -12,29 +12,23 @@ export const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   headerTitleText: {
-    fontSize: 24,
-    lineHeight: 24,
-    fontFamily: 'SF-Bold',
-    fontWeight: '600',
-    color: COLORS.WHITE,
+    ...TYPOGRAPHY.title,
     letterSpacing: -1.2,
     marginRight: 'auto',
   },
   headerPressableText: {
-    fontSize: 13,
-    lineHeight: 13,
-    fontFamily: 'SF-Bold',
+    ...TYPOGRAPHY.label,
     fontWeight: '800',
-    color: COLORS.LIGHT_GREY,
+    color: PALETTE.textSecondary,
   },
   scrollView: {
-    paddingVertical: 4,
+    paddingVertical: SPACING.xs,
   },
   scrollViewContainer: {
     flexDirection: 'row',
-    gap: 16,
+    gap: SPACING.lg,
   },
   album: {
-    padding: 8,
+    padding: SPACING.sm,
   },
 });

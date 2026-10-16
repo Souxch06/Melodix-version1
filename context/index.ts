@@ -3,6 +3,18 @@ export type {
   UserContextType,
   UserDataProviderPropsType,
 } from './UserDataContext';
+export {
+  isSpotifyAccountId,
+  isSpotifyAccessDenied,
+  hasSpotifySession,
+  describeSpotifyVerificationFailure,
+  spotifyUnavailableBody,
+} from './spotifyIdentity';
+export type {
+  SessionStatus,
+  SpotifyDataPlan,
+  SpotifyVerificationFailure,
+} from './spotifyIdentity';
 
 export {
   LibrarySelectedCategoryProvider,
@@ -19,3 +31,7 @@ export {
   useTranslations,
 } from './PreferencesContext';
 export type { PreferencesContextType } from './PreferencesContext';
+export {
+  SpotifyAuthProvider,
+  useSpotifyAuthContext,
+} from './SpotifyAuthContext';

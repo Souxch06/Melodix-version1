@@ -61,9 +61,17 @@ export type ClientIdInfo = {
 };
 
 export const getClientIdInfo = (): ClientIdInfo => {
+  // ⚠️ Accès DIRECT à `process.env.EXPO_PUBLIC_*` (sans optional chaining
+  // `?.`) : c'est la forme reconnue par `babel-preset-expo`
+  // (`inline-env-vars`) qui INLINE la valeur au build Metro. Avec un
+  // `process.env?.EXPO_PUBLIC_*` optionnel, l'inlining est sauté et la
+  // valeur reste résolue au runtime (où `process.env` n'est pas peuplé en
+  // APK bare). Les tests ci-dessous simulent la valeur résolue via le
+  // mock `process.env` — c'est exactement ce que le bundle de
+  // production voit après inlining.
   const envValue =
     typeof process !== 'undefined'
-      ? (process.env?.EXPO_PUBLIC_SPOTIFY_CLIENT_ID ?? '')
+      ? (process.env.EXPO_PUBLIC_SPOTIFY_CLIENT_ID ?? '')
       : '';
   if (typeof envValue === 'string' && envValue.trim()) {
     return { clientId: envValue.trim(), source: 'expo-public-env' };
@@ -86,6 +94,20 @@ export const getSpotifyClientId = (): string => getClientIdInfo().clientId;
 
 export const isSpotifyLoginConfigured = (): boolean =>
   getSpotifyClientId() !== '';
+
+/**
+ * Forme d'un Client ID Spotify : exactement 32 chiffres hexadécimaux
+ * (identifiant PUBLIC de l'application — pas un secret ; la règle ne porte
+ * que sur la FORME, jamais sur une valeur attendue).
+ *
+ * V25 — utilisé par le rapport de diagnostic : seule une valeur de cette
+ * forme est affichée comme « Client ID ». Tout le reste (libellé de source
+ * collé par erreur, token collé dans SPOTIFY_CLIENT_ID, valeur tronquée…)
+ * est signalé « format inhabituel » SANS être affiché — un rapport ne doit
+ * jamais renvoyer une valeur qui ne peut être un Client ID.
+ */
+export const isSpotifyClientIdShape = (value: string): boolean =>
+  /^[0-9a-fA-F]{32}$/.test(value);
 
 /**
  * Valeur par défaut du redirect OAuth : le redirect NATIF DE PRODUCTION de
@@ -115,9 +137,13 @@ export type RedirectUriSource =
  * c'est précisément ce que cette source unique élimine par construction.
  */
 export const getSpotifyRedirectUri = (): string => {
+  // ⚠️ Accès DIRECT à `process.env.EXPO_PUBLIC_*` : voir la note dans
+  // `getClientIdInfo` ci-dessus. Le `?.` empêcherait `babel-preset-expo`
+  // d'inliner la valeur au build, ce qui rendrait le canal `EXPO_PUBLIC_*`
+  // inopérant sur l'APK final.
   const envValue =
     typeof process !== 'undefined'
-      ? (process.env?.EXPO_PUBLIC_SPOTIFY_REDIRECT_URI ?? '')
+      ? (process.env.EXPO_PUBLIC_SPOTIFY_REDIRECT_URI ?? '')
       : '';
   if (typeof envValue === 'string' && envValue.trim()) {
     return envValue.trim();
@@ -137,9 +163,12 @@ export const getSpotifyRedirectUri = (): string => {
 
 /** Source du redirect (diagnostic LOG sans secret — l'URI est publique). */
 export const getSpotifyRedirectUriSource = (): RedirectUriSource => {
+  // ⚠️ Accès DIRECT à `process.env.EXPO_PUBLIC_*` : voir la note dans
+  // `getClientIdInfo` ci-dessus. Le `?.` empêcherait `babel-preset-expo`
+  // d'inliner la valeur au build.
   const envValue =
     typeof process !== 'undefined'
-      ? (process.env?.EXPO_PUBLIC_SPOTIFY_REDIRECT_URI ?? '')
+      ? (process.env.EXPO_PUBLIC_SPOTIFY_REDIRECT_URI ?? '')
       : '';
   if (typeof envValue === 'string' && envValue.trim()) {
     return 'expo-public-env';
@@ -155,12 +184,21 @@ export const getSpotifyRedirectUriSource = (): RedirectUriSource => {
 /**
  * Scopes strictement nécessaires (permission minimale) :
  * - user-read-private        → profil (nom d'affichage, photo) ;
+ * - user-library-read        → TITRES AIMÉS (GET /v1/me/tracks) ;
  * - playlist-read-private    → playlists personnelles ;
  * - playlist-read-collaborative → playlists collaboratives.
- * Pas d'email : inutile au fonctionnement de Melodix.
+ *
+ * `user-library-read` est INDISPENSABLE : sans lui la connexion réussit mais
+ * /me/tracks répond 403 « Insufficient client scope » — l'écran « Titres
+ * aimés » ne peut alors afficher qu'une erreur. Un scope absent ne casse
+ * jamais le login, il casse l'endpoint : d'où le test de couverture par
+ * endpoint dans __tests__/authConfig.unit.test.ts.
+ *
+ * Pas d'email : inutile au fonctionnement de Melodix. Aucun scope d'écriture.
  */
 export const SPOTIFY_SCOPES = [
   'user-read-private',
+  'user-library-read',
   'playlist-read-private',
   'playlist-read-collaborative',
 ] as const;
@@ -175,3 +213,24 @@ export const SPOTIFY_API_BASE_URL = 'https://api.spotify.com/v1';
 /** Lien de retour déclaré dans l'APK (voir app.config.js scheme). */
 export const SPOTIFY_REDIRECT_SCHEME = 'melodix';
 export const SPOTIFY_REDIRECT_PATH = 'callback';
+
+/**
+ * FIXTURE SMOKE CI — build de test uniquement (workflow Android).
+ *
+ * `EXPO_PUBLIC_SPOTIFY_OAUTH_SMOKE=1` (inliné par Metro) active la route de
+ * test `melodix://oauth-smoke-seed` : elle SEEDe une transaction PKCE
+ * déterministe dans SecureStore, ce qui permet au smoke Android de vérifier
+ * le wiring cold-start « transaction persistée → processus tué → callback →
+ * verifier restauré → exchange ».
+ *
+ * GARANTIES :
+ * - AUCUN faux login : le seed n'authentifie rien ; l'échange exige toujours
+ *   un code Spotify réel (un code factice est refusé par Spotify) ;
+ * - le login NORMAL est inchangé : sa transaction est la transaction LIVE
+ *   (verifier/state de la requête), pas la fixture ;
+ * - absente en build de production (variable jamais définie → route inactive,
+ *   aucun effet de bord, la deep-link ne mène nulle part).
+ */
+export const isSpotifyOAuthSmoke = (): boolean =>
+  typeof process !== 'undefined' &&
+  (process.env.EXPO_PUBLIC_SPOTIFY_OAUTH_SMOKE ?? '') === '1';

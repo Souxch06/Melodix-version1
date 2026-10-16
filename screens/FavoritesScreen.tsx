@@ -3,6 +3,7 @@ import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { ErrorCard, Preview } from '@components';
 
+import { artistsFromSubtitle } from '@models';
 import type { TrackModel } from '@models';
 import {
   listSavedTracks,
@@ -84,7 +85,7 @@ export const FavoritesScreen = () => {
   const handleToggleTrackSaved = React.useCallback(
     async (track: TrackModel) => {
       const nowSaved = await toggleSavedTrack(track, {
-        artists: track.subtitle ? track.subtitle.split(', ') : [],
+        artists: artistsFromSubtitle(track.subtitle),
         albumTitle: track.albumName ?? undefined,
         durationMs: track.durationMs ?? undefined,
       });

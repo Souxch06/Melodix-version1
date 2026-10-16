@@ -1,0 +1,1767 @@
+=====================================================================
+
+SPOTIDUCK / MELODIX — DOSSIER TECHNIQUE DE RÉFÉRENCE
+
+=====================================================================
+
+Version du document : 1.0
+
+Destinataire : agent de code Arena, dépôt GitHub Souxch06/Melodix
+
+Référence analysée : SpotiDuck-v1_2_1-e80970a.7z (contient SpotiDuck-v1.2.1-e80970a.apk)
+
+
+
+NOTE DE TRAÇABILITÉ (lire en premier)
+
+-------------------------------------
+
+Ce document distingue quatre niveaux de fiabilité. Chaque affirmation
+
+porte l'une de ces étiquettes :
+
+
+
+  [VÉRIFIÉ]   Extrait et constaté directement dans l'APK ou l'archive.
+
+  [DOCUMENTÉ] Comportement ou nom de ressource connu, non relu en détail.
+
+  [ORIGINAL]  Exemple de code écrit pour Melodix. Ne provient PAS de SpotiDuck.
+
+  [À VÉRIFIER] Hypothèse non confirmée. Ne pas implémenter sans test.
+
+
+
+Ce qui n'a PAS été fait :
+
+  - Le dépôt Melodix n'a pas été consulté. Aucun fichier de Melodix n'a été
+
+    lu ; les chemins cités en section 3 sont à confirmer par Arena.
+
+  - La décompilation complète du bytecode (classes.dex) n'a pas été faite.
+
+    Seuls les noms de classes, de méthodes et de chaînes ont été relevés.
+
+  - AndroidManifest.xml est au format binaire et n'a pas été décodé.
+
+  - Aucun test sur appareil n'a été effectué.
+
+
+
+=====================================================================
+
+SOMMAIRE
+
+=====================================================================
+
+ 0. Ce qui a été extrait de l'archive
+
+ 1. Analyse de SpotiDuck
+
+ 2. Architecture cible pour Melodix
+
+ 3. Chemins de fichiers à vérifier dans Melodix
+
+ 4. Exemple de pont JavaScript (WebView <-> Android)
+
+ 5. Exemple Android natif (MediaSession, notification, service)
+
+ 6. Lecteur et catalogue : cinq couches distinctes
+
+ 7. Authentification
+
+ 8. Éléments à NE PAS reproduire
+
+ 9. Bugs probables et checklist de tests
+
+10. Plan d'intégration pour Arena
+
+11. Limites connues
+
+12. PROMPT D'INTÉGRATION ARENA
+
+
+
+=====================================================================
+
+0. CE QUI A ÉTÉ EXTRAIT DE L'ARCHIVE  [VÉRIFIÉ]
+
+=====================================================================
+
+
+
+Archive 7z : une seule entrée, SpotiDuck-v1.2.1-e80970a.apk (3 041 816 octets
+
+décompressés, flux LZMA2). Extraction réalisée et vérifiée (signature ZIP PK).
+
+
+
+Contenu notable de l'APK :
+
+
+
+  classes.dex                         3 471 436 o   code Java/Kotlin
+
+  lib/{arm64-v8a,armeabi-v7a,x86,x86_64}/libdatastore_shared_counter.so
+
+  assets/spotify_bridge.js            131 653 o     pont principal (injecté)
+
+  assets/css_hacks.css                 43 724 o     correctifs CSS
+
+  assets/adblock_hosts.txt             33 574 o     ~1 313 lignes de domaines
+
+  assets/desktop_spoof.js              17 761 o     simulation d'environnement desktop
+
+  assets/google_spoof.js                4 142 o     simulation liée à Google
+
+  assets/classic_login.js                 725 o     ajoute un lien de connexion classique
+
+  assets/facebook_consent.js              113 o     clic automatique sur un bouton Facebook
+
+  assets/silent.mp3                     2 552 o     fichier audio silencieux
+
+
+
+Noms de classes applicatives relevées dans classes.dex  [VÉRIFIÉ]
+
+  com.spotiduck.music.MainActivity
+
+  com.spotiduck.music.WebService            (service média, MediaBrowserService)
+
+  com.spotiduck.music.WebService$MediaActionReceiver
+
+  com.spotiduck.music.AndBridge             (interface JS -> Android)
+
+  com.spotiduck.music.AppSingleton
+
+  com.spotiduck.music.SettingsActivity
+
+  com.spotiduck.music.LinkHandler
+
+  com.spotiduck.music.HomeWidget            (widget d'écran d'accueil)
+
+  com.spotiduck.music.LockableHScrollView
+
+  com.spotiduck.music.CustomPrefTitle / CustomPrefFooter / ExpandablePreferenceCategory
+
+
+
+Dépendances Android et bibliothèques relevées  [VÉRIFIÉ]
+
+  android.media.session.MediaSession, PlaybackState
+
+  android.media.browse.MediaBrowserService
+
+  android.app.Notification$MediaStyle, Notification$CallStyle
+
+  androidx.media.app.NotificationCompat, MediaBrowserProtocol
+
+  android.webkit.WebView (WebViewDatabase, WebViewRenderProcess)
+
+  Firebase Performance (perf_metric.proto), Firebase Analytics
+
+  Picasso (chargement d'images)
+
+  Kotlin Coroutines, Dagger, AndroidX DataStore
+
+
+
+Chaînes liées au pont  [VÉRIFIÉ]
+
+  Interface JavaScript exposée : "Android"
+
+  Méthodes appelées depuis le JS vers AndBridge (nom : nombre d'occurrences) :
+
+    onUserInfoCaptured (4), onMediaItemsLoaded (9), onSearchCompleted (3),
+
+    deferMessage (3), wakeUp (3), setSearchActive (2), playLoaded, cssInjected,
+
+    isWoke, manageTShut, manageTSleep, nativeFetch, recMediaPosition,
+
+    recMediaStatus, setExpanded, wakeOff
+
+  Objet global de configuration injecté : window.SF_CONFIG
+
+    Clés : autoPlayMode, closeNowPlay, guiMode, hideStatusBar,
+
+           isCanvasDisabled, screenHeight, screenWidth, statusBarHeight, takeControl
+
+
+
+Points d'accès réseau utilisés par le pont  [VÉRIFIÉ dans le JS]
+
+  https://api-partner.spotify.com/pathfinder/v2/query      (GraphQL interne)
+
+  https://gew4-spclient.spotify.com/connect-state/v1/player/command/from/...
+
+  https://api.spotify.com/v1/shows/...
+
+  https://misc.scdn.co/liked-songs/liked-songs-640.png
+
+  -> Ces points d'accès sont INTERNES à Spotify Web Player, non documentés.
+
+     Ne pas les présenter comme API officielles. Voir section 8.
+
+
+
+Stockage navigateur lu/écrit par le pont  [VÉRIFIÉ]
+
+  localStorage : spot_auth_token, spot_cli_token, spot_dev_id / spot_device_id
+
+
+
+Ce qui n'a pas été vérifié  [À VÉRIFIER]
+
+  - Le contenu exact de AndBridge et WebService (bytecode non décompilé).
+
+  - Le contenu de AndroidManifest.xml (permissions, services, intent-filters).
+
+  - La logique exacte de MediaActionReceiver.
+
+  - Le fonctionnement réel de la lecture (quel moteur audio est utilisé :
+
+    le lecteur Web, un lecteur natif, ou les deux).
+
+
+
+=====================================================================
+
+1. ANALYSE DE SPOTIDUCK
+
+=====================================================================
+
+
+
+1.1 Architecture confirmée  [VÉRIFIÉ]
+
+  - L'application est une coque Android qui affiche Spotify Web Player dans
+
+    une WebView (classe MainActivity).
+
+  - Un script principal (spotify_bridge.js) est injecté dans la page. Il
+
+    expose des fonctions de contrôle et remonte l'état au code Android via
+
+    l'interface JavaScript "Android" représentée par la classe AndBridge.
+
+  - Un service média (WebService) étend MediaBrowserService et utilise
+
+    MediaSession et des notifications de style média.
+
+  - Un récepteur (WebService$MediaActionReceiver) traite les actions de
+
+    notification.
+
+
+
+1.2 Comportements déduits  [DOCUMENTÉ / À VÉRIFIER]
+
+  - Le JS envoie les métadonnées et la position à Android (recMediaStatus,
+
+    recMediaPosition, onMediaItemsLoaded). Android met à jour MediaSession.
+
+  - Android renvoie les commandes (play, pause, suivant, précédent) vers la
+
+    page Web. Le mécanisme exact reste à confirmer.
+
+  - La gestion de l'écran (wakeUp, wakeOff, isWoke) suggère une logique de
+
+    veille et de réveil de la WebView.
+
+
+
+1.3 Éléments de la page injectés par SpotiDuck  [VÉRIFIÉ]
+
+  - Des correctifs CSS (css_hacks.css) masquent ou modifient l'interface.
+
+  - Des scripts simulent un environnement de navigateur de bureau
+
+    (desktop_spoof.js) : user-agent, navigator.webdriver, taille d'écran,
+
+    plugins. Voir section 8 : Melodix NE doit PAS reproduire cela.
+
+  - Une liste de domaines publicitaires est fournie (adblock_hosts.txt).
+
+    Voir section 8.
+
+  - Un script ajoute un lien de connexion par mot de passe et clique
+
+    automatiquement sur un bouton Facebook. Voir section 8.
+
+
+
+1.4 Points inconnus  [À VÉRIFIER]
+
+  - Comment la lecture audio est réellement produite (Web Player seul, ou
+
+    flux audio natif).
+
+  - Gestion exacte de la file d'attente et de la reprise après redémarrage.
+
+  - Format exact des messages entre JS et Android.
+
+
+
+=====================================================================
+
+2. ARCHITECTURE CIBLE POUR MELODIX
+
+=====================================================================
+
+
+
+Principe directeur : UN SEUL lecteur, UN SEUL service média.
+
+Melodix doit s'appuyer sur son lecteur audio existant (services/player.ts
+
+et le module natif existant) et ne pas en créer un second.
+
+
+
+2.1 Rôles proposés
+
+
+
+  PlayerContext (React)        État de lecture unique : piste courante,
+
+                               file, position, statut. Source de vérité
+
+                               côté interface.
+
+  services/player.ts           Orchestration : choisit la source audio
+
+                               (Audius, YouTube) et délègue la lecture.
+
+  Module natif Android         Lecture effective, MediaSession, notification,
+
+                               gestion du focus audio.
+
+  Pont JavaScript (optionnel)  À n'utiliser QUE si une WebView est
+
+                               réellement nécessaire (ex. contenu Spotify
+
+                               autorisé). Sinon, pas de pont.
+
+  File d'attente               Une seule, tenue par le module natif ou par
+
+                               PlayerContext, jamais les deux.
+
+
+
+2.2 Flux de données
+
+
+
+  Interface React --(commande)--> player.ts --> module natif
+
+  module natif --(état, événements)--> PlayerContext --> interface React
+
+  module natif --> MediaSession --> notification, écran verrouillé, casque
+
+  casque / notification --> MediaSession callbacks --> module natif
+
+
+
+Règle : les commandes du casque et de l'écran verrouillé passent par
+
+MediaSession, jamais par un canal séparé.
+
+
+
+2.3 Questions à trancher lors de l'audit  [À VÉRIFIER]
+
+  - Le lecteur actuel est-il natif (ExoPlayer / MediaPlayer) ou JS ?
+
+  - MediaSession existe-t-elle déjà ? Si oui, en un seul endroit.
+
+  - La file d'attente est-elle persistée ? Où ?
+
+
+
+=====================================================================
+
+3. CHEMINS DE FICHIERS À VÉRIFIER DANS MELODIX
+
+=====================================================================
+
+
+
+Ces chemins proviennent de la demande de mission. Leur existence et leur
+
+contenu n'ont PAS été vérifiés. Arena doit les confirmer avant toute modif :
+
+
+
+  screens/LoginScreen.tsx
+
+  services/player.ts
+
+  PlayerContext (fichier à localiser : contexte React)
+
+  android/app/src/main/java/...   (module natif, chemin exact à confirmer)
+
+  android/app/src/main/AndroidManifest.xml
+
+  Fichiers d'authentification Spotify (à localiser)
+
+  Fichiers Audius et YouTube (à localiser)
+
+  Fichiers de persistance (session, historique, file)
+
+
+
+=====================================================================
+
+4. EXEMPLE DE PONT JAVASCRIPT (WebView <-> Android)  [ORIGINAL]
+
+=====================================================================
+
+
+
+Ce code est original, écrit pour Melodix. Il ne reprend pas spotify_bridge.js.
+
+
+
+Principes appliqués :
+
+  - Liste blanche stricte des commandes ; toute autre commande est rejetée.
+
+  - Validation de la forme du message, des types et de la taille.
+
+  - Délai d'attente sur chaque requête vers Android.
+
+  - Aucune donnée sensible (token) dans les messages ni dans les logs.
+
+
+
+4.1 Côté JavaScript (à charger dans la WebView, si un pont est nécessaire)
+
+
+
+--------------------------------------------------------------------
+
+// melodix-bridge.js  [ORIGINAL]
+
+// Pont minimal, sécurisé, entre une page Web et l'application Android.
+
+(function () {
+
+  "use strict";
+
+
+
+  const MAX_MESSAGE_BYTES = 4096;     // limite de taille d'un message
+
+  const REQUEST_TIMEOUT_MS = 5000;    // délai d'attente par requête
+
+  const ALLOWED_COMMANDS = Object.freeze({
+
+    play: true,
+
+    pause: true,
+
+    next: true,
+
+    previous: true,
+
+    seek: true,                       // paramètre : positionMs (entier)
+
+  });
+
+
+
+  if (window.MelodixBridge) return;   // éviter une double initialisation
+
+
+
+  const pending = new Map();          // requestId -> { resolve, reject, timer }
+
+  let nextId = 1;
+
+
+
+  // Valide un message entrant ou sortant. Retourne un message de cause, ou null.
+
+  function validate(cmd, payload) {
+
+    if (typeof cmd !== "string" || !ALLOWED_COMMANDS[cmd]) {
+
+      return "commande non autorisée";
+
+    }
+
+    if (cmd === "seek") {
+
+      if (!payload || !Number.isInteger(payload.positionMs)) {
+
+        return "positionMs doit être un entier";
+
+      }
+
+      if (payload.positionMs < 0 || payload.positionMs > 86_400_000) {
+
+        return "positionMs hors limites";
+
+      }
+
+    }
+
+    const size = new Blob([JSON.stringify({ cmd, payload })]).size;
+
+    if (size > MAX_MESSAGE_BYTES) return "message trop volumineux";
+
+    return null;
+
+  }
+
+
+
+  // Envoi d'une commande vers Android, avec délai d'attente.
+
+  function send(cmd, payload = {}) {
+
+    const error = validate(cmd, payload);
+
+    if (error) return Promise.reject(new Error(error));
+
+
+
+    if (!window.Android || typeof window.Android.onCommand !== "function") {
+
+      return Promise.reject(new Error("pont Android indisponible"));
+
+    }
+
+
+
+    const requestId = String(nextId++);
+
+    return new Promise((resolve, reject) => {
+
+      const timer = setTimeout(() => {
+
+        pending.delete(requestId);
+
+        reject(new Error("délai dépassé pour " + cmd));
+
+      }, REQUEST_TIMEOUT_MS);
+
+      pending.set(requestId, { resolve, reject, timer });
+
+      window.Android.onCommand(
+
+        JSON.stringify({ requestId, cmd, payload })
+
+      );
+
+    });
+
+  }
+
+
+
+  // Réponse venant d'Android : appelée par le code natif.
+
+  // Le code natif doit passer une chaîne JSON de forme { requestId, ok, data|error }.
+
+  function receive(rawJson) {
+
+    if (typeof rawJson !== "string" || rawJson.length > MAX_MESSAGE_BYTES) return;
+
+    let msg;
+
+    try { msg = JSON.parse(rawJson); } catch (_) { return; }
+
+    if (!msg || typeof msg.requestId !== "string") return;
+
+    const entry = pending.get(msg.requestId);
+
+    if (!entry) return;                // réponse tardive ou inconnue
+
+    clearTimeout(entry.timer);
+
+    pending.delete(msg.requestId);
+
+    msg.ok ? entry.resolve(msg.data) : entry.reject(new Error(msg.error || "erreur"));
+
+  }
+
+
+
+  // Événements d'état poussés par Android (lecture, pause, progression).
+
+  const listeners = new Set();
+
+  function onState(fn) {
+
+    if (typeof fn === "function") listeners.add(fn);
+
+    return () => listeners.delete(fn);
+
+  }
+
+  function emitState(rawJson) {
+
+    if (typeof rawJson !== "string" || rawJson.length > MAX_MESSAGE_BYTES) return;
+
+    let state;
+
+    try { state = JSON.parse(rawJson); } catch (_) { return; }
+
+    // Contrôle minimal des types avant diffusion.
+
+    if (typeof state.playing !== "boolean") return;
+
+    if (state.positionMs != null && !Number.isInteger(state.positionMs)) return;
+
+    listeners.forEach((fn) => { try { fn(state); } catch (_) {} });
+
+  }
+
+
+
+  // Synchronisation des métadonnées (titre, artiste, pochette, durée).
+
+  function setMetadata(meta) {
+
+    const clean = {
+
+      title: String(meta?.title ?? "").slice(0, 200),
+
+      artist: String(meta?.artist ?? "").slice(0, 200),
+
+      durationMs: Number.isInteger(meta?.durationMs) ? meta.durationMs : 0,
+
+      artworkUrl: typeof meta?.artworkUrl === "string" && meta.artworkUrl.startsWith("https://")
+
+        ? meta.artworkUrl.slice(0, 500) : "",
+
+    };
+
+    return send("setMetadata", clean);
+
+  }
+
+
+
+  window.MelodixBridge = Object.freeze({
+
+    play: () => send("play"),
+
+    pause: () => send("pause"),
+
+    next: () => send("next"),
+
+    previous: () => send("previous"),
+
+    seek: (positionMs) => send("seek", { positionMs }),
+
+    onState,
+
+    // Points d'entrée appelés par le code natif :
+
+    _receive: receive,
+
+    _emitState: emitState,
+
+  });
+
+})();
+
+--------------------------------------------------------------------
+
+
+
+4.2 Remarques d'intégration
+
+  - Melodix doit d'abord décider si un pont est nécessaire. Si le lecteur
+
+    est déjà natif et que les sources sont Audius ou YouTube, le pont JS
+
+    n'a pas lieu d'exister.
+
+  - Les commandes setMetadata et les états ne doivent jamais contenir de
+
+    token, d'identifiant de session ou d'e-mail.
+
+
+
+=====================================================================
+
+5. EXEMPLE ANDROID NATIF (Kotlin)  [ORIGINAL]
+
+=====================================================================
+
+
+
+Code original, à adapter à l'existant. Si Melodix utilise déjà
+
+ExoPlayer ou un MediaSession, intégrer ces fonctions au service existant
+
+au lieu de créer un second service.
+
+
+
+Dépendances usuelles (à vérifier dans build.gradle avant ajout) :
+
+  androidx.media:media, androidx.media3:media3-session (si ExoPlayer)
+
+
+
+5.1 Service de lecture avec MediaSession
+
+
+
+--------------------------------------------------------------------
+
+// MelodixPlaybackService.kt  [ORIGINAL]
+
+package com.example.melodix.playback   // adapter le package réel
+
+
+
+import android.app.Notification
+
+import android.app.NotificationChannel
+
+import android.app.NotificationManager
+
+import android.app.PendingIntent
+
+import android.content.Intent
+
+import android.os.Build
+
+import android.support.v4.media.MediaMetadataCompat
+
+import android.support.v4.media.session.MediaSessionCompat
+
+import android.support.v4.media.session.PlaybackStateCompat
+
+import androidx.core.app.NotificationCompat
+
+import androidx.media.app.NotificationCompat as MediaNotificationCompat
+
+import androidx.media.session.MediaButtonReceiver
+
+import android.media.AudioAttributes
+
+import android.media.AudioFocusRequest
+
+import android.media.AudioManager
+
+import android.os.Bundle
+
+import android.os.Handler
+
+import android.os.Looper
+
+import androidx.media.MediaBrowserServiceCompat
+
+
+
+class MelodixPlaybackService : MediaBrowserServiceCompat() {
+
+
+
+    companion object {
+
+        private const val CHANNEL_ID = "melodix_playback"
+
+        private const val NOTIF_ID = 1001
+
+        private const val SEEK_MAX_MS = 86_400_000L
+
+    }
+
+
+
+    private lateinit var session: MediaSessionCompat
+
+    private val main = Handler(Looper.getMainLooper())
+
+    private val audioManager by lazy { getSystemService(AudioManager::class.java) }
+
+    private var focusRequest: AudioFocusRequest? = null
+
+    private var isForeground = false
+
+
+
+    // Pont vers le lecteur existant. Ne pas créer un second lecteur ici.
+
+    // Remplacer par l'interface réelle du lecteur de Melodix.
+
+    interface PlayerControl {
+
+        fun play()
+
+        fun pause()
+
+        fun next()
+
+        fun previous()
+
+        fun seekTo(positionMs: Long)
+
+        fun currentPositionMs(): Long
+
+        fun durationMs(): Long
+
+        fun isPlaying(): Boolean
+
+    }
+
+
+
+    var player: PlayerControl? = null   // injecté par le module natif existant
+
+
+
+    override fun onCreate() {
+
+        super.onCreate()
+
+        createChannel()
+
+
+
+        session = MediaSessionCompat(this, "MelodixSession").apply {
+
+            setFlags(
+
+                MediaSessionCompat.FLAG_HANDLES_MEDIA_BUTTONS or
+
+                MediaSessionCompat.FLAG_HANDLES_TRANSPORT_CONTROLS
+
+            )
+
+            setCallback(callback)
+
+            isActive = true
+
+        }
+
+        sessionToken = session.sessionToken
+
+    }
+
+
+
+    private val callback = object : MediaSessionCompat.Callback() {
+
+        override fun onPlay() = runOnPlayer { requestFocus(); play() }
+
+        override fun onPause() = runOnPlayer { pause() }
+
+        override fun onSkipToNext() = runOnPlayer { next() }
+
+        override fun onSkipToPrevious() = runOnPlayer { previous() }
+
+        override fun onSeekTo(pos: Long) {
+
+            // Validation : bornes de position avant délégation.
+
+            if (pos < 0 || pos > SEEK_MAX_MS) return
+
+            runOnPlayer { seekTo(pos) }
+
+        }
+
+        override fun onStop() = runOnPlayer { pause(); abandonFocus() }
+
+    }
+
+
+
+    // Exécution sur le thread principal, avec garde si le lecteur est absent.
+
+    private fun runOnPlayer(block: PlayerControl.() -> Unit) {
+
+        main.post {
+
+            val p = player ?: return@post
+
+            try { p.block() } catch (e: Exception) {
+
+                // Journaliser l'erreur SANS données sensibles.
+
+                android.util.Log.w("MelodixPlayback", "Commande échouée : ${e.javaClass.simpleName}")
+
+            }
+
+        }
+
+    }
+
+
+
+    // Synchronisation état + métadonnées depuis le lecteur.
+
+    fun publishState(isPlaying: Boolean, positionMs: Long, bufferedMs: Long) {
+
+        val state = if (isPlaying) PlaybackStateCompat.STATE_PLAYING
+
+                    else PlaybackStateCompat.STATE_PAUSED
+
+        val actions = PlaybackStateCompat.ACTION_PLAY or
+
+            PlaybackStateCompat.ACTION_PAUSE or
+
+            PlaybackStateCompat.ACTION_PLAY_PAUSE or
+
+            PlaybackStateCompat.ACTION_SKIP_TO_NEXT or
+
+            PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS or
+
+            PlaybackStateCompat.ACTION_SEEK_TO or
+
+            PlaybackStateCompat.ACTION_STOP
+
+        session.setPlaybackState(
+
+            PlaybackStateCompat.Builder()
+
+                .setState(state, positionMs.coerceIn(0, SEEK_MAX_MS), if (isPlaying) 1f else 0f)
+
+                .setActions(actions)
+
+                .setBufferedPosition(bufferedMs)
+
+                .build()
+
+        )
+
+        updateNotification(isPlaying)
+
+    }
+
+
+
+    fun publishMetadata(title: String, artist: String, durationMs: Long, artwork: android.graphics.Bitmap?) {
+
+        val meta = MediaMetadataCompat.Builder()
+
+            .putString(MediaMetadataCompat.METADATA_KEY_TITLE, title.take(200))
+
+            .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, artist.take(200))
+
+            .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, durationMs.coerceAtLeast(0))
+
+            .apply { if (artwork != null) putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, artwork) }
+
+            .build()
+
+        session.setMetadata(meta)
+
+    }
+
+
+
+    private fun updateNotification(isPlaying: Boolean) {
+
+        val controller = session.controller
+
+        val open = packageManager.getLaunchIntentForPackage(packageName)?.let {
+
+            PendingIntent.getActivity(this, 0, it,
+
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+
+        }
+
+        val playPause = if (isPlaying)
+
+            NotificationCompat.Action(android.R.drawable.ic_media_pause, "Pause",
+
+                MediaButtonReceiver.buildMediaButtonPendingIntent(this, PlaybackStateCompat.ACTION_PAUSE))
+
+        else
+
+            NotificationCompat.Action(android.R.drawable.ic_media_play, "Lecture",
+
+                MediaButtonReceiver.buildMediaButtonPendingIntent(this, PlaybackStateCompat.ACTION_PLAY))
+
+
+
+        val notif: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
+
+            .setSmallIcon(android.R.drawable.ic_media_play)   // remplacer par l'icône Melodix
+
+            .setContentIntent(open)
+
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+
+            .setOnlyAlertOnce(true)
+
+            .setOngoing(isPlaying)
+
+            .addAction(android.R.drawable.ic_media_previous, "Précédent",
+
+                MediaButtonReceiver.buildMediaButtonPendingIntent(this, PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS))
+
+            .addAction(playPause)
+
+            .addAction(android.R.drawable.ic_media_next, "Suivant",
+
+                MediaButtonReceiver.buildMediaButtonPendingIntent(this, PlaybackStateCompat.ACTION_SKIP_TO_NEXT))
+
+            .setStyle(MediaNotificationCompat.MediaStyle()
+
+                .setMediaSession(session.sessionToken)
+
+                .setShowActionsInCompactView(0, 1, 2))
+
+            .build()
+
+
+
+        if (isPlaying) {
+
+            startForegroundCompat(notif)
+
+        } else {
+
+            // Retirer du premier plan sans supprimer la notification : l'utilisateur
+
+            // peut toujours la reprendre.
+
+            stopForeground(STOP_FOREGROUND_DETACH)
+
+            isForeground = false
+
+            getSystemService(NotificationManager::class.java).notify(NOTIF_ID, notif)
+
+        }
+
+    }
+
+
+
+    private fun startForegroundCompat(notif: Notification) {
+
+        startForeground(NOTIF_ID, notif)
+
+        isForeground = true
+
+    }
+
+
+
+    // Focus audio : mettre en pause si un autre lecteur prend la main.
+
+    private fun requestFocus() {
+
+        val attrs = AudioAttributes.Builder()
+
+            .setUsage(AudioAttributes.USAGE_MEDIA)
+
+            .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+
+            .build()
+
+        val req = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+
+            .setAudioAttributes(attrs)
+
+            .setOnAudioFocusChangeListener { change ->
+
+                if (change == AudioManager.AUDIOFOCUS_LOSS ||
+
+                    change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) {
+
+                    main.post { player?.pause() }
+
+                }
+
+            }
+
+            .build()
+
+        focusRequest = req
+
+        audioManager.requestAudioFocus(req)
+
+    }
+
+
+
+    private fun abandonFocus() {
+
+        focusRequest?.let { audioManager.abandonAudioFocusRequest(it) }
+
+        focusRequest = null
+
+    }
+
+
+
+    private fun createChannel() {
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+
+            val ch = NotificationChannel(CHANNEL_ID, "Lecture", NotificationManager.IMPORTANCE_LOW)
+
+            getSystemService(NotificationManager::class.java).createNotificationChannel(ch)
+
+        }
+
+    }
+
+
+
+    override fun onGetRoot(clientPackageName: String, clientUid: Int, rootHints: Bundle?)
+
+        : BrowserRoot? {
+
+        // N'accepter que Melodix et l'appareil lui-même.
+
+        return if (clientPackageName == packageName) BrowserRoot("root", null) else null
+
+    }
+
+
+
+    override fun onLoadChildren(parentId: String, result: Result<MutableList<MediaBrowserCompat.MediaItem>>) {
+
+        result.sendResult(mutableListOf())
+
+    }
+
+
+
+    // Cycle de vie : arrêt propre.
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+
+        player?.pause()
+
+        stopSelf()
+
+    }
+
+
+
+    override fun onDestroy() {
+
+        abandonFocus()
+
+        session.isActive = false
+
+        session.release()
+
+        super.onDestroy()
+
+    }
+
+}
+
+--------------------------------------------------------------------
+
+
+
+Points à corriger avant compilation (volontairement signalés) :
+
+  - Ajouter l'import android.support.v4.media.MediaBrowserCompat et
+
+    android.support.v4.media.session.MediaSessionCompat, et utiliser
+
+    l'import MediaBrowserCompat.MediaItem.
+
+  - sessionToken doit être affecté via la propriété héritée de
+
+    MediaBrowserServiceCompat.
+
+  - Déclarer le service dans AndroidManifest.xml avec l'intent-filter
+
+    android.media.browse.MediaBrowserService et un receiver
+
+    androidx.media.session.MediaButtonReceiver.
+
+  - Sur Android 14+, déclarer foregroundServiceType="mediaPlayback" et la
+
+    permission FOREGROUND_SERVICE_MEDIA_PLAYBACK.
+
+  - Sur Android 13+, la notification exige POST_NOTIFICATIONS ; la demander
+
+    avant la première lecture.
+
+
+
+5.2 Manifeste (extrait à adapter)
+
+
+
+--------------------------------------------------------------------
+
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+
+<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+
+
+<service
+
+    android:name=".playback.MelodixPlaybackService"
+
+    android:exported="true"
+
+    android:foregroundServiceType="mediaPlayback">
+
+    <intent-filter>
+
+        <action android:name="android.media.browse.MediaBrowserService" />
+
+    </intent-filter>
+
+</service>
+
+
+
+<receiver
+
+    android:name="androidx.media.session.MediaButtonReceiver"
+
+    android:exported="true">
+
+    <intent-filter>
+
+        <action android:name="android.intent.action.MEDIA_BUTTON" />
+
+    </intent-filter>
+
+</receiver>
+
+--------------------------------------------------------------------
+
+
+
+5.3 Cycle de vie et reprise
+
+  - Lancer le service seulement lorsqu'une lecture commence.
+
+  - Arrêter la notification de premier plan à la pause (STOP_FOREGROUND_DETACH).
+
+  - Ne jamais laisser deux services revendiquer MediaSession.
+
+  - Relâcher la session dans onDestroy.
+
+  - Sur reprise d'application, relire l'état depuis le lecteur, ne pas le
+
+    recréer.
+
+
+
+=====================================================================
+
+6. LECTEUR ET CATALOGUE : CINQ COUCHES DISTINCTES
+
+=====================================================================
+
+
+
+Ne jamais confondre ces cinq couches. Un bug vient presque toujours de
+
+la confusion entre deux d'entre elles.
+
+
+
+  1. CATALOGUE SPOTIFY ET MÉTADONNÉES
+
+     Titres, artistes, pochettes, durées, playlists. Source : API Spotify
+
+     officielle, selon les autorisations du compte. Réseau uniquement.
+
+
+
+  2. AUDIO RÉELLEMENT LISIBLE
+
+     Un flux qui peut être lu par le lecteur. Spotify ne fournit PAS de
+
+     flux audio libre à Melodix. Le flux vient de Audius ou YouTube.
+
+
+
+  3. AUTORISATIONS DU COMPTE
+
+     Scopes OAuth accordés, statut Premium, pays. Une piste visible n'est
+
+     pas forcément lisible dans le contexte du compte.
+
+
+
+  4. LIMITATIONS DES API
+
+     Quotas, endpoints retirés ou restreints, champs absents. À traiter
+
+     par des états d'erreur explicites, jamais par un contournement.
+
+
+
+  5. SOURCES AUDIO DE REPLI : AUDIUS ET YOUTUBE
+
+     Audius reste le moteur prioritaire. YouTube sert de repli. La
+
+     correspondance piste Spotify -> piste Audius/YouTube doit être une
+
+     recherche explicite, avec score de confiance affiché ou journalisé.
+
+
+
+Règles :
+
+  - Ne pas laisser entendre que la connexion à Spotify Web Player rend
+
+    lisibles toutes les pistes Spotify. C'est faux.
+
+  - Une piste sans source audio doit afficher un état « non disponible »,
+
+    pas un échec silencieux.
+
+  - Améliorer la recherche : debounce, annulation de requête obsolète,
+
+    dédoublonnage des résultats, cache court.
+
+
+
+=====================================================================
+
+7. AUTHENTIFICATION
+
+=====================================================================
+
+
+
+Melodix a prévu un flux officiel. Le conserver :
+
+  - Authorization Code avec PKCE.
+
+  - Redirection : melodix://callback (vérifier le intent-filter existant).
+
+  - Stockage des jetons dans un espace sécurisé (EncryptedSharedPreferences
+
+    ou Keystore), jamais en clair, jamais dans les logs.
+
+  - Renouvellement via refresh token si l'implémentation actuelle le permet.
+
+  - Déconnexion : effacer les jetons et révoquer la session locale.
+
+
+
+Interdictions :
+
+  - Ne pas remplacer ce flux par une connexion dans une WebView.
+
+  - Ne pas demander à l'utilisateur de saisir un Client ID ou un token.
+
+  - Ne pas intégrer d'identifiants Spotify codés en dur.
+
+  - Ne pas extraire de jetons depuis le stockage local d'une page Web.
+
+
+
+SpotiDuck, lui, lit spot_auth_token dans localStorage et capture des
+
+informations via onUserInfoCaptured. Cette approche n'est PAS à reproduire.
+
+
+
+=====================================================================
+
+8. ÉLÉMENTS À NE PAS REPRODUIRE
+
+=====================================================================
+
+
+
+Les éléments suivants sont présents dans SpotiDuck. Ils sont listés pour
+
+information. Melodix doit les éviter, car ils contournent des protections
+
+ou des conditions d'accès :
+
+
+
+  - Simulation d'un navigateur de bureau et masquage de navigator.webdriver
+
+    (desktop_spoof.js, google_spoof.js).
+
+  - Blocage de domaines publicitaires (adblock_hosts.txt) appliqué au
+
+    contenu d'un service tiers.
+
+  - Clic automatique sur des boutons de connexion tiers (facebook_consent.js).
+
+  - Extraction de jetons depuis localStorage ou depuis des modules webpack.
+
+  - Appels à des API internes Spotify (pathfinder, spclient) présentés comme
+
+    des fonctionnalités stables.
+
+
+
+Rappel : Melodix ne contourne pas les DRM, les restrictions d'accès ni les
+
+exigences Premium.
+
+
+
+=====================================================================
+
+9. BUGS PROBABLES ET CHECKLIST DE TESTS
+
+=====================================================================
+
+
+
+Chaque test indique le résultat attendu et le diagnostic en cas d'échec.
+
+Aucun résultat n'est présumé. Les cases sont à cocher après test réel.
+
+
+
+[ ] 9.1  Connexion Spotify (flux officiel PKCE)
+
+    Attendu : redirection vers melodix://callback, jetons stockés, profil affiché.
+
+    Échec : vérifier le intent-filter, le redirect URI enregistré chez Spotify,
+
+            et le code d'échange (logs sans secrets).
+
+
+
+[ ] 9.2  Recherche et affichage du catalogue
+
+    Attendu : résultats en moins de 2 s en réseau normal, états vide et erreur.
+
+    Échec : vérifier les autorisations, le quota, et la gestion des réponses vides.
+
+
+
+[ ] 9.3  Lecture réelle (Audius puis YouTube)
+
+    Attendu : son audible, progression qui avance, pas de double lecture.
+
+    Échec : vérifier la résolution de la source et le focus audio.
+
+
+
+[ ] 9.4  Pause et reprise
+
+    Attendu : son arrêté immédiatement, reprise à la même position.
+
+    Échec : vérifier que PlayerContext et le lecteur natif ont le même état.
+
+
+
+[ ] 9.5  Changement de piste (suivant / précédent)
+
+    Attendu : nouvelle piste chargée, métadonnées mises à jour, file cohérente.
+
+    Échec : vérifier l'ordre de la file et les callbacks MediaSession.
+
+
+
+[ ] 9.6  Seek
+
+    Attendu : déplacement à la position demandée, valeur bornée.
+
+    Échec : vérifier l'unité (ms ou s) et le clamp.
+
+
+
+[ ] 9.7  Notification
+
+    Attendu : titre, artiste, pochette, boutons fonctionnels.
+
+    Échec : vérifier MediaSession active, canal de notification, POST_NOTIFICATIONS.
+
+
+
+[ ] 9.8  Écran verrouillé
+
+    Attendu : contrôles visibles et fonctionnels.
+
+    Échec : vérifier les métadonnées, le visibility PUBLIC, la session active.
+
+
+
+[ ] 9.9  Commandes du casque (play/pause, suivant, précédent)
+
+    Attendu : chaque bouton déclenche l'action correspondante.
+
+    Échec : vérifier MediaButtonReceiver et le flag FLAG_HANDLES_MEDIA_BUTTONS.
+
+
+
+[ ] 9.10 Lecture en arrière-plan
+
+    Attendu : la musique continue après retour à l'écran d'accueil.
+
+    Échec : vérifier le foreground service, foregroundServiceType, et les
+
+            restrictions d'optimisation de batterie.
+
+
+
+[ ] 9.11 Restauration après changement d'écran ou rotation
+
+    Attendu : la lecture continue, l'interface reflète l'état réel.
+
+    Échec : vérifier que le lecteur n'est pas recréé et que PlayerContext survit.
+
+
+
+[ ] 9.12 Interruptions audio (appel, autre application)
+
+    Attendu : pause sur perte de focus, reprise manuelle.
+
+    Échec : vérifier AudioFocusRequest et les types de focus.
+
+
+
+[ ] 9.13 Reconnexion et expiration de session
+
+    Attendu : renouvellement silencieux, ou message clair de reconnexion.
+
+    Échec : vérifier le refresh token et la gestion du code 401.
+
+
+
+[ ] 9.14 Android 13, 14, 15 et versions disponibles
+
+    Attendu : comportement identique sur chaque version.
+
+    Échec : vérifier POST_NOTIFICATIONS (13+), foregroundServiceType (14+),
+
+            et les restrictions de démarrage de service en arrière-plan.
+
+
+
+[ ] 9.15 Absence de double lecteur ou de conflit de services
+
+    Attendu : un seul service déclaré pour MediaSession, un seul lecteur actif.
+
+    Échec : rechercher les services et MediaSession en double dans le manifeste
+
+            et dans le code.
+
+
+
+=====================================================================
+
+10. PLAN D'INTÉGRATION POUR ARENA
+
+=====================================================================
+
+
+
+Ordre impératif. Ne pas passer à l'étape suivante sans compte rendu.
+
+
+
+  Étape 1 — Audit du dépôt
+
+    Lire le dépôt Souxch06/Melodix. Lister les fichiers existants, le
+
+    lecteur, MediaSession, la persistance, l'authentification.
+
+    Produire la liste des fichiers réellement présents.
+
+
+
+  Étape 2 — Identifier le moteur audio réel
+
+    Déterminer si la lecture est native, JS, ou mixte. Un seul moteur doit
+
+    être retenu.
+
+
+
+  Étape 3 — Corriger les bugs actuels
+
+    Traiter les défauts constatés à l'étape 1 avant toute nouvelle
+
+    fonctionnalité.
+
+
+
+  Étape 4 — MediaSession et notifications
+
+    Intégrer ou réparer MediaSession et la notification au service existant.
+
+    Ne pas créer un second service.
+
+
+
+  Étape 5 — Pont JavaScript, seulement si justifié
+
+    Ajouter le pont uniquement si une WebView est nécessaire. Sinon, passer.
+
+
+
+  Étape 6 — Catalogue et recherche
+
+    Améliorer la recherche, les états, la correspondance Audius/YouTube.
+
+
+
+  Étape 7 — Tests automatisés
+
+    Tests unitaires du PlayerContext, de la validation du pont, de la
+
+    file d'attente. Tests instrumentés pour MediaSession si possible.
+
+
+
+  Étape 8 — Build Android et compte rendu
+
+    Générer l'APK de débogage, exécuter les tests, produire le rapport
+
+    avec les tests réussis, échoués, et non effectués.
+
+
+
+=====================================================================
+
+11. LIMITES CONNUES
+
+=====================================================================
+
+
+
+  - Ce document n'a pas été vérifié contre le code réel de Melodix.
+
+  - Le bytecode de SpotiDuck n'a pas été décompilé. Aucune logique interne
+
+    de AndBridge ou de WebService n'est affirmée ici.
+
+  - Les points d'accès Spotify internes peuvent changer ou cesser de
+
+    fonctionner à tout moment.
+
+  - La lecture Spotify complète n'est pas possible dans Melodix sans les
+
+    conditions d'accès applicables. Ce document ne propose aucun contournement.
+
+  - Les exemples de code n'ont pas été compilés. Les adaptations indiquées
+
+    en section 5 sont obligatoires.
+
+
+
+=====================================================================
+
+12. PROMPT D'INTÉGRATION ARENA
+
+=====================================================================
+
+
+
+Copier-coller ce qui suit à Arena :
+
+
+
+--------------------------------------------------------------------
+
+Tu es un ingénieur Android senior (Kotlin, WebView, lecteurs audio,
+
+MediaSession). Tu travailles sur le dépôt GitHub Souxch06/Melodix.
+
+
+
+1. Lis d'abord ce fichier de référence : SPOTIDUCK_MELODIX_REFERENCE.txt.
+
+   Il distingue le code vérifié, les comportements documentés, les
+
+   exemples originaux et les hypothèses à vérifier. Respecte cette distinction.
+
+
+
+2. Audite le dépôt réel avant toute modification. Liste les fichiers
+
+   existants : screens/LoginScreen.tsx, services/player.ts, PlayerContext,
+
+   le module natif Android, l'intégration MediaSession, les notifications,
+
+   l'authentification Spotify, la recherche, les services Audius et YouTube,
+
+   la persistance. Ne suppose rien : vérifie chaque chemin.
+
+
+
+3. Identifie le moteur audio réel. Garde un seul lecteur et un seul service
+
+   média. Ne crée aucun doublon.
+
+
+
+4. Corrige les fonctionnalités défaillantes : lecture, pause, reprise,
+
+   changement de piste, seek, notification, commandes du casque, écran
+
+   verrouillé, lecture en arrière-plan, restauration, interruptions audio,
+
+   expiration de session.
+
+
+
+5. Contraintes non négociables :
+
+   - Préserve l'authentification Spotify officielle (PKCE, melodix://callback).
+
+   - N'ajoute aucun champ de Client ID ni de saisie de token.
+
+   - N'intègre aucun identifiant Spotify codé en dur.
+
+   - Ne journalise aucun token ni secret.
+
+   - Ne contourne pas les DRM, restrictions d'accès ou exigences Premium.
+
+   - Ne reproduis pas le spoofing de navigateur, le blocage publicitaire
+
+     ni la connexion automatique à des tiers.
+
+   - Préserve les traductions française et anglaise existantes.
+
+   - Ne supprime aucune fonctionnalité sans justification écrite.
+
+
+
+6. Teste le code : tests unitaires, puis build. Exécute les tests réellement.
+
+   N'annonce aucun résultat non obtenu.
+
+
+
+7. Génère l'APK de débogage et vérifie qu'il se compile.
+
+
+
+8. Fournis un rapport final contenant :
+
+   - la liste exacte des fichiers modifiés, avec le motif de chaque changement ;
+
+   - les tests exécutés, avec leurs résultats réels ;
+
+   - les tests non effectués et la raison ;
+
+   - les fonctionnalités vérifiées, et celles qui restent à tester sur appareil ;
+
+   - les limites connues.
+
+
+
+Ne déclare pas une fonctionnalité opérationnelle sans preuve.
+
+--------------------------------------------------------------------
+
+
+
+=====================================================================
+
+FIN DU DOCUMENT
+
+=====================================================================

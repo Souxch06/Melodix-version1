@@ -17,6 +17,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { COLORS } from '@config';
 import {
+  describeSpotifyVerificationFailure,
+  spotifyUnavailableBody,
   usePlayer,
   usePreferences,
   useTranslations,
@@ -58,7 +60,13 @@ export const SettingsScreen = () => {
     startupVolume,
     themeMode,
   } = usePreferences();
-  const { userData, sessionStatus, signOut } = useUserData();
+  const {
+    userData,
+    sessionStatus,
+    signOut,
+    reloadUserData,
+    verificationFailure,
+  } = useUserData();
   const player = usePlayer();
 
   const [sessionInfo, setSessionInfo] = React.useState<{
@@ -129,9 +137,9 @@ export const SettingsScreen = () => {
         text: t.settingsSignOutConfirm,
         style: 'destructive',
         onPress: () => {
-          void signOut().then(() => {
-            router.replace({ pathname: '/login', params: {} });
-          });
+          // V29 — déconnexion : retour au mode LOCAL, l'app reste ouverte
+          // et utilisable (plus jamais de renvoi forcé vers /login).
+          void signOut();
         },
       },
     ]);
@@ -157,6 +165,20 @@ export const SettingsScreen = () => {
     if (sessionStatus === 'loading') {
       return t.settingsCheckingSession;
     }
+    // Réessai en cours : changement visible — plus de « indisponible ».
+    if (sessionStatus === 'spotify-verifying') {
+      return t.settingsCheckingSession;
+    }
+    // Session présente mais identité du compte non vérifiée : on l'annonce
+    // explicitement + la cause SÛRE du dernier échec (diagnostic) — surtout
+    // pas le message « aucun compte » du mode local.
+    if (sessionStatus === 'spotify-unverified') {
+      const detail = describeSpotifyVerificationFailure(t, verificationFailure);
+      // V24 — corps CLASSÉ : 403 → « refus d'accès », jamais « erreur
+      // réseau temporaire ».
+      const body = spotifyUnavailableBody(t, verificationFailure);
+      return detail ? `${body}\n${detail}` : body;
+    }
     if (sessionStatus !== 'spotify') {
       return t.accountLocalInfo;
     }
@@ -170,7 +192,7 @@ export const SettingsScreen = () => {
       ? t.settingsSessionCanRefresh
       : t.settingsSessionNoRefresh;
     return `${t.settingsConnectedSpotify}\n${expiry} · ${refresh}`;
-  }, [sessionStatus, sessionInfo, t]);
+  }, [sessionStatus, sessionInfo, t, verificationFailure]);
 
   const version = Constants.expoConfig?.version ?? '—';
 
@@ -202,7 +224,11 @@ export const SettingsScreen = () => {
             >
               {sessionStatus === 'spotify'
                 ? userData.displayName
-                : t.settingsLocalAccount}
+                : sessionStatus === 'spotify-verifying'
+                  ? t.spotifySessionRestoring
+                  : sessionStatus === 'spotify-unverified'
+                    ? t.spotifyRestoreUnavailableTitle
+                    : t.settingsLocalAccount}
             </Text>
             <Text
               style={styles.accountSubtitle}
@@ -212,7 +238,31 @@ export const SettingsScreen = () => {
             </Text>
           </View>
         </View>
-        {sessionStatus === 'spotify' ? (
+        {sessionStatus === 'spotify-unverified' ? (
+          <SettingsRow
+            isLast={false}
+            label={t.spotifyRestoreRetry}
+            subtitle={t.spotifyRestoreUnavailableTitle}
+            showChevron
+            onPress={() => void reloadUserData()}
+            testID="settings-identity-retry"
+          />
+        ) : null}
+        {sessionStatus === 'local' ? (
+          // V29 — connexion FACULTATIVE : proposée ici, jamais imposée au
+          // démarrage. Les données Spotify restent soumises aux
+          // autorisations du compte (dev-mode) ; le lecteur, lui, fonctionne
+          // sans.
+          <SettingsRow
+            isLast={false}
+            label={t.settingsConnectSpotify}
+            showChevron
+            onPress={() => router.push({ pathname: '/login', params: {} })}
+            testID="settings-connect-spotify"
+          />
+        ) : null}
+        {sessionStatus === 'spotify' ||
+        sessionStatus === 'spotify-unverified' ? (
           <SettingsRow
             destructive
             isLast
@@ -457,6 +507,20 @@ export const SettingsScreen = () => {
           « Diagnostic technique » (journal natif persistant, copie
           presse-papiers, drapeaux d'isolation). À retirer après correction. */}
       <SettingsSection testID="settings-section-native-diag" title="Diagnostic">
+        {/* V24 — rapport de diagnostic Spotify copiable (état du compte,
+            403 classé, historique borné, copier/partager/effacer). */}
+        <SettingsRow
+          label={t.spotifyDiagnosticSettingsRow}
+          subtitle="Rapport copiable — aucune donnée sensible"
+          showChevron
+          onPress={() =>
+            router.push({
+              pathname: '/settings/spotify-diagnostic',
+              params: {},
+            })
+          }
+          testID="settings-spotify-diag-open"
+        />
         <SettingsRow
           label="Diagnostic technique"
           showChevron

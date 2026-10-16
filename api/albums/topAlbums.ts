@@ -16,8 +16,10 @@ export type UserTopAlbumModel = {
   fallbackTrack?: TrackModel;
 };
 
-export const getUserTopAlbums = async (): Promise<UserTopAlbumModel[]> => {
-  const top = await getTopAlbumsFromHistory(6);
+export const getUserTopAlbums = async (
+  limit = 6
+): Promise<UserTopAlbumModel[]> => {
+  const top = await getTopAlbumsFromHistory(limit);
   return top.map((album) => ({
     item: {
       id: album.id ?? '',

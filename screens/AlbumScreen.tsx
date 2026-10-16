@@ -4,7 +4,12 @@ import { ErrorCard, Preview } from '@components';
 
 import { checkSavedTracks, getAlbum, getArtist } from '@api';
 import { toggleSavedTrack } from '@services';
-import { AlbumModel, ArtistModel, TrackModel } from '@models';
+import {
+  AlbumModel,
+  ArtistModel,
+  artistsFromSubtitle,
+  TrackModel,
+} from '@models';
 import { AlbumFallback, ArtistFallback, SEPARATOR } from '@config';
 import {
   getDisplayCopyrightText,
@@ -94,17 +99,11 @@ export const AlbumScreen = ({ albumId }: AlbumScreenPropsType) => {
     setRetrySeed((seed) => seed + 1);
   }, []);
 
-  // @API_RATE
-  // const artistSeed = React.useMemo(
-  //   () =>
-  //     artists.length
-  //       ? artists
-  //           .map((a) => a.id)
-  //           .slice(0, 5)
-  //           .join(`,`)
-  //       : '',
-  //   [artists]
-  // );
+  // Recommandations basées sur le premier artiste de l'album
+  const artistSeed = React.useMemo(
+    () => (artists && artists.length && artists[0]?.id ? artists[0].id : ''),
+    [artists]
+  );
   const id = React.useMemo(() => (album ? album.id : ''), [album]);
   const title = React.useMemo(() => (album ? album.name : ''), [album]);
   const subtitle = React.useMemo(
@@ -163,7 +162,7 @@ export const AlbumScreen = ({ albumId }: AlbumScreenPropsType) => {
     async (track: TrackModel) => {
       const nowSaved = await toggleSavedTrack(track, {
         albumTitle: album?.name,
-        artists: track.subtitle ? track.subtitle.split(', ') : [],
+        artists: artistsFromSubtitle(track.subtitle),
       });
       setAlbum((prevAlbum) =>
         prevAlbum
@@ -205,6 +204,8 @@ export const AlbumScreen = ({ albumId }: AlbumScreenPropsType) => {
       copyrightTexts={copyrightTexts}
       tracks={tracks}
       artists={artists}
+      recommendationsSeed={artistSeed}
+      recommendationsType="artists"
       onToggleTrackSaved={handleToggleTrackSaved}
     />
   );

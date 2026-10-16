@@ -7,7 +7,7 @@
 import * as React from 'react';
 
 import { FlatList } from 'react-native';
-import { fireEvent, render } from '@testing-library/react-native';
+import { act, fireEvent, render } from '@testing-library/react-native';
 
 import type { TrackModel } from '@models';
 import type { PlayerTrack } from '@services';
@@ -18,6 +18,7 @@ const mockPlayQueue = jest.fn(
   async (_queue: PlayerTrack[], _startIndex: number) => {}
 );
 const mockTogglePlayPause = jest.fn(async () => {});
+const mockAddTracksToQueue = jest.fn();
 
 jest.mock('expo-router', () => ({
   useNavigation: () => ({ goBack: jest.fn() }),
@@ -35,6 +36,7 @@ jest.mock('@context', () => ({
     playQueue: mockPlayQueue,
     togglePlayPause: mockTogglePlayPause,
     addToQueue: jest.fn(),
+    addTracksToQueue: mockAddTracksToQueue,
     playNext: jest.fn(),
   }),
   useUserData: () => ({ userData: { id: 'someone-else' } }),
@@ -57,12 +59,45 @@ type CapturedTrack = {
 
 const mockCaptured: { current: CapturedTrack } = { current: null };
 
-jest.mock('../../Player/QueueActionMenu', () => ({
-  QueueActionMenu: ({ track }: { track: CapturedTrack }) => {
-    mockCaptured.current = track;
-    return null;
-  },
-}));
+const mockCollection: {
+  current: { title: string; trackCount: number; fire: () => void } | null;
+} = { current: null };
+
+jest.mock('../../Player/QueueActionMenu', () => {
+  const mockReact = jest.requireActual<typeof import('react')>('react');
+  const { Pressable: MockPressable } =
+    jest.requireActual<typeof import('react-native')>('react-native');
+  return {
+    QueueActionMenu: ({
+      collection,
+      onAddCollectionToQueue,
+      track,
+      visible,
+    }: {
+      collection?: { title: string; trackCount: number } | null;
+      onAddCollectionToQueue?: () => void;
+      track?: CapturedTrack;
+      visible: boolean;
+    }) => {
+      // Deux instances coexistent (ligne + en-tête) : seule une instance
+      // RÉELLEMENT affichée est capturée, jamais le rendu fantôme.
+      if (visible && track) {
+        mockCaptured.current = track;
+      }
+      if (visible && collection && onAddCollectionToQueue) {
+        mockCollection.current = {
+          ...collection,
+          fire: onAddCollectionToQueue,
+        };
+        return mockReact.createElement(MockPressable, {
+          onPress: onAddCollectionToQueue,
+          testID: 'mock-queue-collection',
+        });
+      }
+      return null;
+    },
+  };
+});
 
 const baseProps = {
   id: 'src-id',
@@ -86,7 +121,9 @@ const mkTrack = (overrides: Partial<TrackModel> = {}): TrackModel => ({
 
 beforeEach(() => {
   mockPlayQueue.mockClear();
+  mockAddTracksToQueue.mockClear();
   mockCaptured.current = null;
+  mockCollection.current = null;
 });
 
 describe('Preview — PlayerTrack propagés (I-2)', () => {
@@ -194,6 +231,57 @@ describe('Preview — PlayerTrack propagés (I-2)', () => {
 
     expect(mockCaptured.current?.album).toBe('The Album');
     expect(mockCaptured.current?.durationMillis).toBeNull();
+  });
+});
+
+describe('Preview — en-tête « ⋯ » (actions de liste)', () => {
+  it('expose un bouton d actions réel et le lot réellement chargé', () => {
+    const { getByTestId } = render(
+      <Preview
+        type="playlist"
+        {...baseProps}
+        summaryTitle="Ma playlist"
+        tracks={[mkTrack({ id: 't1' }), mkTrack({ id: 't2' })]}
+      />
+    );
+
+    fireEvent.press(getByTestId('summary-actions'));
+
+    expect(mockCollection.current?.title).toBe('Ma playlist');
+    // Le compte annoncé est celui des morceaux chargés : jamais un total inventé.
+    expect(mockCollection.current?.trackCount).toBe(2);
+  });
+
+  it('met TOUT le lot chargé dans la file, sans écraser la file existante', () => {
+    const { getByTestId } = render(
+      <Preview
+        type="album"
+        {...baseProps}
+        tracks={[mkTrack({ id: 't1' }), mkTrack({ id: 't2' })]}
+      />
+    );
+
+    fireEvent.press(getByTestId('summary-actions'));
+    act(() => {
+      mockCollection.current?.fire();
+    });
+
+    // addTracksToQueue = ajout en fin de file, pas playQueue (pas de lecture forcée).
+    expect(mockPlayQueue).not.toHaveBeenCalled();
+    expect(mockAddTracksToQueue).toHaveBeenCalledTimes(1);
+    const [queued] = mockAddTracksToQueue.mock.calls[0];
+    expect(queued.map((item: PlayerTrack) => item.id)).toEqual([
+      'spotify:t1',
+      'spotify:t2',
+    ]);
+  });
+
+  it('playlist sans morceau diffusable : aucun bouton d actions affiché', () => {
+    const { queryByTestId } = render(
+      <Preview type="playlist" {...baseProps} tracks={[]} />
+    );
+
+    expect(queryByTestId('summary-actions')).toBeNull();
   });
 });
 

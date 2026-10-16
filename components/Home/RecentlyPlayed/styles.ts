@@ -1,4 +1,4 @@
-import { COLORS, Shapes } from '@config';
+import { PALETTE, RADIUS, SPACING, TYPOGRAPHY } from '@config';
 import { StyleSheet } from 'react-native';
 
 export const styles = StyleSheet.create({
@@ -7,24 +7,25 @@ export const styles = StyleSheet.create({
     flexWrap: 'wrap',
   },
   link: {
-    borderRadius: Shapes.SQUARE_BORDER,
-    backgroundColor: COLORS.SECONDARY,
+    borderRadius: RADIUS.pill,
+    backgroundColor: PALETTE.night600,
+    borderWidth: 1,
+    borderColor: PALETTE.hairline,
     flexDirection: 'row',
     alignItems: 'center',
     overflow: 'hidden',
     padding: 0,
   },
   imageView: {
-    marginRight: 10,
+    marginRight: SPACING.sm,
   },
   image: {
     ...StyleSheet.absoluteFillObject,
   },
   text: {
-    fontFamily: 'SF-Bold',
-    fontSize: 14,
+    ...TYPOGRAPHY.body,
     fontWeight: '700',
-    color: COLORS.WHITE,
-    paddingRight: 20,
+    color: PALETTE.textPrimary,
+    paddingRight: SPACING.lg,
   },
 });

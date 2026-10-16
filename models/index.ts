@@ -6,4 +6,5 @@ export type { LibraryItemModel } from './LibraryItem';
 export type { PlaylistModel, PlaylistTrackModel } from './Playlist';
 export type { RecentlyPlayedModel } from './Home';
 export type { TrackModel } from './Track';
+export { artistsFromSubtitle } from './Track';
 export type { BrowseCategoryModel, SearchResultsModel } from './Search';

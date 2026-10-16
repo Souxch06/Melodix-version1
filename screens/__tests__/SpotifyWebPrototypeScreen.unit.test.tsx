@@ -24,6 +24,28 @@ jest.mock('react-native-webview', () => {
 describe('SpotifyWebPrototypeScreen', () => {
   beforeEach(() => jest.clearAllMocks());
 
+  /**
+   * V65 — CONTRAT DU SMOKE CI.
+   *
+   * `scripts/smoke-test-android-apk.sh` ouvre la route par deep link
+   * (`melodix://settings/spotify-web-diagnostic`) puis sonde l'arbre UI avec
+   * uiautomator et n'accepte que la présence EXACTE de la chaîne
+   * « Prototype Spotify Web » (lignes 233 et 263 du script). Aucun test
+   * n'assertait cette chaîne : si le titre était renommé ou rendu
+   * conditionnellement, la suite unitaire resterait verte pendant que le
+   * build Android échouerait en étape 21 — et le message d'échec
+   * (« écran absent après deep link ») ne pointerait pas vers la vraie cause.
+   *
+   * Ce test verrouille donc la moitié vérifiable du contrat : si l'écran est
+   * monté, son titre EST rendu, inconditionnellement.
+   */
+  it('rend le titre exact attendu par le smoke CI (contrat de la route deep link)', () => {
+    const { getByText } = render(<SpotifyWebPrototypeScreen />);
+
+    // Chaîne EXACTE, pas un motif approximatif : c'est un `grep -F` côté CI.
+    expect(getByText('Prototype Spotify Web')).toBeTruthy();
+  });
+
   it('reste isolé, diagnostique login/retour et renderer détruit', async () => {
     const { getByTestId, getByText } = render(<SpotifyWebPrototypeScreen />);
     const webView = getByTestId('spotify-webview');
