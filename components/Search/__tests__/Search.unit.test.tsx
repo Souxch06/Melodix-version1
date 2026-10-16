@@ -26,6 +26,22 @@ import type { PlayerTrack } from '@services';
 
 import { Search, SEARCH_DELAY_MS } from '../Search';
 
+/**
+ * Budget de 20 s au lieu des 5 000 ms par défaut de Jest.
+ *
+ * Ce fichier attend le debounce de recherche avec des TIMERS RÉELS
+ * (`setTimeout(SEARCH_DELAY_MS + 50)`, voir `typeQueryAndAdvance`). Sous la
+ * charge d'une suite complète en `--runInBand`, ces attentes réelles se
+ * dilatent : le test « pression : playQueue reçoit durée + album du résultat »
+ * a dépassé 5 000 ms sur le runner CI (run 38945823806, étape 11) alors qu'il
+ * ne dure que ~1,9 s isolément. Le même code passe ou échoue selon la charge,
+ * ce qui cassait le build de façon non déterministe.
+ *
+ * Aucune assertion n'est modifiée ni supprimée : seul le délai d'expiration
+ * est aligné sur le coût réel des timers réels.
+ */
+jest.setTimeout(20000);
+
 const mockPlayQueue = jest.fn(
   async (_queue: PlayerTrack[], _startIndex: number) => {}
 );
