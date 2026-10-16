@@ -3,11 +3,13 @@ export const EN_GB = {
     home: 'Home',
     search: 'Search',
     library: 'Your Library',
+    spotify: 'Spotify',
   },
   router: {
     home: 'Home',
     search: 'Search',
     library: 'Your Library',
+    spotify: 'Spotify',
   },
   libraryCategories: {
     album: 'Albums',

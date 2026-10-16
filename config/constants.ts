@@ -10,6 +10,18 @@ export enum Pages {
   HOME = 'home',
   SEARCH = 'search',
   LIBRARY = 'library',
+  /**
+   * V87 — Lecteur Spotify Web promu au rang d'onglet de premier plan, sur
+   * décision explicite du mainteneur (« intègre quand même la WebView même si
+   * ça change toute l'infrastructure »). L'hôte WebView était déjà monté à la
+   * racine (`app/_layout.tsx`) mais n'était joignable que par
+   * Réglages → Lecture Spotify Web.
+   *
+   * Le moteur natif (Media3 / `services/player.ts`) n'est PAS supprimé : il
+   * reste le repli Audius → YouTube → iTunes → Jamendo. Une WebView Spotify
+   * ne lit rien sans compte Premium ni Widevine au niveau de l'appareil.
+   */
+  SPOTIFY_WEB = 'spotify',
 }
 
 export enum Sizes {

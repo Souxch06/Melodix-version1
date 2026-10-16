@@ -4,12 +4,28 @@ Cette procédure valide uniquement le prototype isolé. Elle ne modifie pas le l
 
 ## APK à tester
 
-- Workflow : https://github.com/Souxch06/Melodix/actions/runs/37123047052
-- Artefact : `Melodix-v4.4.8-diagnostic-16832ed.apk`
-- Version affichée par Android : `4.4.8-diagnostic` (`versionCode 44008`)
-- SHA-256 : `2f62217d82d10e88f9a15232acff470744b6e522474c7e1591392ee29375a9c6`
+- Workflow : https://github.com/Souxch06/Melodix/actions/runs/38948286228
+- Commit : `962f776` — premier build CI intégralement vert (26 étapes en `success`,
+  dont « Tests Kotlin du module média (Robolectric) » et « Compiler l'APK »)
+- Artefact : `Melodix-v4.5.0-test.37-962f776.apk`
+- Version affichée par Android : `4.5.0-test.37` (`versionCode 45037`)
+- SHA-256 de l'APK : `b734cb970e799f08e146dfec9a76e46178db8df898ac44901a8cd765b98f0815`
+- Empreinte du certificat de signature (V3.0 Signer) :
+  `fac61745dc0903786fb9ede62a962b399f7348f0bb6f899b8332667591033b9c`
+- Package : `com.souxch06.melodix` · `minSdk 23` · `targetSdk 34`
+- ABI : `arm64-v8a`, `armeabi-v7a`, `x86`, `x86_64` · taille 89 Mo
 
 Télécharger l'artefact depuis la section **Artifacts** du workflow, extraire l'APK et l'installer. Android peut demander d'autoriser temporairement l'installation depuis la source utilisée.
+
+> **Réserve à connaître avant d'installer.** La CI indique `build sans Release
+(publish_test_apk désactivé)` et `route melodix://oauth-smoke-seed inlinée
+dans le bundle`. C'est donc un **build de test**, pas une version de
+> production : il s'installe et fonctionne (vérifié aux étapes 19 et 21), mais
+> il embarque une route de diagnostic.
+
+> Référence précédente, désormais dépassée : `Melodix-v4.4.8-diagnostic-16832ed.apk`
+> (run 37123047052, `versionCode 44008`,
+> sha256 `2f62217d82d10e88f9a15232acff470744b6e522474c7e1591392ee29375a9c6`).
 
 ## Test — 5 à 10 minutes
 

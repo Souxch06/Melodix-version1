@@ -65,6 +65,9 @@ export default function Layout() {
       <Tabs.Screen name="home" options={{ headerShown: false }} />
       <Tabs.Screen name="search" options={{ headerShown: false }} />
       <Tabs.Screen name="library" options={{ headerShown: false }} />
+      {/* V87 — hôte WebView Spotify en onglet de premier plan (décision du
+          mainteneur). Le moteur natif reste le repli des autres onglets. */}
+      <Tabs.Screen name="spotify" options={{ headerShown: false }} />
     </Tabs>
   );
 }

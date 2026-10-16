@@ -69,6 +69,29 @@ const renderPressableContent = (
           />
         </View>
       );
+    case Pages.SPOTIFY_WEB:
+      return (
+        <View style={styles.linkContainer}>
+          <Ionicons
+            style={[
+              styles.icon,
+              isActive ? styles.activeIcon : {},
+              isActive ? { color: accent } : {},
+            ]}
+            name="musical-notes"
+            size={22}
+          />
+          <Text style={[styles.text, isActive ? styles.active : {}]}>
+            {t.router[Pages.SPOTIFY_WEB]}
+          </Text>
+          <View
+            style={[
+              isActive ? styles.activeDot : styles.inactiveDot,
+              isActive ? { backgroundColor: accent } : {},
+            ]}
+          />
+        </View>
+      );
     default:
       return (
         <View style={styles.linkContainer}>
