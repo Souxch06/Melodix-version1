@@ -5,8 +5,10 @@ import { WebView } from 'react-native-webview';
 
 import { COLORS } from '@config';
 import { usePreferences } from '@context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { appendDiagLog } from '../../modules/melodix-media';
 import {
+  getSpotifyWebHostSurface,
   isAllowedSpotifyWebNavigation,
   publishSpotifyWebPublishedState,
   registerSpotifyWebPlaybackHost,
@@ -17,10 +19,12 @@ import {
   SpotifyWebRuntime,
   SpotifyWebTrackTransport,
   spotifyWebTrace,
+  subscribeSpotifyWebHostSurface,
   subscribeSpotifyWebPlaybackActivation,
   subscribeSpotifyWebHostVisibility,
   unregisterSpotifyWebPlaybackHost,
   type SpotifyWebDiagnosticCode,
+  type SpotifyWebHostSurface,
   type SpotifyWebPublishedState,
   type SpotifyWebRuntimeSnapshot,
 } from '@services';
@@ -68,6 +72,17 @@ export const SpotifyWebHostView = () => {
     () => resolveSpotifyWebPlaybackActivation().active
   );
   const [overlayVisible, setOverlayVisible] = React.useState(false);
+  /**
+   * V88 — surface demandée par l'ONGLET Spotify (bus distinct du contrat
+   * moteur, voir `services/playbackBackend/spotifyWebSurface.ts`). Quitter
+   * l'onglet cache la surface sans jamais écrire dans le contrat « vue
+   * visible » du moteur : aucune tentative en vol ne peut être annulée, et
+   * la page continue de jouer (le renderer n'est pas détruit).
+   */
+  const [tabSurface, setTabSurface] = React.useState<SpotifyWebHostSurface>(
+    () => getSpotifyWebHostSurface()
+  );
+  const insets = useSafeAreaInsets();
   const [runtimeSnapshot, setRuntimeSnapshot] =
     React.useState<SpotifyWebRuntimeSnapshot | null>(null);
   const [webViewGeneration, setWebViewGeneration] = React.useState(0);
@@ -99,6 +114,9 @@ export const SpotifyWebHostView = () => {
     () => subscribeSpotifyWebHostVisibility(setOverlayVisible),
     []
   );
+
+  // Réactivité à la surface demandée par l'onglet (V88).
+  React.useEffect(() => subscribeSpotifyWebHostSurface(setTabSurface), []);
 
   const pushPublishedState = React.useCallback(() => {
     const backend = backendRef.current;
@@ -342,6 +360,42 @@ export const SpotifyWebHostView = () => {
     (runtimeSnapshot.phase === 'recovering' ||
       runtimeSnapshot.phase === 'failed');
 
+  /**
+   * V88 — SURFACE AFFICHÉE.
+   *
+   * `displayed` réunit les deux demandes légitimes, sans jamais les
+   * confondre : celle du MOTEUR (`overlayVisible`, contrat d'abandon
+   * inchangé) et celle de l'ONGLET Spotify (`tabSurface.shown`). Une seule
+   * WebView, un seul document : passer d'un onglet à l'autre ne fait que
+   * déplacer la vue — la session Spotify et une lecture en cours survivent.
+   *
+   * `reservedBottom` est la hauteur MESURÉE du slot d'onglets (mini-lecteur
+   * + barre de navigation), publiée par le layout `(tabs)`. Sans elle, la
+   * page recouvrirait la navigation et l'utilisateur ne pourrait plus
+   * quitter l'onglet.
+   */
+  const tabShown = tabSurface.shown;
+  const displayed = overlayVisible || tabShown;
+  const reservedBottom = tabShown ? tabSurface.reservedBottom : 0;
+  /**
+   * Le bouton « fermer » n'a de sens que quand c'est le MOTEUR qui a ouvert
+   * la surface (il faut pouvoir refuser le basculement vers Spotify Web).
+   * Sur l'onglet Spotify, on quitte la surface en changeant d'onglet :
+   * afficher une croix y inviterait à cacher la seule vue disponible.
+   */
+  const showCloseButton = overlayVisible && !tabShown;
+  /**
+   * Sur l'onglet, le bandeau n'apparaît QUE si quelque chose ne va pas
+   * (pont perdu, renderer détruit, récupération en cours) : quand tout va
+   * bien, l'écran appartient entièrement à Spotify — aucune bande Melodix
+   * posée sur son en-tête, aucun bouton inutile.
+   */
+  const tabNeedsAttention =
+    tabShown &&
+    (runtimeSnapshot === null ||
+      !runtimeSnapshot.rendererAvailable ||
+      runtimeSnapshot.phase !== 'ready');
+
   if (!enabled) {
     return null;
   }
@@ -352,7 +406,11 @@ export const SpotifyWebHostView = () => {
        * c'est la seule façon de conserver la session Spotify (connexion,
        * piste chargée, pont) entre deux ouvertures de l'overlay. */}
       <View
-        style={[styles.webContainer, !overlayVisible && styles.webHidden]}
+        style={[
+          styles.webContainer,
+          { bottom: reservedBottom },
+          !displayed && styles.webHidden,
+        ]}
         testID="spotify-web-host-container"
       >
         <WebView
@@ -423,14 +481,22 @@ export const SpotifyWebHostView = () => {
 
       {/* Chrome au-dessus de la WebView : en-tête (statut du pont +
        * fermeture) et Rappel (où sont les contrôles réels). La zone WebView
-       * entre les deux reste entièrement manœuvrable par l'utilisateur. */}
-      {overlayVisible && (
+       * entre les deux reste entièrement manœuvrable par l'utilisateur.
+       *
+       * V88 — deux modes, jamais mélangés :
+       *  · MOTEUR (`overlayVisible` sans l'onglet) : reprise plein écran,
+       *    croix de fermeture + rappel des contrôles réels ;
+       *  · ONGLET (`tabSurface.shown`) : la page occupe l'espace laissé par
+       *    la navigation (déjà réservé plus haut), pas de croix — on sort de
+       *    la surface en changeant d'onglet. Le bandeau reste minimal :
+       *    titre, état du pont, rechargement manuel si le pont est perdu. */}
+      {displayed && (showCloseButton || tabNeedsAttention) && (
         <View
-          style={styles.chrome}
+          style={[styles.chrome, { bottom: reservedBottom }]}
           pointerEvents="box-none"
           testID="spotify-web-overlay"
         >
-          <View style={styles.overlayHeader}>
+          <View style={[styles.overlayHeader, { paddingTop: insets.top + 12 }]}>
             <View style={styles.overlayHeaderText}>
               <Text style={styles.overlayTitle}>Spotify Web</Text>
               <Text
@@ -440,23 +506,25 @@ export const SpotifyWebHostView = () => {
                 Pont : {bridgeLabel}
               </Text>
             </View>
-            <Pressable
-              accessibilityLabel="Fermer la vue Spotify"
-              // La fermeture passe par le BUS de visibilité (jamais un set
-              // local) : (1) c'est le contrat « fermeture pendant une
-              // tentative = abandon explicite » que le port (spotifyWebHost)
-              // s'appuie sur ; (2) un set local seul laisserait le drapeau
-              // bus « visible » — et la PROCHAINE tentative du moteur, qui
-              // demanderait « visible » alors qu'il l'est déjà d'après le
-              // bus, ne re-notifierait RIEN : l'overlay resterait fermé,
-              // l'utilisateur ne verrait plus jamais la page Spotify et
-              // chaque tentative s'éteindrait en timeout.
-              onPress={() => requestSpotifyWebHostVisible(false)}
-              style={styles.closeButton}
-              testID="spotify-web-overlay-close"
-            >
-              <Ionicons color={COLORS.WHITE} name="close" size={24} />
-            </Pressable>
+            {showCloseButton && (
+              <Pressable
+                accessibilityLabel="Fermer la vue Spotify"
+                // La fermeture passe par le BUS de visibilité (jamais un set
+                // local) : (1) c'est le contrat « fermeture pendant une
+                // tentative = abandon explicite » que le port (spotifyWebHost)
+                // s'appuie sur ; (2) un set local seul laisserait le drapeau
+                // bus « visible » — et la PROCHAINE tentative du moteur, qui
+                // demanderait « visible » alors qu'il l'est déjà d'après le
+                // bus, ne re-notifierait RIEN : l'overlay resterait fermé,
+                // l'utilisateur ne verrait plus jamais la page Spotify et
+                // chaque tentative s'éteindrait en timeout.
+                onPress={() => requestSpotifyWebHostVisible(false)}
+                style={styles.closeButton}
+                testID="spotify-web-overlay-close"
+              >
+                <Ionicons color={COLORS.WHITE} name="close" size={24} />
+              </Pressable>
+            )}
             {canReload && (
               <Pressable
                 accessibilityLabel="Recharger la vue Spotify"
@@ -469,14 +537,20 @@ export const SpotifyWebHostView = () => {
               </Pressable>
             )}
           </View>
-          <View style={styles.overlayHint}>
-            <Text style={styles.overlayHintText}>
-              La lecture est contrôlée dans cette vue : touchez Lecture dans la
-              page Spotify. Melodix suit l'état réellement publié ; si la
-              lecture n'est pas confirmée, une vraie erreur Spotify Web est
-              affichée (aucune autre source ne prend le relais).
-            </Text>
-          </View>
+          {/* Le rappel ne parle qu'au mode MOTEUR : il explique pourquoi la
+           * lecture n'a pas été confirmée et où sont les vrais contrôles.
+           * Sur l'onglet, la page EST l'écran — aucune explication à
+           * superposer à l'interface de Spotify. */}
+          {showCloseButton && (
+            <View style={styles.overlayHint}>
+              <Text style={styles.overlayHintText}>
+                La lecture est contrôlée dans cette vue : touchez Lecture dans
+                la page Spotify. Melodix suit l'état réellement publié ; si la
+                lecture n'est pas confirmée, une vraie erreur Spotify Web est
+                affichée (aucune autre source ne prend le relais).
+              </Text>
+            </View>
+          )}
         </View>
       )}
     </>

@@ -26,6 +26,16 @@ export type {
   SpotifyWebSourceCommandResult,
   SpotifyWebSourcePort,
 } from './spotifyWebHost';
+// V88 — surface d'affichage de l'hôte (onglet Spotify ↔ hôte WebView) :
+// bus DISTINCT du contrat moteur « vue visible » (voir le module).
+export {
+  getSpotifyWebHostSurface,
+  publishSpotifyWebHostSurfaceShown,
+  publishSpotifyWebTabBarHeight,
+  resetSpotifyWebHostSurfaceForTesting,
+  subscribeSpotifyWebHostSurface,
+} from './spotifyWebSurface';
+export type { SpotifyWebHostSurface } from './spotifyWebSurface';
 export type {
   SpotifyWebActivationDecision,
   SpotifyWebPhysicalValidation,

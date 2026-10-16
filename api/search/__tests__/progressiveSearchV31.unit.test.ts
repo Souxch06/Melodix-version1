@@ -59,6 +59,29 @@ jest.mock('../../itunes', () => ({
   ITUNES_ARTIST_LIMIT: 50,
 }));
 
+/**
+ * V88 — source Jamendo NEUTRALISÉE, comme les autres.
+ *
+ * Défaut réel corrigé : ce banc ne doublait que cinq sources sur six. Sans
+ * identifiant Jamendo, `isJamendoConfigured()` est faux et la source est
+ * `skipped` — le banc passait donc partout en local. Sur le runner CI, la
+ * variable de dépôt `MELODIX_JAMENDO_CLIENT_ID` est injectée DANS TOUT LE JOB
+ * (`EXPO_PUBLIC_JAMENDO_CLIENT_ID`) : la source devenait active, l'adaptateur
+ * RÉEL partait sur le réseau (non doublé, non budgété par le test) et
+ * échouait ou traînait. Conséquence : la course n'était plus « toutes sources
+ * saines » — le « vide confirmé » n'était plus mis en cache et le second
+ * appel Audius repartait (« Expected number of calls: 1 / Received: 2 »).
+ *
+ * Le jeu de sources d'un banc est une DÉCISION DU BANC, jamais celle de
+ * l'environnement du runner : la source est donc déclarée inactive ici,
+ * exactement comme lorsqu'aucun identifiant n'est configuré.
+ */
+jest.mock('../../jamendo', () => ({
+  searchJamendoTracks: jest.fn().mockResolvedValue([]),
+  isJamendoConfigured: jest.fn().mockReturnValue(false),
+  JAMENDO_SEARCH_LIMIT: 50,
+}));
+
 const mockedSessionActive = isSpotifySessionActive as jest.MockedFunction<
   typeof isSpotifySessionActive
 >;

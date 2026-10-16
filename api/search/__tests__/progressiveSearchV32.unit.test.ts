@@ -63,6 +63,22 @@ jest.mock('../../itunes', () => ({
   ITUNES_ARTIST_LIMIT: 50,
 }));
 
+/**
+ * V88 — source Jamendo NEUTRALISÉE, comme les autres (voir le même bloc dans
+ * `progressiveSearchV31.unit.test.ts` pour la cause complète).
+ *
+ * Sur le runner CI, `EXPO_PUBLIC_JAMENDO_CLIENT_ID` est injectée dans tout le
+ * job : la source Jamendo devenait ACTIVE, l'adaptateur réel partait sur le
+ * réseau et échouait. Le banc « toutes sources saines mais vides » mesurait
+ * alors une PANNE (« Expected: "empty" / Received: "network" ») au lieu du
+ * vide confirmé. Le jeu de sources appartient au banc, pas au runner.
+ */
+jest.mock('../../jamendo', () => ({
+  searchJamendoTracks: jest.fn().mockResolvedValue([]),
+  isJamendoConfigured: jest.fn().mockReturnValue(false),
+  JAMENDO_SEARCH_LIMIT: 50,
+}));
+
 const mockedSessionActive = isSpotifySessionActive as jest.MockedFunction<
   typeof isSpotifySessionActive
 >;

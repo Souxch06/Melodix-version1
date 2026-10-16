@@ -15,3 +15,4 @@ export { SettingsScreen } from './SettingsScreen';
 export { SettingsFaqScreen } from './SettingsFaqScreen';
 export { SettingsAboutScreen } from './SettingsAboutScreen';
 export { SpotifyWebPrototypeScreen } from './SpotifyWebPrototypeScreen';
+export { SpotifyWebPlayerScreen } from './SpotifyWebPlayerScreen';

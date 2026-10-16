@@ -1,5 +1,16 @@
 # Spotify Web — plan d'intégration à l'architecture de lecture
 
+> **V88 — l'onglet Spotify affiche la page réelle.** Décision du mainteneur :
+> « fais le même type de WebView que SpotiDuck ». L'onglet ne rend plus le
+> prototype de diagnostic (`SpotifyWebPrototypeScreen`, qui garde sa propre
+> WebView et reste joignable par `melodix://settings/spotify-web-diagnostic`) :
+> il demande l'affichage de l'hôte de PRODUCTION, une seule WebView montée à
+> la racine, et réserve la hauteur mesurée de la navigation. Le contrat moteur
+> est intact (`requestSpotifyWebHostVisible` n'est pas touché par l'onglet :
+> bus distinct, `services/playbackBackend/spotifyWebSurface.ts`), les interdits
+> de §8 restent entiers, et rien n'est simulé : les contrôles réels sont ceux
+> de Spotify, actionnés dans la page.
+>
 > **Statut (mis à jour — audit Mission V21)** : intégration RÉALISÉE depuis
 > la Mission v7 (Spotify Web = source audio des pistes Spotify, derrière
 > l'activation technique). Le contrat d'activation a été corrigé par

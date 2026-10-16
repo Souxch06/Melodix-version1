@@ -355,6 +355,19 @@ jobs:
           # Les tests pilotent eux-mêmes la fixture smoke (process.env) ;
           # le build de test APK de ce run reste flagué plus bas, volontairement.
           EXPO_PUBLIC_SPOTIFY_OAUTH_SMOKE: ''
+          # V88 — Jamendo : même règle, cause RÉELLE de l'échec de l'étape 11.
+          # Ces deux variables sont posées au niveau du JOB (elles arment
+          # l'APK) et fuyaient donc dans jest. Un banc qui ne double pas la
+          # source Jamendo la voyait alors ACTIVE : l'adaptateur réel partait
+          # sur le réseau, la course n'était plus « toutes sources saines » et
+          # deux assertions tombaient (« Expected: "empty" / Received:
+          # "network" », « Expected number of calls: 1 / Received: 2 ») —
+          # sans qu'aucune ligne du dépôt ne change. Les deux bancs doublent
+          # désormais la source, et la neutralisation ici garantit qu'aucun
+          # banc FUTUR ne dépendra à nouveau du réglage du dépôt : le jeu de
+          # sources d'un test est une décision du test.
+          JAMENDO_CLIENT_ID: ''
+          EXPO_PUBLIC_JAMENDO_CLIENT_ID: ''
         run: |
           set -o pipefail
           npm test -- --runInBand 2>&1 | tee jest.log || JEST_FAILED=1

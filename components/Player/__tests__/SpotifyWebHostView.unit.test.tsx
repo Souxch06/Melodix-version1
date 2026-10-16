@@ -18,7 +18,8 @@
  */
 import * as React from 'react';
 
-import { fireEvent, render } from '@testing-library/react-native';
+import { act, fireEvent, render } from '@testing-library/react-native';
+import { StyleSheet } from 'react-native';
 
 import * as Services from '@services';
 
@@ -39,6 +40,15 @@ const fakes = (
       /** Bus de visibilité (sémantique idempotente de la production). */
       requestOverlayVisible: (visible: boolean) => void;
       emitOverlayVisible: (visible: boolean) => void;
+      /**
+       * V88 — bus de SURFACE de l'onglet Spotify : publie l'affichage demandé
+       * par l'écran d'onglet (page Spotify plein écran) et la hauteur
+       * réservée en bas pour la navigation.
+       */
+      emitSurface: (surface: {
+        shown: boolean;
+        reservedBottom: number;
+      }) => void;
       currentSnapshot: Record<string, unknown>;
       emitSnapshot: (s: Record<string, unknown>) => void;
       makeSnapshot: (
@@ -79,6 +89,12 @@ jest.mock('@services', () => {
   const mockTrace = jest.fn();
   const snapshotListeners: ((s: Record<string, unknown>) => void)[] = [];
   const overlayListeners: ((visible: boolean) => void)[] = [];
+  // V88 — bus de surface de l'onglet Spotify (bus distinct de la visibilité
+  // moteur : voir services/playbackBackend/spotifyWebSurface.ts).
+  const surfaceListeners: ((surface: {
+    shown: boolean;
+    reservedBottom: number;
+  }) => void)[] = [];
 
   const makeSnapshot = (partial: Record<string, unknown> = {}) => ({
     phase: 'ready',
@@ -95,6 +111,9 @@ jest.mock('@services', () => {
   const state = {
     activation: { active: true, blockers: [] as string[] },
     overlayVisible: false,
+    // Surface de l'onglet : rien d'affiché tant que l'écran d'onglet ne l'a
+    // pas demandé (état d'usine de spotifyWebSurface).
+    surface: { shown: false, reservedBottom: 0 },
     currentSnapshot: makeSnapshot(),
     // Capture de l'hôte construit (options runtime + dernier transport).
     runtimeOptions: null as {
@@ -228,6 +247,20 @@ jest.mock('@services', () => {
     // notifie plus rien : overlay jamais affiché).
     requestSpotifyWebHostVisible: requestOverlayVisible,
     isSpotifyWebHostVisible: () => state.overlayVisible,
+    // V88 — bus de SURFACE de l'onglet (distinct du bus de visibilité
+    // ci-dessus) : même sémantique que la production — lecture immédiate à
+    // l'abonnement, notification à chaque changement.
+    getSpotifyWebHostSurface: () => ({ ...state.surface }),
+    subscribeSpotifyWebHostSurface: (
+      listener: (surface: { shown: boolean; reservedBottom: number }) => void
+    ) => {
+      surfaceListeners.push(listener);
+      listener({ ...state.surface });
+      return () => {
+        const i = surfaceListeners.indexOf(listener);
+        if (i >= 0) surfaceListeners.splice(i, 1);
+      };
+    },
     // Accès tests aux doubles (jamais consommé par la production).
     __testFakes: {
       publish: mockPublish,
@@ -236,6 +269,11 @@ jest.mock('@services', () => {
       manualReload: mockManualReload,
       trace: mockTrace,
       activation: state.activation,
+      /** Surface publiée par l'onglet (V88) + notification des abonnés. */
+      emitSurface: (surface: { shown: boolean; reservedBottom: number }) => {
+        state.surface = { ...surface };
+        surfaceListeners.forEach((l) => l({ ...state.surface }));
+      },
       // Getter live : pointe sur la capture de l'hôte construit le plus
       // récemment (constructor du double runtime).
       get runtimeOptions() {
@@ -323,6 +361,13 @@ jest.mock('@context', () => ({
 
 jest.mock('../../../modules/melodix-media', () => ({
   appendDiagLog: jest.fn(),
+}));
+
+// V88 — la vue lit les marges sûres pour ne pas poser son bandeau sous la
+// barre d'état (mode onglet comme mode moteur). Valeurs fixes : on teste le
+// câblage, pas la mesure du système.
+jest.mock('react-native-safe-area-context', () => ({
+  useSafeAreaInsets: () => ({ top: 24, bottom: 34, left: 0, right: 0 }),
 }));
 
 /** Texte d'un Text RN dont les children peuvent être un tableau. */
@@ -732,5 +777,145 @@ describe('SpotifyWebHostView — V22 (D1) : fermeture via le bus de visibilité'
     fakes.requestOverlayVisible(true);
     expect(queryByTestId('spotify-web-overlay')).toBeTruthy();
     expect(fakes.isOverlayVisible()).toBe(true);
+  });
+});
+
+/**
+ * V88 — SURFACE DE L'ONGLET SPOTIFY (WebView du même type que SpotiDuck : la
+ * page Spotify EST l'écran), sans toucher au contrat du moteur.
+ *
+ * Ce que ces tests verrouillent :
+ *  1. l'onglet affiche la page ET réserve la hauteur MESURÉE de la
+ *     navigation — sans réservation, la barre d'onglets disparaît sous la
+ *     WebView et l'utilisateur ne peut plus quitter l'onglet ;
+ *  2. quitter l'onglet MASQUE la surface sans détruire le document : la
+ *     session Spotify et une lecture en cours survivent (le renderer n'est
+ *     jamais remonté) ;
+ *  3. quand le pont est prêt, l'onglet est ENTIÈREMENT à Spotify : aucune
+ *     bande Melodix posée sur son en-tête. Le bandeau n'apparaît que si
+ *     quelque chose ne va pas (pont perdu), et la croix de fermeture n'existe
+ *     que pour la surface ouverte par le MOTEUR.
+ */
+describe('SpotifyWebHostView — V88 : surface affichée par l’onglet Spotify', () => {
+  /** La vue est « à l'écran » dès qu'elle n'est plus poussée hors écran. */
+  const isOnScreen = (element: { props: { style?: unknown } }): boolean => {
+    const flat = StyleSheet.flatten(element.props.style) as {
+      left?: number;
+      zIndex?: number;
+    };
+    return flat.left !== -6000 && flat.zIndex !== -1;
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    fakes.activation.active = true;
+    fakes.activation.blockers = [];
+    // Le module mock est un singleton PAR FICHIER : le snapshot a pu être
+    // laissé en `recovering` par le test de récupération. On le remet donc
+    // en « prêt » par l'émetteur (le seul chemin qui met à jour l'état lu
+    // par `getSnapshot`), sans quoi le bandeau resterait affiché ici.
+    fakes.emitSnapshot({});
+    mockPreferencesVisible = true;
+    // Bus propres : même raison pour les deux bus.
+    fakes.requestOverlayVisible(false);
+    fakes.emitOverlayVisible(false);
+    fakes.emitSurface({ shown: false, reservedBottom: 0 });
+  });
+
+  it('l’onglet affiche la page → surface à l’écran et hauteur de navigation RÉSERVÉE', () => {
+    const { getByTestId } = render(<SpotifyWebHostView />);
+    const container = getByTestId('spotify-web-host-container');
+
+    // Onglet non affiché : la WebView est hors écran.
+    expect(isOnScreen(container)).toBe(false);
+
+    act(() => fakes.emitSurface({ shown: true, reservedBottom: 150 }));
+
+    expect(isOnScreen(getByTestId('spotify-web-host-container'))).toBe(true);
+    // La place de la navigation est réservée sous la page Spotify.
+    expect(
+      StyleSheet.flatten(getByTestId('spotify-web-host-container').props.style)
+        .bottom
+    ).toBe(150);
+  });
+
+  it('pont prêt : AUCUN bandeau Melodix sur la page Spotify (l’onglet est à Spotify)', () => {
+    const { queryByTestId } = render(<SpotifyWebHostView />);
+
+    act(() => fakes.emitSurface({ shown: true, reservedBottom: 150 }));
+
+    expect(queryByTestId('spotify-web-overlay')).toBeNull();
+    expect(queryByTestId('spotify-web-overlay-close')).toBeNull();
+  });
+
+  it('pain de pont (récupération) : le bandeau revient avec le rechargement manuel', () => {
+    const { getByTestId, queryByTestId } = render(<SpotifyWebHostView />);
+
+    act(() => fakes.emitSurface({ shown: true, reservedBottom: 150 }));
+    expect(queryByTestId('spotify-web-overlay')).toBeNull();
+
+    act(() => fakes.emitSnapshot({ phase: 'recovering', reconnectAttempt: 1 }));
+
+    expect(getByTestId('spotify-web-overlay')).toBeTruthy();
+    expect(getByTestId('spotify-web-overlay-reload')).toBeTruthy();
+    // Pas de croix : on sort de la surface en changeant d'onglet.
+    expect(queryByTestId('spotify-web-overlay-close')).toBeNull();
+
+    fireEvent.press(getByTestId('spotify-web-overlay-reload'));
+    expect(fakes.manualReload).toHaveBeenCalledTimes(1);
+  });
+
+  it('quitter l’onglet masque la surface SANS détruire le document (lecture en cours préservée)', () => {
+    const { queryByTestId, getByTestId } = render(<SpotifyWebHostView />);
+
+    act(() => fakes.emitSurface({ shown: true, reservedBottom: 150 }));
+    expect(isOnScreen(getByTestId('spotify-web-host-container'))).toBe(true);
+
+    // L'utilisateur change d'onglet.
+    act(() => fakes.emitSurface({ shown: false, reservedBottom: 0 }));
+
+    expect(isOnScreen(getByTestId('spotify-web-host-container'))).toBe(false);
+    // Le document Spotify est TOUJOURS monté : la session, le pont et la
+    // lecture en cours ne dépendent pas de l'onglet affiché. (Le double de
+    // WebView porte le testID `mock-webview` ; la vue ne le remonte jamais,
+    // elle ne fait que la déplacer hors écran.)
+    expect(queryByTestId('mock-webview')).toBeTruthy();
+    expect(queryByTestId('spotify-web-overlay')).toBeNull();
+  });
+
+  it('surface du MOTEUR hors onglet : la croix est là (refus possible)', () => {
+    const { queryByTestId } = render(<SpotifyWebHostView />);
+
+    act(() => fakes.requestOverlayVisible(true));
+
+    expect(queryByTestId('spotify-web-overlay')).toBeTruthy();
+    expect(queryByTestId('spotify-web-overlay-close')).toBeTruthy();
+  });
+
+  it('le moteur ouvre la vue alors que l’onglet l’affiche déjà : toujours PAS de croix (une seule surface)', () => {
+    const { queryByTestId } = render(<SpotifyWebHostView />);
+
+    act(() => {
+      fakes.emitSurface({ shown: true, reservedBottom: 150 });
+      fakes.requestOverlayVisible(true);
+    });
+
+    expect(queryByTestId('spotify-web-overlay')).toBeNull();
+    expect(queryByTestId('spotify-web-overlay-close')).toBeNull();
+  });
+
+  it('la surface de l’onglet ne se confond JAMAIS avec le contrat moteur (l’abandon reste intact)', () => {
+    render(<SpotifyWebHostView />);
+
+    // Afficher puis masquer la surface de l'onglet ne doit RIEN écrire dans
+    // le bus de visibilité du moteur : sinon, un simple changement d'onglet
+    // pendant une tentative de lecture Spotify Web serait interprété comme
+    // une fermeture (abandon) et le moteur basculerait sur Audius/YouTube
+    // pendant que la page continuerait de jouer — double audio.
+    act(() => fakes.emitSurface({ shown: true, reservedBottom: 150 }));
+    expect(fakes.isOverlayVisible()).toBe(false);
+
+    act(() => fakes.emitSurface({ shown: false, reservedBottom: 0 }));
+    expect(fakes.isOverlayVisible()).toBe(false);
   });
 });

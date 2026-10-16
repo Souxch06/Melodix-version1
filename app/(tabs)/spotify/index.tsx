@@ -1,25 +1,33 @@
 import * as React from 'react';
 
-import { SpotifyWebPrototypeScreen } from '@screens';
+import { SpotifyWebPlayerScreen } from '@screens';
 
 /**
- * V87 — Onglet « Spotify » : l'hôte WebView Spotify promu surface de premier
- * plan, sur décision explicite du mainteneur.
+ * V88 — Onglet « Spotify » : la page Spotify réelle, plein écran.
  *
- * Avant V87, ce même hôte n'était joignable que par
- * Réglages → Lecture Spotify Web. Il était pourtant déjà monté à la racine
- * (`app/_layout.tsx`) : la promotion est donc une question de NAVIGATION, pas
- * une réécriture du moteur.
+ * V87 avait promu l'hôte WebView en quatrième onglet, mais cet onglet
+ * affichait encore `SpotifyWebPrototypeScreen` — un écran de DIAGNOSTIC
+ * (journaux du pont, capacités, boutons de sonde) doublé de sa PROPRE WebView.
+ * Deux documents Spotify coexistaient donc : celui de l'onglet et celui de
+ * l'hôte de production monté à la racine.
  *
- * Limites assumées, non masquées :
- *  - la page Spotify ne lit rien sans compte **Premium** et sans Widevine au
- *    niveau de l'appareil ;
- *  - le pont injecté refuse volontairement toute commande de lecture
- *    (`no-authorized-execution-surface`) : Melodix ne pilote pas le lecteur
- *    web, il en lit l'état. Aucune capture de jeton n'est effectuée ;
- *  - le moteur natif (Media3) reste en place et sert les sources Audius,
- *    YouTube, iTunes et Jamendo. Cet onglet ne le remplace pas.
+ * V88 inverse l'ordre : l'onglet n'a plus de WebView à lui. Il demande
+ * l'affichage de l'hôte de PRODUCTION (une seule WebView, montée à la racine,
+ * qui conserve la session Spotify et survit au changement d'onglet) et laisse
+ * la navigation d'onglets utilisable (hauteur mesurée et réservée). L'écran de
+ * diagnostic reste accessible par Réglages → Diagnostic → Prototype Spotify
+ * Web Player (`melodix://settings/spotify-web-diagnostic`) : il n'a jamais été
+ * une surface de lecture, et rien n'est supprimé.
+ *
+ * Limites assumées, non masquées (inchangées depuis V87) :
+ *  - la page Spotify ne lit pas sans compte compatible ni décodeur au niveau
+ *    de l'appareil ;
+ *  - le pont ne PILOTE pas la page : il refuse honnêtement toute commande
+ *    d'exécution (`no-authorized-execution-surface`). Les contrôles réels sont
+ *    ceux de Spotify, actionnés par l'utilisateur dans la page ;
+ *  - le moteur natif (Media3) reste en place pour Audius, YouTube, iTunes et
+ *    Jamendo — cet onglet ne le remplace pas.
  */
 export default function SpotifyWeb() {
-  return <SpotifyWebPrototypeScreen />;
+  return <SpotifyWebPlayerScreen />;
 }
