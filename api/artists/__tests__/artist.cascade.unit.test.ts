@@ -1,6 +1,7 @@
 import { isSpotifySessionActive, SpotifyApiError } from '@services';
 
 import { backendGetArtist, dtoAlbumToLibraryItem } from '../../backend';
+import { getItunesArtist } from '../../itunes';
 import { getSpotifyArtist } from '../../spotify/artist';
 
 import { getArtist } from '../artist';
@@ -31,6 +32,13 @@ jest.mock('../../spotify/artist', () => ({
   getSpotifyArtist: jest.fn(),
 }));
 
+// V69 — le résolveur iTunes est simulé : le routage par préfixe doit être
+// prouvé sans jamais toucher le réseau.
+jest.mock('../../itunes', () => ({
+  getItunesArtist: jest.fn(),
+  ITUNES_ARTIST_PREFIX: 'itunes-artist:',
+}));
+
 const mockedIsSpotifySessionActive =
   isSpotifySessionActive as jest.MockedFunction<typeof isSpotifySessionActive>;
 const mockedGetSpotifyArtist = getSpotifyArtist as jest.MockedFunction<
@@ -41,6 +49,9 @@ const mockedBackendGetArtist = backendGetArtist as jest.MockedFunction<
 >;
 const mockedDtoAlbumToLibraryItem =
   dtoAlbumToLibraryItem as jest.MockedFunction<typeof dtoAlbumToLibraryItem>;
+const mockedGetItunesArtist = getItunesArtist as jest.MockedFunction<
+  typeof getItunesArtist
+>;
 
 const backendDto = {
   id: 'ar-1',
@@ -173,5 +184,56 @@ describe('getArtist — cascade session → backend', () => {
 
     await expect(getArtist('ar-1')).rejects.toThrow('backend down');
     expect(errorSpy).toHaveBeenCalled();
+  });
+});
+
+describe('getArtist — routage V69 des artistes iTunes', () => {
+  it('route un id itunes-artist: vers le résolveur iTunes, sans Spotify ni backend', async () => {
+    mockedIsSpotifySessionActive.mockResolvedValue(true);
+    mockedGetItunesArtist.mockResolvedValue({
+      type: 'artist',
+      id: 'itunes-artist:5869117',
+      name: 'Lil Wayne',
+      imageURL: '',
+      albums: [
+        {
+          id: 'itunes-album:944132355',
+          type: 'album',
+          title: 'Tha Carter III',
+          subtitle: 'Lil Wayne',
+          imageURL: 'https://img/944132355.jpg',
+        },
+      ],
+    });
+
+    const artist = await getArtist('itunes-artist:5869117');
+
+    expect(mockedGetItunesArtist).toHaveBeenCalledWith('5869117');
+    expect(artist.name).toBe('Lil Wayne');
+    expect(artist.albums?.[0].id).toBe('itunes-album:944132355');
+    // Ni Spotify ni backend ne sont consultés : l'id préfixé est routé avant
+    // la cascade, et aucun contrôle de session n'est requis.
+    expect(mockedIsSpotifySessionActive).not.toHaveBeenCalled();
+    expect(mockedGetSpotifyArtist).not.toHaveBeenCalled();
+    expect(mockedBackendGetArtist).not.toHaveBeenCalled();
+  });
+
+  it('ne route PAS un artiste Spotify ou backend vers iTunes', async () => {
+    mockedIsSpotifySessionActive.mockResolvedValue(false);
+    mockedBackendGetArtist.mockResolvedValue(backendDto);
+
+    await getArtist('ar-1');
+
+    expect(mockedGetItunesArtist).not.toHaveBeenCalled();
+    expect(mockedBackendGetArtist).toHaveBeenCalledWith('ar-1');
+  });
+
+  it('propage une erreur iTunes explicite au lieu de basculer en faux repli', async () => {
+    mockedGetItunesArtist.mockRejectedValue(new Error('upstream unavailable'));
+
+    await expect(getArtist('itunes-artist:999')).rejects.toThrow(
+      'upstream unavailable'
+    );
+    expect(mockedBackendGetArtist).not.toHaveBeenCalled();
   });
 });

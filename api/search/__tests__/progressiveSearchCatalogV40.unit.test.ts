@@ -59,6 +59,8 @@ jest.mock('../../itunes', () => ({
   searchItunesTracks: jest.fn(),
   // V68 — idem : les albums iTunes sont simulés, jamais requis sur le réseau.
   searchItunesAlbums: jest.fn().mockResolvedValue([]),
+  // V69 — et les artistes aussi : ce banc ne doit JAMAIS toucher le réseau.
+  searchItunesArtists: jest.fn().mockResolvedValue([]),
 }));
 
 const mockedSessionActive = isSpotifySessionActive as jest.MockedFunction<

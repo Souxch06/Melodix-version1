@@ -3,7 +3,11 @@ import { isBackendConfigured, isSpotifySessionActive } from '@services';
 
 import { audiusTrackToLibraryItem, searchAudiusTracks } from '../../audius';
 import { backendSearchCatalog } from '../../backend';
-import { searchItunesAlbums, searchItunesTracks } from '../../itunes';
+import {
+  searchItunesAlbums,
+  searchItunesArtists,
+  searchItunesTracks,
+} from '../../itunes';
 import { searchSpotifyCatalogQuick } from '../../spotify/search';
 import { searchYouTubeTracks } from '../../youtube';
 import type { ProgressiveSearchUpdate } from '../progressiveSearch';
@@ -54,6 +58,9 @@ jest.mock('../../itunes', () => ({
   // Sans ce doublet le banc appellerait la fonction réelle (requête réseau).
   searchItunesAlbums: jest.fn().mockResolvedValue([]),
   ITUNES_ALBUM_LIMIT: 50,
+  // V69 — idem pour les artistes iTunes.
+  searchItunesArtists: jest.fn().mockResolvedValue([]),
+  ITUNES_ARTIST_LIMIT: 50,
 }));
 
 const mockedSessionActive = isSpotifySessionActive as jest.MockedFunction<
@@ -367,5 +374,108 @@ describe('recherche progressive — albums iTunes (V68)', () => {
     for (const id of published) {
       expect(id.startsWith('itunes-album:')).toBe(true);
     }
+  });
+});
+
+describe('recherche progressive — artistes iTunes (V69)', () => {
+  const mockedItunesAlbums = searchItunesAlbums as jest.MockedFunction<
+    typeof searchItunesAlbums
+  >;
+  const mockedItunesArtists = searchItunesArtists as jest.MockedFunction<
+    typeof searchItunesArtists
+  >;
+
+  const artist = (id: string, title: string): LibraryItemModel => ({
+    id,
+    type: 'artist',
+    title,
+    subtitle: 'Hip-Hop / Rap',
+    // ⚠️ L'API ne fournit AUCUNE pochette d'artiste : rien n'est inventé.
+    imageURL: '',
+  });
+
+  it('les artistes iTunes sont fusionnés dans results.artists', async () => {
+    mockedItunesSearch.mockImplementation(() =>
+      after(100, [track('itunes:9', 'Song I', 'Artist I')])
+    );
+    mockedItunesArtists.mockImplementation(() =>
+      after(100, [artist('itunes-artist:5869117', 'Lil Wayne')])
+    );
+
+    const { updates, onUpdate } = collectUpdates();
+    searchCatalogProgressive('wayne', onUpdate);
+    await jest.advanceTimersByTimeAsync(5_000);
+
+    const final = updates[updates.length - 1];
+    expect(final.results.artists.map((a) => a.id)).toContain(
+      'itunes-artist:5869117'
+    );
+    expect(final.results.tracks.map((t) => t.id)).toContain('itunes:9');
+    expect(final.failedSources).not.toContain('itunes');
+  });
+
+  it('un échec des artistes ne coûte JAMAIS les titres ni les albums', async () => {
+    mockedItunesSearch.mockImplementation(() =>
+      after(100, [track('itunes:9', 'Song I', 'Artist I')])
+    );
+    mockedItunesAlbums.mockImplementation(() =>
+      after(100, [
+        {
+          id: 'itunes-album:944132355',
+          type: 'album' as const,
+          title: 'Tha Carter III',
+          subtitle: 'Lil Wayne',
+          imageURL: 'https://art.example/600x600bb.jpg',
+        },
+      ])
+    );
+    // Panne ciblée sur le seul appel artistes.
+    mockedItunesArtists.mockRejectedValue(new Error('artist request failed'));
+
+    const { updates, onUpdate } = collectUpdates();
+    searchCatalogProgressive('wayne', onUpdate);
+    await jest.advanceTimersByTimeAsync(5_000);
+
+    const final = updates[updates.length - 1];
+    expect(final.results.tracks.map((t) => t.id)).toContain('itunes:9');
+    expect(final.results.albums.map((a) => a.id)).toContain(
+      'itunes-album:944132355'
+    );
+    expect(final.results.artists).toEqual([]);
+    // La source n'est PAS déclarée en échec : elle a bien servi 2 catégories.
+    expect(final.failedSources).not.toContain('itunes');
+  });
+
+  it("l'ORIGINE est préservée : aucun artiste iTunes n'est présenté comme Spotify", async () => {
+    mockedItunesSearch.mockResolvedValue([]);
+    mockedItunesArtists.mockResolvedValue([
+      artist('itunes-artist:5869117', 'Lil Wayne'),
+    ]);
+
+    const { updates, onUpdate } = collectUpdates();
+    searchCatalogProgressive('wayne', onUpdate);
+    await jest.advanceTimersByTimeAsync(5_000);
+
+    const final = updates[updates.length - 1];
+    const itunesArtist = final.results.artists.find(
+      (a) => a.id === 'itunes-artist:5869117'
+    );
+    // Le préfixe d'origine survit à la fusion : l'écran artiste route vers le
+    // résolveur iTunes, jamais vers la cascade Spotify.
+    expect(itunesArtist?.id.startsWith('itunes-artist:')).toBe(true);
+  });
+
+  it('sans artiste iTunes, la section reste vide plutôt que gonflée', async () => {
+    mockedItunesSearch.mockImplementation(() =>
+      after(100, [track('itunes:9', 'Song I', 'Artist I')])
+    );
+    mockedItunesArtists.mockResolvedValue([]);
+
+    const { updates, onUpdate } = collectUpdates();
+    searchCatalogProgressive('wayne', onUpdate);
+    await jest.advanceTimersByTimeAsync(5_000);
+
+    const final = updates[updates.length - 1];
+    expect(final.results.artists).toEqual([]);
   });
 });

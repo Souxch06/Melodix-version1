@@ -13,8 +13,10 @@ import { audiusTrackToLibraryItem, searchAudiusTracks } from '../audius';
 import { backendSearchCatalog } from '../backend';
 import {
   ITUNES_ALBUM_LIMIT,
+  ITUNES_ARTIST_LIMIT,
   ITUNES_SEARCH_LIMIT,
   searchItunesAlbums,
+  searchItunesArtists,
   searchItunesTracks,
 } from '../itunes';
 import {
@@ -703,18 +705,21 @@ const itunesSource =
       'itunes',
       nowMs
     )(async (controller) => {
-      // V68 — titres ET albums dans le même budget de source. Les deux appels
-      // partent en parallèle : l'ajout des albums ne rallonge pas la latence
-      // perçue. Un échec des albums (débit, timeout) est ISOLÉ et ne coûte
-      // JAMAIS les titres de la même source — d'où le `.catch` ciblé sur le
-      // seul appel albums, et non sur la paire.
-      const [tracks, albums] = await withSourceTimeout(
+      // V68/V69 — titres, albums ET artistes dans le même budget de source.
+      // Les trois appels partent en parallèle : l'ajout des albums puis des
+      // artistes ne rallonge pas la latence perçue. Un échec des albums ou des
+      // artistes (débit, timeout) est ISOLÉ par un `.catch` ciblé sur le seul
+      // appel concerné — il ne coûte JAMAIS les titres, ni l'autre catégorie.
+      const [tracks, albums, artists] = await withSourceTimeout(
         'itunes',
         Promise.all([
           searchItunesTracks(run.query, ITUNES_SEARCH_LIMIT, {
             signal: controller.signal,
           }),
           searchItunesAlbums(run.query, ITUNES_ALBUM_LIMIT, {
+            signal: controller.signal,
+          }).catch(() => [] as LibraryItemModel[]),
+          searchItunesArtists(run.query, ITUNES_ARTIST_LIMIT, {
             signal: controller.signal,
           }).catch(() => [] as LibraryItemModel[]),
         ]),
@@ -727,6 +732,7 @@ const itunesSource =
       // fusion (jamais d'update mort à cause d'une source).
       run.contributions.itunes.tracks = Array.isArray(tracks) ? tracks : [];
       run.contributions.itunes.albums = Array.isArray(albums) ? albums : [];
+      run.contributions.itunes.artists = Array.isArray(artists) ? artists : [];
     });
 
 /**

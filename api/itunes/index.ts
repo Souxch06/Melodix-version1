@@ -37,3 +37,11 @@ export {
   upscaleItunesArtwork,
 } from './searchAlbums';
 export { getItunesAlbum, ItunesAlbumError } from './album';
+// V69 — artistes : recherche (`entity=musicArtist`) + discographie (`lookup`).
+export {
+  ITUNES_ARTIST_LIMIT,
+  ITUNES_ARTIST_PREFIX,
+  itunesArtistToLibraryItem,
+  searchItunesArtists,
+} from './searchArtists';
+export { getItunesArtist, ItunesArtistError } from './artist';

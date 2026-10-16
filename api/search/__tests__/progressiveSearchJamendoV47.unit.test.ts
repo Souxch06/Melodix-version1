@@ -56,6 +56,9 @@ jest.mock('../../itunes', () => ({
   // Sans ce doublet le banc appellerait la fonction réelle (requête réseau).
   searchItunesAlbums: jest.fn().mockResolvedValue([]),
   ITUNES_ALBUM_LIMIT: 50,
+  // V69 — idem pour les artistes iTunes.
+  searchItunesArtists: jest.fn().mockResolvedValue([]),
+  ITUNES_ARTIST_LIMIT: 50,
 }));
 
 jest.mock('../../jamendo', () => ({
