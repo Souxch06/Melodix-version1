@@ -119,24 +119,30 @@ describe('V70 (Bug 4) — cache des extraits : latence évitée au changement de
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it('mesure le délai : 0 ms réseau sur un morceau déjà résolu', async () => {
+  it('aucune requête réseau sur un morceau déjà résolu', async () => {
     const NETWORK_LATENCY_MS = 40;
-    slowFetch(NETWORK_LATENCY_MS);
+    const fetchMock = slowFetch(NETWORK_LATENCY_MS);
 
     const coldStart = Date.now();
     await getItunesPreviewUrl('4000000003');
     const coldElapsed = Date.now() - coldStart;
 
-    const warmStart = Date.now();
     const warm = await getItunesPreviewUrl('4000000003');
-    const warmElapsed = Date.now() - warmStart;
 
     expect(warm).toBe('https://audio.example/p.m4a');
-    // Le premier passage paie la latence simulée, le second ne fait AUCUNE
-    // requête. Ce sont les moyens réellement disponibles ici (réseau simulé,
-    // pas un téléphone).
+    // Le premier passage paie la latence simulée : borne INFÉRIEURE, robuste
+    // (une machine lente ne peut que l'augmenter).
     expect(coldElapsed).toBeGreaterThanOrEqual(NETWORK_LATENCY_MS);
-    expect(warmElapsed).toBeLessThan(NETWORK_LATENCY_MS);
+    // La seconde lecture ne fait AUCUNE requête. C'est le gain réel visé par
+    // V70, et c'est mesuré ici par le NOMBRE D'APPELS au fetch simulé.
+    //
+    // Correction : l'assertion précédente était `warmElapsed < 40`, une borne
+    // SUPÉRIEURE sur le temps mur. Elle cassait sur un runner chargé (run
+    // 38962505049, étape 11) alors qu'aucune requête n'était partie : un
+    // arrêt d'ordonnanceur ou un GC suffit à dépasser 40 ms. Déduire
+    // « pas de réseau » d'une durée est faux en environnement partagé ; le
+    // compteur d'appels, lui, mesure exactement ce que le test affirme.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it('un ÉCHEC n’est jamais mis en cache : la piste reste re-tentable', async () => {

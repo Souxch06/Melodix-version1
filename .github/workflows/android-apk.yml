@@ -371,6 +371,11 @@ jobs:
             grep -E '^(FAIL|Tests:|Test Suites:)' jest.log 2>/dev/null | sort -u | head -20 | while IFS= read -r line; do
               echo "::error title=Résumé Jest::${line}"
             done
+            # Valeurs attendues/reçues et cause d'expiration : sans elles, un
+            # nom de test ne dit pas POURQUOI il échoue.
+            grep -E '^\s+(Expected|Received|Number of calls|thrown:)' jest.log 2>/dev/null | sed 's/^[[:space:]]*//' | sort -u | head -30 | while IFS= read -r line; do
+              echo "::error title=Détail assertion::${line}"
+            done
             exit 1
           fi
 
