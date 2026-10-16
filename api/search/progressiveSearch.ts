@@ -327,7 +327,12 @@ const buildUpdate = (run: Run): ProgressiveSearchUpdate => {
         jamendo: run.contributions.jamendo.playlists,
       },
     },
-    run.query
+    run.query,
+    // V72 — la catégorie pilotant la recherche doit atteindre le RE-CLASSEMENT
+    // GLOBAL : sans elle, un morceau littéralement intitulé « Jazz » (genre réel
+    // différent) obtenait un score textuel exact et repassait EN TÊTE, écrasant
+    // le classement par genre appliqué dans la source iTunes.
+    { genreId: run.genreId }
   );
 
   const pending = (Object.keys(run.states) as SearchSourceId[]).some(

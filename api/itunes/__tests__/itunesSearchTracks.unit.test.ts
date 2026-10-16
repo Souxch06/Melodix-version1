@@ -89,7 +89,24 @@ describe('V37 — iTunes : recherche catalogue (source isolée)', () => {
       albumName: 'After Hours',
       durationMs: 202000,
       explicit: false,
+      // V72 — genre RÉEL propagé au classement global ; `null` ici car la
+      // fixture ne publie pas `primaryGenreName`.
+      genreName: null,
     });
+  });
+
+  it('V72 — propage le genre RÉEL (`primaryGenreName`) au LibraryItemModel', async () => {
+    setFetch(
+      jest.fn(async () =>
+        jsonResponse([songResult({ primaryGenreName: 'R&B/Soul' })])
+      )
+    );
+
+    const items = await searchItunesTracks('The Weeknd');
+
+    // Le genre doit survivre à la cartographie : c'est lui qui permet au
+    // re-classement global de ne pas écraser le classement par catégorie.
+    expect(items[0]?.genreName).toBe('R&B/Soul');
   });
 
   it('extrait les drapeaux explicit/cleaned et l\u2019inconnu reste null', () => {

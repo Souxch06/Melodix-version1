@@ -1,4 +1,5 @@
 import type { LibraryItemModel, SearchResultsModel } from '@models';
+import { matchesItunesGenre } from '../itunes/genres';
 
 /**
  * Recherche V30 — normalisation, dédoublonnage et classement des résultats.
@@ -320,15 +321,52 @@ const popularityOf = (item: LibraryItemModel): number | null => {
  * critère de départage : il ne peut JAMAIS faire passer un score inférieur
  * devant un score supérieur, et n'exprime aucune préférence de fournisseur.
  */
+/**
+ * V72 — Écart de genre pour une recherche pilotée par une catégorie.
+ *
+ * DÉFAUT CORRIGÉ : le classement V70/V71 (genre en tête dans la source iTunes)
+ * était ÉCRASÉ par ce re-classement global, qui ne connaissait que le texte.
+ * Pour la requête « Jazz », un morceau littéralement intitulé « Jazz » obtenait
+ * `titleExact` ⇒ score 3 ⇒ il remontait en tête alors que son genre réel était
+ * différent. C'est exactement le symptôme signalé.
+ *
+ * RÈGLE — n'utilise QUE des métadonnées réellement publiées :
+ *   `+GENRE_MATCH_BONUS`  genre connu et conforme  (domine le score textuel)
+ *   `0`                   genre inconnu            (absence ≠ non-pertinence)
+ *   `-GENRE_MATCH_BONUS`  genre connu et différent (preuve réelle, pas une
+ *                                                  supposition)
+ *
+ * Le bonus est volontairement plus grand que l'amplitude de `matchScore`
+ * (0..3) : à l'intérieur d'un même verdict de genre, le score textuel continue
+ * de départager. AUCUN item n'est supprimé — les hors-genre restent visibles,
+ * en fin de liste.
+ */
+const GENRE_MATCH_BONUS = 10;
+
+const genreVerdict = (
+  item: LibraryItemModel,
+  genreId?: string | null
+): number => {
+  if (!genreId) {
+    return 0; // Saisie libre : le classement reste strictement inchangé.
+  }
+  const verdict = matchesItunesGenre(genreId, item.genreName ?? null);
+  if (verdict === null) {
+    return 0; // Genre non publié : neutre.
+  }
+  return verdict ? GENRE_MATCH_BONUS : -GENRE_MATCH_BONUS;
+};
+
 export const rankItems = (
   items: LibraryItemModel[],
-  query: string
+  query: string,
+  options?: { genreId?: string | null }
 ): LibraryItemModel[] =>
   items
     .map((item, index) => ({
       item,
       index,
-      score: matchScore(item, query),
+      score: matchScore(item, query) + genreVerdict(item, options?.genreId),
       popularity: popularityOf(item),
     }))
     .sort((a, b) => {
@@ -356,9 +394,12 @@ export const mergeAndRankResults = (
     albums: Partial<Record<SearchSourceId, LibraryItemModel[]>>;
     playlists: Partial<Record<SearchSourceId, LibraryItemModel[]>>;
   },
-  query: string
+  query: string,
+  options?: { genreId?: string | null }
 ): SearchResultsModel => ({
-  tracks: rankItems(dedupeItems(contributions.tracks), query),
+  // V72 — seule la section TITRES est sensible à la catégorie : les artistes et
+  // albums ne portent pas de genre fiable dans le modèle partagé.
+  tracks: rankItems(dedupeItems(contributions.tracks), query, options),
   artists: rankItems(dedupeItems(contributions.artists), query),
   albums: rankItems(dedupeItems(contributions.albums), query),
   playlists: rankItems(dedupeItems(contributions.playlists), query),

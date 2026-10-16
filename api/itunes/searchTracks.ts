@@ -135,6 +135,12 @@ export const itunesTrackToLibraryItem = (
   albumName: match.collectionName,
   durationMs: match.durationMs,
   explicit: match.explicit,
+  // V72 — le genre RÉEL de l'item remonte jusqu'au classement global :
+  // `mergeAndRankResults` re-trie TOUTES les sources après la source iTunes,
+  // il a donc besoin de cette information pour ne pas écraser le classement
+  // par catégorie (un titre littéralement « Jazz » hors genre repassait en
+  // tête).
+  genreName: match.primaryGenreName || null,
 });
 
 /**

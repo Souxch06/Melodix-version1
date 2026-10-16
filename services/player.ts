@@ -1676,10 +1676,12 @@ class MelodixPlayer {
       `[MEDIA_DIAG] PLAYER_ADVANCE from=${from} to=${index} ` +
         `repeat=${this.state.repeat} hasSound=${this.sound !== null}`
     );
+    // V72 — l'invalidation est INCONDITIONNELLE : elle protège aussi le cas
+    // « résolution encore en vol, pas encore de Sound », auparavant couvert par
+    // la branche supprimée de `next()`. Le resolver du morceau en cours ne doit
+    // jamais créer un Sound dépassé (intention V38, faite AVANT le détachement).
+    ++this.playToken;
     if (this.sound) {
-      // Invalider AVANT le détachement (intention V38) : le resolver de
-      // l'ancien morceau ne doit jamais créer un Sound dépassé.
-      ++this.playToken;
       void this.unloadCurrent();
     }
     await this.playIndex(index);
@@ -2341,20 +2343,36 @@ class MelodixPlayer {
     await operation;
   };
 
+  /**
+   * V72 (Priorité 1) — Next, avec la SÉMANTIQUE DE RAFALE suivante :
+   *
+   * DÉFAUT CORRIGÉ : cette méthode faisait `await this.unloadCurrent()` quand
+   * le statut était `loading`/`resolving`, puis comparait
+   * `this.playToken !== requestToken`. Comme toute commande plus récente
+   * incrémente `playToken` pendant cet await, la commande précédente était
+   * **abandonnée silencieusement** : trois `next()` rapides n'avançaient que de
+   * deux pistes (constaté en V71, identique avec le code antérieur à V71 —
+   * défaut préexistant, pas une régression).
+   *
+   * SÉMANTIQUE IMPLÉMENTÉE (documentée dans le banc playerCommandBurst) :
+   * chaque Next est une commande RELATIVE (±1) dont la cible est calculée
+   * SYNCHRONEMENT, avant tout await. Toute la chaîne
+   * `next()` → `advanceManual()` → `manualAdvanceToIndex()` → `playIndex()`
+   * jusqu'à l'émission du nouvel `index` ne comporte AUCUNE attente : N
+   * commandes en rafale déplacent donc la sélection de N positions, dans
+   * l'ordre d'émission, et aucune ne peut en annuler une autre.
+   *
+   * Ce qui est PRÉSERVÉ :
+   * - l'invalidation du morceau en cours (intention V38) — faite dans
+   *   `manualAdvanceToIndex`, avant le détachement ;
+   * - le correctif V71 : la résolution réseau démarre sans attendre la fin du
+   *   déchargement natif ;
+   * - la barrière « un seul morceau à la fois » : `playIndex` attend toujours
+   *   le déchargement juste avant `Sound.createAsync` ;
+   * - la garde `playToken`/`isStale` : une résolution obsolète ne crée jamais
+   *   de Sound.
+   */
   next = async () => {
-    if (
-      (this.state.status === 'loading' || this.state.status === 'resolving') &&
-      this.state.current
-    ) {
-      // Invalider AVANT l'unload : si le resolver courant termine pendant une
-      // libération native lente, il ne doit jamais créer un Sound dépassé.
-      const requestToken = ++this.playToken;
-      await this.unloadCurrent();
-      if (this.playToken !== requestToken) {
-        return; // une commande plus récente a gagné pendant l'unload
-      }
-    }
-
     await this.advanceManual(1);
   };
 

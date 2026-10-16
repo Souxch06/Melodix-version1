@@ -41,4 +41,15 @@ export type LibraryItemModel = {
    * l'item n'est ni favorisé ni pénalisé (aucun fournisseur privilégié).
    */
   popularity?: number | null;
+  /**
+   * V72 — Genre RÉEL publié par la source (`primaryGenreName` d'iTunes Search).
+   * `null`/absent = la source ne le publie pas.
+   *
+   * Utilisé UNIQUEMENT quand la recherche est pilotée par une catégorie : il
+   * permet de classer un morceau réellement du genre demandé devant un morceau
+   * qui porte simplement le mot de la catégorie dans son titre. Jamais utilisé
+   * pour inventer une pertinence, ni pour supprimer un résultat (voir la règle
+   * +10 / 0 / −10 de `rankItems`).
+   */
+  genreName?: string | null;
 };
