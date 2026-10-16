@@ -2,6 +2,7 @@ import { AlbumModel } from '@models';
 import { isSpotifySessionActive, SpotifyApiError } from '@services';
 
 import { backendGetAlbum } from '../backend';
+import { getItunesAlbum, ITUNES_ALBUM_PREFIX } from '../itunes';
 import { getSpotifyAlbum } from '../spotify/album';
 
 /**
@@ -14,6 +15,15 @@ import { getSpotifyAlbum } from '../spotify/album';
  * renvoyés vides — l'écran album n'en dépend pas pour fonctionner.
  */
 export const getAlbum = async (albumId: string): Promise<AlbumModel> => {
+  // V68 — album d'ORIGINE iTunes (`itunes-album:<collectionId>`, publié par la
+  // recherche via api/itunes/searchAlbums.ts). Routé AVANT la cascade : son
+  // identifiant préfixé ne peut pas entrer en collision avec un id Spotify, et
+  // un album Spotify/backend ne passe jamais par ici. Sans cette branche, les
+  // cartes d'album iTunes mèneraient à un écran en erreur.
+  if (albumId.startsWith(ITUNES_ALBUM_PREFIX)) {
+    return getItunesAlbum(albumId.slice(ITUNES_ALBUM_PREFIX.length));
+  }
+
   if (await isSpotifySessionActive()) {
     try {
       return await getSpotifyAlbum(albumId);

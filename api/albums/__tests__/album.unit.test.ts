@@ -2,6 +2,7 @@ import { isSpotifySessionActive, SpotifyApiError } from '@services';
 
 import { getSpotifyAlbum } from '../../spotify/album';
 import { backendGetAlbum } from '../../backend';
+import { getItunesAlbum } from '../../itunes';
 
 import { getAlbum } from '../album';
 
@@ -38,6 +39,13 @@ jest.mock('../../spotify/album', () => ({
 
 jest.mock('../../spotify/artist', () => ({
   getSpotifyArtist: jest.fn(),
+}));
+
+// V68 — résolveur d'album iTunes : isolé pour que le test de routage ne
+// dépende d'aucune requête réseau.
+jest.mock('../../itunes', () => ({
+  getItunesAlbum: jest.fn(),
+  ITUNES_ALBUM_PREFIX: 'itunes-album:',
 }));
 
 const mockedIsSpotifySessionActive =
@@ -152,5 +160,90 @@ describe('getAlbum — cascade session → backend', () => {
 
     await expect(getAlbum('al-1')).rejects.toThrow('backend down');
     expect(errorSpy).toHaveBeenCalled();
+  });
+});
+
+/**
+ * V68 — routage des albums d'ORIGINE iTunes.
+ *
+ * La recherche publie désormais des albums `itunes-album:<collectionId>`
+ * (api/itunes/searchAlbums.ts). Sans routage, ces cartes cliquables
+ * tomberaient dans la cascade Spotify → backend et produiraient un écran en
+ * erreur : le défaut exact « bouton qui semble actif mais n'a aucun effet ».
+ * Ces tests verrouillent le routage ET son isolement : un album Spotify ou
+ * backend ne doit JAMAIS passer par le résolveur iTunes.
+ */
+describe('getAlbum — routage iTunes (V68)', () => {
+  const itunesAlbum = {
+    id: 'itunes-album:1440857781',
+    type: 'album' as const,
+    albumType: 'album' as const,
+    name: 'After Hours',
+    imageURL: 'https://art.example/600x600bb.jpg',
+    artists: [],
+    releaseDate: '2020-03-20',
+    tracks: { total: 0, items: [] },
+    duration: 0,
+    copyrights: [],
+    genres: [],
+    label: '',
+  };
+
+  it('route un id préfixé vers le résolveur iTunes, sans toucher Spotify ni backend', async () => {
+    const mockedGetItunesAlbum = getItunesAlbum as jest.MockedFunction<
+      typeof getItunesAlbum
+    >;
+    mockedGetItunesAlbum.mockResolvedValue(itunesAlbum);
+    // Session Spotify ACTIVE : si le routage était absent ou placé après la
+    // cascade, Spotify serait interrogé en premier avec un id invalide.
+    mockedIsSpotifySessionActive.mockResolvedValue(true);
+
+    const album = await getAlbum('itunes-album:1440857781');
+
+    expect(album.name).toBe('After Hours');
+    expect(mockedGetItunesAlbum).toHaveBeenCalledWith('1440857781');
+    expect(mockedGetSpotifyAlbum).not.toHaveBeenCalled();
+    expect(mockedBackendGetAlbum).not.toHaveBeenCalled();
+  });
+
+  it('un album Spotify ne passe JAMAIS par le résolveur iTunes', async () => {
+    const mockedGetItunesAlbum = getItunesAlbum as jest.MockedFunction<
+      typeof getItunesAlbum
+    >;
+    mockedIsSpotifySessionActive.mockResolvedValue(true);
+    mockedGetSpotifyAlbum.mockResolvedValue({
+      id: '4aawyAB9vmqN3uQ7FjRGTy',
+      type: 'album',
+      albumType: 'album',
+      name: 'Discovery',
+      imageURL: '',
+      artists: [],
+      releaseDate: '',
+      tracks: { total: 0, items: [] },
+      duration: 0,
+      copyrights: [],
+      genres: [],
+      label: '',
+    });
+
+    await getAlbum('4aawyAB9vmqN3uQ7FjRGTy');
+
+    expect(mockedGetItunesAlbum).not.toHaveBeenCalled();
+    expect(mockedGetSpotifyAlbum).toHaveBeenCalledWith(
+      '4aawyAB9vmqN3uQ7FjRGTy'
+    );
+  });
+
+  it("propage l'erreur iTunes au lieu d'inventer un album vide", async () => {
+    const mockedGetItunesAlbum = getItunesAlbum as jest.MockedFunction<
+      typeof getItunesAlbum
+    >;
+    mockedGetItunesAlbum.mockRejectedValue(new Error('album introuvable'));
+
+    await expect(getAlbum('itunes-album:999')).rejects.toThrow(
+      'album introuvable'
+    );
+    // Aucun repli silencieux sur le backend : l'origine iTunes est explicite.
+    expect(mockedBackendGetAlbum).not.toHaveBeenCalled();
   });
 });

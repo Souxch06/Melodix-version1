@@ -11,7 +11,12 @@ import { getIsOnline } from '../../services/network/networkState';
 
 import { audiusTrackToLibraryItem, searchAudiusTracks } from '../audius';
 import { backendSearchCatalog } from '../backend';
-import { ITUNES_SEARCH_LIMIT, searchItunesTracks } from '../itunes';
+import {
+  ITUNES_ALBUM_LIMIT,
+  ITUNES_SEARCH_LIMIT,
+  searchItunesAlbums,
+  searchItunesTracks,
+} from '../itunes';
 import {
   JAMENDO_SEARCH_LIMIT,
   isJamendoConfigured,
@@ -698,15 +703,21 @@ const itunesSource =
       'itunes',
       nowMs
     )(async (controller) => {
-      const tracks = await withSourceTimeout(
+      // V68 — titres ET albums dans le même budget de source. Les deux appels
+      // partent en parallèle : l'ajout des albums ne rallonge pas la latence
+      // perçue. Un échec des albums (débit, timeout) est ISOLÉ et ne coûte
+      // JAMAIS les titres de la même source — d'où le `.catch` ciblé sur le
+      // seul appel albums, et non sur la paire.
+      const [tracks, albums] = await withSourceTimeout(
         'itunes',
-        // V40 : plafond EXPLICITE au point d'appel (le maximum documenté de
-        // l'API, ITUNES_SEARCH_LIMIT=200) — jamais implicitement hérité du
-        // défaut du fournisseur, pour que le budget et la couverture restent
-        // vérifiés ici, là où la course est arbitrée.
-        searchItunesTracks(run.query, ITUNES_SEARCH_LIMIT, {
-          signal: controller.signal,
-        }),
+        Promise.all([
+          searchItunesTracks(run.query, ITUNES_SEARCH_LIMIT, {
+            signal: controller.signal,
+          }),
+          searchItunesAlbums(run.query, ITUNES_ALBUM_LIMIT, {
+            signal: controller.signal,
+          }).catch(() => [] as LibraryItemModel[]),
+        ]),
         SOURCE_TIMEOUTS_MS.itunes,
         () => controller.abort()
       );
@@ -715,6 +726,7 @@ const itunesSource =
       // valeur est traitée comme un résultat vide plutôt que de casser la
       // fusion (jamais d'update mort à cause d'une source).
       run.contributions.itunes.tracks = Array.isArray(tracks) ? tracks : [];
+      run.contributions.itunes.albums = Array.isArray(albums) ? albums : [];
     });
 
 /**

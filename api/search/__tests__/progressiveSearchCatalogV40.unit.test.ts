@@ -57,6 +57,8 @@ jest.mock('../../youtube', () => ({
 jest.mock('../../itunes', () => ({
   ...jest.requireActual('../../itunes'),
   searchItunesTracks: jest.fn(),
+  // V68 — idem : les albums iTunes sont simulés, jamais requis sur le réseau.
+  searchItunesAlbums: jest.fn().mockResolvedValue([]),
 }));
 
 const mockedSessionActive = isSpotifySessionActive as jest.MockedFunction<

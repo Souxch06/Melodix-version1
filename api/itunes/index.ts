@@ -28,3 +28,12 @@ export {
 } from './searchTracks';
 export type { ItunesTrackMatch } from './searchTracks';
 export { getItunesPreviewUrl } from './lookupStream';
+// V68 — albums : recherche (`entity=album`) + résolution (`lookup`).
+export {
+  ITUNES_ALBUM_LIMIT,
+  ITUNES_ALBUM_PREFIX,
+  itunesAlbumToLibraryItem,
+  searchItunesAlbums,
+  upscaleItunesArtwork,
+} from './searchAlbums';
+export { getItunesAlbum, ItunesAlbumError } from './album';

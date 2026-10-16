@@ -54,6 +54,10 @@ jest.mock('../../youtube', () => ({
 
 jest.mock('../../itunes', () => ({
   searchItunesTracks: jest.fn(),
+  // V68 — la source iTunes publie aussi des ALBUMS (api/itunes/searchAlbums).
+  // Sans ce doublet le banc appellerait la fonction réelle (requête réseau).
+  searchItunesAlbums: jest.fn().mockResolvedValue([]),
+  ITUNES_ALBUM_LIMIT: 50,
 }));
 
 const mockedSessionActive = isSpotifySessionActive as jest.MockedFunction<

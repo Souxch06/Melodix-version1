@@ -3,7 +3,7 @@ import { isBackendConfigured, isSpotifySessionActive } from '@services';
 
 import { audiusTrackToLibraryItem, searchAudiusTracks } from '../../audius';
 import { backendSearchCatalog } from '../../backend';
-import { searchItunesTracks } from '../../itunes';
+import { searchItunesAlbums, searchItunesTracks } from '../../itunes';
 import { searchSpotifyCatalogQuick } from '../../spotify/search';
 import { searchYouTubeTracks } from '../../youtube';
 import type { ProgressiveSearchUpdate } from '../progressiveSearch';
@@ -50,6 +50,10 @@ jest.mock('../../youtube', () => ({
 
 jest.mock('../../itunes', () => ({
   searchItunesTracks: jest.fn(),
+  // V68 — la source iTunes publie aussi des ALBUMS (api/itunes/searchAlbums).
+  // Sans ce doublet le banc appellerait la fonction réelle (requête réseau).
+  searchItunesAlbums: jest.fn().mockResolvedValue([]),
+  ITUNES_ALBUM_LIMIT: 50,
 }));
 
 const mockedSessionActive = isSpotifySessionActive as jest.MockedFunction<
@@ -279,5 +283,89 @@ describe('V37 — moteur progressif : source iTunes', () => {
     // Le timeout de source est un échec classé (pas une annulation silencieuse).
     expect(final.failedSources).toContain('itunes');
     expect(final.failed).toBe(false); // les autres sources servent
+  });
+});
+
+/**
+ * V68 — la source iTunes contribue aussi aux ALBUMS.
+ *
+ * Avant V68, artistes et albums ne provenaient QUE de Spotify et du backend :
+ * sans session Spotify (403) et sans backend configuré, les sections
+ * « Artistes » et « Albums » de l'écran de recherche étaient vides alors que
+ * l'écran sait les afficher. iTunes Search (`entity=album`) comble ce vide via
+ * une API officielle sans clé.
+ */
+describe('recherche progressive — albums iTunes (V68)', () => {
+  const mockedItunesAlbums = searchItunesAlbums as jest.MockedFunction<
+    typeof searchItunesAlbums
+  >;
+
+  const album = (id: string, title: string): LibraryItemModel => ({
+    id,
+    type: 'album',
+    title,
+    subtitle: 'Artist I',
+    imageURL: 'https://art.example/600x600bb.jpg',
+  });
+
+  it('les albums iTunes sont fusionnés dans results.albums', async () => {
+    mockedItunesSearch.mockImplementation(() =>
+      after(100, [track('itunes:9', 'Song I', 'Artist I')])
+    );
+    mockedItunesAlbums.mockImplementation(() =>
+      after(100, [album('itunes-album:1440857781', 'After Hours')])
+    );
+
+    const { updates, onUpdate } = collectUpdates();
+    searchCatalogProgressive('after hours', onUpdate);
+    await jest.advanceTimersByTimeAsync(5_000);
+
+    const final = updates[updates.length - 1];
+    expect(final.results.albums.map((a) => a.id)).toContain(
+      'itunes-album:1440857781'
+    );
+    // Les titres de la même source ne sont pas perdus au passage.
+    expect(final.results.tracks.map((t) => t.id)).toContain('itunes:9');
+    expect(final.failedSources).not.toContain('itunes');
+  });
+
+  it('un échec des albums ne coûte JAMAIS les titres de la même source', async () => {
+    mockedItunesSearch.mockImplementation(() =>
+      after(100, [track('itunes:9', 'Song I', 'Artist I')])
+    );
+    // Débit iTunes dépassé sur le seul appel albums.
+    mockedItunesAlbums.mockImplementation(() =>
+      Promise.reject(new Error('rate-limited'))
+    );
+
+    const { updates, onUpdate } = collectUpdates();
+    searchCatalogProgressive('after hours', onUpdate);
+    await jest.advanceTimersByTimeAsync(5_000);
+
+    const final = updates[updates.length - 1];
+    // LA régression évitée : sans isolement, Promise.all rejetait et les
+    // titres iTunes disparaissaient avec les albums.
+    expect(final.results.tracks.map((t) => t.id)).toContain('itunes:9');
+    expect(final.results.albums).toHaveLength(0);
+    expect(final.failedSources).not.toContain('itunes');
+  });
+
+  it("l'ORIGINE est préservée : aucun album iTunes n'est présenté comme Spotify", async () => {
+    mockedItunesSearch.mockResolvedValue([]);
+    mockedItunesAlbums.mockImplementation(() =>
+      after(50, [album('itunes-album:77', 'Discovery')])
+    );
+
+    const { updates, onUpdate } = collectUpdates();
+    searchCatalogProgressive('discovery', onUpdate);
+    await jest.advanceTimersByTimeAsync(5_000);
+
+    const final = updates[updates.length - 1];
+    const published = final.results.albums.map((a) => a.id);
+    expect(published).toContain('itunes-album:77');
+    // Chaque identifiant publié porte son préfixe d'origine.
+    for (const id of published) {
+      expect(id.startsWith('itunes-album:')).toBe(true);
+    }
   });
 });
