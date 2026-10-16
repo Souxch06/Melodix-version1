@@ -37,6 +37,8 @@ export {
   SpotifyWebBackend,
 } from './SpotifyWebBackend';
 export { SPOTIFY_WEB_MEDIA_SESSION_PROBE } from './spotifyWebMediaSessionProbe';
+export { SPOTIFY_WEB_PROBE_INSTALLED_SCRIPT } from './spotifyWebMediaSessionProbe';
+export { isProbeInstalledMessage } from './spotifyWebMediaSessionProbe';
 export type {
   SpotifyWebBackendOptions,
   SpotifyWebBridgeResult,

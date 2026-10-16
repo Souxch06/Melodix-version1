@@ -216,6 +216,12 @@ jest.mock('@services', () => {
     },
     isAllowedSpotifyWebNavigation: () => true,
     SPOTIFY_WEB_MEDIA_SESSION_PROBE: '',
+    // V88 — sonde précoce. `false` est la réponse fidèle ici : ces cas
+    // n'envoient aucun marqueur `probe-installed`, leurs messages doivent
+    // donc tous atteindre le transport. La reconnaissance réelle du marqueur
+    // est couverte par spotifyWebEarlyProbe.unit.test.ts.
+    SPOTIFY_WEB_PROBE_INSTALLED_SCRIPT: '',
+    isProbeInstalledMessage: () => false,
     SpotifyWebBackend: MockSpotifyWebBackend,
     SpotifyWebRuntime: MockSpotifyWebRuntime,
     SpotifyWebTrackTransport: MockSpotifyWebTrackTransport,

@@ -215,3 +215,63 @@ export const SPOTIFY_WEB_MEDIA_SESSION_PROBE = `
   true;
 })();
 `;
+
+/**
+ * V88 — Sonde PRÉCOCE, injectée avant le contenu du document.
+ *
+ * `SPOTIFY_WEB_MEDIA_SESSION_PROBE` ci-dessus est passé en `injectedJavaScript`,
+ * donc exécuté à la FIN du chargement. Quand le handshake n'aboutit pas, un
+ * `bridge_timeout` seul ne dit pas lequel de ces deux mondes on observe :
+ *
+ *   a) le pont natif `ReactNativeWebView` n'existe pas dans ce contexte — la
+ *      sonde principale sort dès sa première ligne et ne poste jamais rien ;
+ *   b) le pont existe, mais l'injection tardive n'a pas eu lieu ou a échoué.
+ *
+ * Ce script lève l'ambiguïté : injecté AVANT le contenu, il s'exécute à un
+ * moment où react-native-webview a déjà défini le pont. S'il poste
+ * `probe-installed` et que `ready` n'arrive jamais, la panne est dans
+ * l'injection tardive ; s'il ne poste rien non plus, c'est le pont.
+ *
+ * Il ne fait rien d'autre : aucune lecture de la page, aucun stockage, aucun
+ * réseau, aucune surface média. Le backend classe ce type de message en
+ * `ignored` — il ne participe pas au handshake.
+ */
+export const SPOTIFY_WEB_PROBE_INSTALLED_SCRIPT = `
+(() => {
+  const bridge = globalThis.ReactNativeWebView;
+  if (!bridge || typeof bridge.postMessage !== 'function') return true;
+  try {
+    bridge.postMessage(
+      JSON.stringify({
+        version: ${SPOTIFY_WEB_BRIDGE_VERSION},
+        type: 'probe-installed',
+      })
+    );
+  } catch (_) {}
+  true;
+})();
+`;
+
+/**
+ * Reconnaît le message de la sonde précoce.
+ *
+ * Strict sur la version et le type : un message d'une autre version ou d'un
+ * autre type n'est jamais traité comme une preuve d'installation. Le backend
+ * classe de toute façon ce type en `ignored` — il ne participe pas au
+ * handshake, seul `ready` le peut.
+ */
+export const isProbeInstalledMessage = (raw: unknown): boolean => {
+  if (typeof raw !== 'string') return false;
+  let value: unknown = null;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    return false;
+  }
+  if (!value || typeof value !== 'object') return false;
+  const message = value as { version?: unknown; type?: unknown };
+  return (
+    message.version === SPOTIFY_WEB_BRIDGE_VERSION &&
+    message.type === 'probe-installed'
+  );
+};

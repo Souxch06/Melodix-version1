@@ -158,15 +158,22 @@ while [ "$_hdone" -eq 0 ]; do
   sleep 5
   _htries=$((_htries + 1))
   capture_web_host_lines
-  if grep -Eq 'bridge_ready|bridge_timeout|network_error|http_error|web_player_inaccessible|navigation_blocked|renderer_destroyed|webview_reconnect_exhausted' "$WEB_HOST_LOGCAT_FILE"; then
+  if grep -Eq 'bridge_ready|probe_installed|bridge_timeout|network_error|http_error|web_player_inaccessible|navigation_blocked|renderer_destroyed|webview_reconnect_exhausted' "$WEB_HOST_LOGCAT_FILE"; then
     _hdone=1
   fi
 done
 if grep -Fq 'bridge_ready' "$WEB_HOST_LOGCAT_FILE"; then
   echo "::notice title=Handshake hôte production::bridge_ready — le pont page ↔ app est établi sur l'hôte de production"
 elif grep -Eq 'bridge_timeout|network_error|http_error|web_player_inaccessible|navigation_blocked|renderer_destroyed|webview_reconnect_exhausted' "$WEB_HOST_LOGCAT_FILE"; then
-  _hcodes=$(grep -Eo 'bridge_timeout|network_error|http_error|web_player_inaccessible|navigation_blocked|renderer_destroyed|webview_reconnect_exhausted' "$WEB_HOST_LOGCAT_FILE" | sort -u | tr '\n' ',' | sed 's/,$//')
+  _hcodes=$(grep -Eo 'probe_installed|bridge_timeout|network_error|http_error|web_player_inaccessible|navigation_blocked|renderer_destroyed|webview_reconnect_exhausted' "$WEB_HOST_LOGCAT_FILE" | sort -u | tr '\n' ',' | sed 's/,$//')
   echo "::warning title=Handshake hôte production::handshake non prêt (codes: ${_hcodes:-inconnu}) — aucune capacité de lecture revendiquée (comportement honnête sans compte Spotify)"
+  # V88 — la sonde PRÉCOCE tranche entre les deux causes possibles d'un
+  # bridge_timeout : pont natif absent, ou injection tardive en échec.
+  if printf '%s' "$_hcodes" | grep -q 'probe_installed'; then
+    echo "::notice title=Sonde précoce (V88)::probe_installed REÇU — le pont natif existe dans le document et l'injection avant contenu a eu lieu ; la panne du handshake est donc dans l'injection TARDIVE"
+  else
+    echo "::notice title=Sonde précoce (V88)::probe_installed ABSENT — le pont natif n'a rien posté depuis le document ; la panne est en amont de l'injection"
+  fi
 else
   _observed=$(grep -F '[MelodixSpotifyWeb]' "$WEB_HOST_LOGCAT_FILE" | grep -Eo '\] [a-z0-9_-]+' | tr -d ']' | sort -u | tr '\n' ',' | sed 's/^, //;s/,$//')
   fail "aucun résultat explicite du handshake de l'hôte de production en logcat (ni bridge_ready ni code de diagnostic) — codes observés: ${_observed:-aucun}"

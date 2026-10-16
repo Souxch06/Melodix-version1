@@ -21,6 +21,19 @@ export type SpotifyWebDiagnosticCode =
   | 'web_player_inaccessible'
   | 'bridge_ready'
   | 'bridge_timeout'
+  /**
+   * V88 — Le script de sonde a été installé AVANT le contenu du document.
+   *
+   * Ce code existe pour lever une ambiguïté de diagnostic : `bridge_timeout`
+   * seul ne permettait pas de distinguer « le pont natif
+   * (`ReactNativeWebView`) n'existait pas » de « le script s'est installé mais
+   * n'a jamais atteint son `ready` ». La sonde précoce est injectée avant le
+   * contenu du document, moment où le pont est déjà défini par
+   * react-native-webview : si ce code arrive et que `bridge_ready` manque, la
+   * panne est dans l'injection tardive ; s'il n'arrive pas non plus, le pont
+   * lui-même est en cause.
+   */
+  | 'probe_installed'
   | 'bridge_message_rejected'
   | 'playback_error'
   | 'session_lost'
@@ -290,6 +303,19 @@ export class SpotifyWebRuntime {
     this.patch({ rendererAvailable: false });
     if (!this.mounted) return;
     this.handleLoss('renderer_destroyed');
+  };
+
+  /**
+   * V88 — La sonde PRÉCOCE a posté depuis le document.
+   *
+   * Prouve que le pont natif existe dans ce contexte et que l'injection avant
+   * contenu a bien eu lieu. Sans ce signal, un `bridge_timeout` reste ambigu
+   * entre « pont absent » et « injection tardive en échec ». Ce code ne fait
+   * PAS aboutir le handshake : seul `ready` le peut.
+   */
+  onProbeInstalled = (): void => {
+    if (!this.mounted) return;
+    this.report('probe_installed');
   };
 
   onNetworkError = (): void => {

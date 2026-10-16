@@ -8,11 +8,13 @@ import { usePreferences } from '@context';
 import { appendDiagLog } from '../../modules/melodix-media';
 import {
   isAllowedSpotifyWebNavigation,
+  isProbeInstalledMessage,
   publishSpotifyWebPublishedState,
   registerSpotifyWebPlaybackHost,
   resolveSpotifyWebPlaybackActivation,
   requestSpotifyWebHostVisible,
   SPOTIFY_WEB_MEDIA_SESSION_PROBE,
+  SPOTIFY_WEB_PROBE_INSTALLED_SCRIPT,
   SpotifyWebBackend,
   SpotifyWebRuntime,
   SpotifyWebTrackTransport,
@@ -360,6 +362,9 @@ export const SpotifyWebHostView = () => {
           cacheEnabled
           domStorageEnabled
           injectedJavaScript={SPOTIFY_WEB_MEDIA_SESSION_PROBE}
+          injectedJavaScriptBeforeContentLoaded={
+            SPOTIFY_WEB_PROBE_INSTALLED_SCRIPT
+          }
           javaScriptEnabled
           key={`spotify-web-host-${webViewGeneration}`}
           mediaPlaybackRequiresUserAction
@@ -379,6 +384,13 @@ export const SpotifyWebHostView = () => {
             runtimeRef.current?.onLoadStart();
           }}
           onMessage={(event) => {
+            // V88 — marqueur de la sonde PRÉCOCE : il prouve que le pont natif
+            // existe dans ce document. Il ne fait pas aboutir le handshake et
+            // n'est pas transmis au transport.
+            if (isProbeInstalledMessage(event.nativeEvent.data)) {
+              runtimeRef.current?.onProbeInstalled();
+              return;
+            }
             const transport = transportRef.current;
             const runtime = runtimeRef.current;
             if (transport && runtime) {
