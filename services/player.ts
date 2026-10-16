@@ -1656,6 +1656,19 @@ class MelodixPlayer {
    * piste JOUER pendant toute la résolution — symptôme exact remonté du
    * téléphone : « le titre change mais le son reste sur l'ancien morceau ».
    * Le silence immédiat est le seul retour honnête pendant le chargement.
+   *
+   * V71 (Priorité 2) — l'intention de V38 est INTÉGRALEMENT conservée, seule
+   * l'attente est retirée. Cause démontrée de la latence : ce `await` bloquait
+   * le départ de la résolution réseau pendant toute la libération native.
+   * Or `unloadAsync()` stoppe le son À L'INTÉRIEUR de l'appel : l'attendre
+   * côté JS ne rendait pas le silence plus rapide, cela décalait seulement le
+   * début de la recherche de source. Le déchargement est donc lancé
+   * immédiatement (silence inchangé) et la résolution démarre en parallèle.
+   *
+   * La barrière « jamais deux sons ensemble » reste garantie ailleurs :
+   * `playIndex` fait `await this.unloadCurrent()` juste avant
+   * `Sound.createAsync`, et `unloadQueue` ENCHAÎNE les opérations — ce second
+   * appel attend donc exactement la libération lancée ici.
    */
   private manualAdvanceToIndex = async (index: number) => {
     const from = this.state.index;
@@ -1664,11 +1677,10 @@ class MelodixPlayer {
         `repeat=${this.state.repeat} hasSound=${this.sound !== null}`
     );
     if (this.sound) {
-      const requestToken = ++this.playToken;
-      await this.unloadCurrent();
-      if (this.playToken !== requestToken) {
-        return; // une commande plus récente a gagné pendant l'unload
-      }
+      // Invalider AVANT le détachement (intention V38) : le resolver de
+      // l'ancien morceau ne doit jamais créer un Sound dépassé.
+      ++this.playToken;
+      void this.unloadCurrent();
     }
     await this.playIndex(index);
   };

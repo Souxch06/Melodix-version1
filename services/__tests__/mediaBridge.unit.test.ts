@@ -1193,4 +1193,87 @@ describe('mediaBridge — projection MediaSession (phase 5A)', () => {
       });
     });
   });
+
+  describe('V71 (Priorité 4) — changements de piste rapides', () => {
+    const emitEngineState = (partial: Partial<PlayerState>): void => {
+      (
+        melodixPlayer as unknown as {
+          emit: (next: Partial<PlayerState>) => void;
+        }
+      ).emit(partial);
+    };
+
+    const playing = (track: PlayerTrack): Partial<PlayerState> => ({
+      queue: [track],
+      index: 0,
+      current: track,
+      status: 'playing',
+      positionMillis: 0,
+      durationMillis: track.durationMillis ?? 0,
+      resolved: null,
+    });
+
+    it('A→B→C en rafale : la dernière projection porte C, aucune intermédiaire ne survit', () => {
+      const morceauA = morceau('a', 'Morceau A');
+      const morceauB = morceau('b', 'Morceau B');
+      const morceauC = morceau('c', 'Morceau C');
+
+      emitEngineState(playing(morceauA));
+      emitEngineState(playing(morceauB));
+      emitEngineState(playing(morceauC));
+
+      // Trois signatures distinctes ⇒ trois projections, dans l'ordre.
+      expect(mockUpdateSession).toHaveBeenCalledTimes(3);
+
+      const lastCall =
+        mockUpdateSession.mock.calls[mockUpdateSession.mock.calls.length - 1];
+      // La notification ne reste PAS figée sur un morceau intermédiaire.
+      expect(lastCall[0]).toMatchObject({
+        trackId: morceauC.id,
+        title: 'Morceau C',
+      });
+
+      const projectedTitles = mockUpdateSession.mock.calls.map(
+        (call) => call[0].title
+      );
+      expect(projectedTitles).toEqual(['Morceau A', 'Morceau B', 'Morceau C']);
+    });
+
+    it('un échec sur B n’empêche pas C d’être projeté correctement', () => {
+      const morceauA = morceau('a', 'Morceau A');
+      const morceauB = morceau('b', 'Morceau B');
+      const morceauC = morceau('c', 'Morceau C');
+
+      emitEngineState(playing(morceauA));
+
+      // Android jette sur B.
+      mockUpdateSession.mockImplementationOnce(() => {
+        throw new Error('native projection failed');
+      });
+      emitEngineState(playing(morceauB));
+      emitEngineState(playing(morceauC));
+
+      const lastCall =
+        mockUpdateSession.mock.calls[mockUpdateSession.mock.calls.length - 1];
+      expect(lastCall[0]).toMatchObject({
+        trackId: morceauC.id,
+        title: 'Morceau C',
+        isPlaying: true,
+      });
+    });
+
+    it('retour au morceau précédent : nouvelle projection (pas de déduplication abusive)', () => {
+      const morceauA = morceau('a', 'Morceau A');
+      const morceauB = morceau('b', 'Morceau B');
+
+      emitEngineState(playing(morceauA));
+      emitEngineState(playing(morceauB));
+      emitEngineState(playing(morceauA));
+
+      expect(mockUpdateSession).toHaveBeenCalledTimes(3);
+      const lastCall =
+        mockUpdateSession.mock.calls[mockUpdateSession.mock.calls.length - 1];
+      expect(lastCall[0]).toMatchObject({ trackId: morceauA.id });
+    });
+  });
 });

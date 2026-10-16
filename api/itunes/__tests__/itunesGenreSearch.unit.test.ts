@@ -171,3 +171,111 @@ describe('matchesItunesGenre — correspondance de genre', () => {
     expect(missing).toEqual([]);
   });
 });
+
+describe('V71 (Priorité 3) — les cinq catégories avec des réponses réalistes', () => {
+  /**
+   * Réponses construites sur la forme RÉELLE d'un résultat iTunes
+   * (`wrapperType:"track"`, `primaryGenreName`, `previewUrl`…), en mélangeant
+   * volontairement : correspondances exactes, hors-genre, et titres dont le
+   * NOM contient le mot de la catégorie (le symptôme rapporté).
+   */
+  const scenarios: {
+    id: string;
+    label: string;
+    rows: [number, string, string][];
+    expectedOrder: number[];
+  }[] = [
+    {
+      id: 'jazz',
+      label: 'Jazz',
+      rows: [
+        [1, 'Jazz', 'Groupe Pop'], // titre littéral, genre Pop
+        [2, 'So What', 'Miles Davis'],
+        [3, 'Take Five', 'Dave Brubeck'],
+      ],
+      expectedOrder: [2, 3, 1],
+    },
+    {
+      id: 'pop',
+      label: 'Pop',
+      rows: [
+        [10, 'Pop', 'Artiste Rock'],
+        [11, 'Levitating', 'Dua Lipa'],
+        [12, 'Blinding Lights', 'The Weeknd'],
+      ],
+      expectedOrder: [11, 12, 10],
+    },
+    {
+      id: 'rock',
+      label: 'Rock',
+      rows: [
+        [20, 'Rock', 'Artiste Électro'],
+        [21, 'Smells Like Teen Spirit', 'Nirvana'],
+        [22, 'Back in Black', 'AC/DC'],
+      ],
+      expectedOrder: [21, 22, 20],
+    },
+    {
+      id: 'hiphop',
+      label: 'Hip-Hop / Rap',
+      rows: [
+        [30, 'Rap', 'Artiste Pop'],
+        [31, 'Sicko Mode', 'Travis Scott'],
+        [32, 'Juicy', 'The Notorious B.I.G.'],
+      ],
+      expectedOrder: [31, 32, 30],
+    },
+    {
+      id: 'electronic',
+      label: 'Électronique',
+      rows: [
+        [40, 'Electro', 'Artiste Jazz'],
+        [41, 'Strobe', 'deadmau5'],
+        [42, 'Around the World', 'Daft Punk'],
+      ],
+      expectedOrder: [41, 42, 40],
+    },
+  ];
+
+  const genreOf = (id: string): string =>
+    ({
+      jazz: 'Jazz',
+      pop: 'Pop',
+      rock: 'Rock',
+      hiphop: 'Hip-Hop/Rap',
+      electronic: 'Electronic',
+    })[id] as string;
+
+  it.each(scenarios)(
+    '$label : les correspondances de genre passent avant le titre homonyme',
+    async ({ id, label, rows, expectedOrder }) => {
+      mockFetchOnce(
+        jsonResponse(
+          rows.map(([trackId, trackName, artistName]) =>
+            song({
+              trackId,
+              trackName,
+              artistName,
+              // Le hors-genre reçoit un genre DIFFÉRENT de la catégorie.
+              primaryGenreName:
+                trackName.toLowerCase() === id.slice(0, 4).toLowerCase() ||
+                ['Jazz', 'Pop', 'Rock', 'Rap', 'Electro'].includes(trackName)
+                  ? 'Country'
+                  : genreOf(id),
+            })
+          )
+        )
+      );
+
+      const items = await searchItunesTracks(label, 50, { genreId: id });
+
+      expect(
+        items.map((item) => Number(item.id.replace('itunes:', '')))
+      ).toEqual(expectedOrder);
+      // Aucune perte : les trois titres restent disponibles.
+      expect(items).toHaveLength(3);
+      // La requête porte bien l'attribut de genre documenté.
+      expect(requestedParams().get('attribute')).toBe('genreIndex');
+    }
+  );
+});

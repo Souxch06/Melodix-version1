@@ -479,3 +479,79 @@ describe('recherche progressive — artistes iTunes (V69)', () => {
     expect(final.results.artists).toEqual([]);
   });
 });
+
+describe('V71 (Priorité 3) — propagation du genre jusqu’à la source iTunes', () => {
+  it('une catégorie transmet son id à searchItunesTracks', async () => {
+    mockedItunesSearch.mockImplementation(() =>
+      after(50, [track('itunes:9', 'So What', 'Miles Davis')])
+    );
+
+    const { onUpdate } = collectUpdates();
+    searchCatalogProgressive('Jazz', onUpdate, {
+      genre: { id: 'jazz', label: 'Jazz' },
+    });
+    await jest.advanceTimersByTimeAsync(5_000);
+
+    // PREUVE de propagation : la source reçoit l'id de la catégorie, pas
+    // seulement le libellé. Sans cela la recherche redeviendrait textuelle.
+    // NB : la limite arrive `undefined` dans CE banc parce que son mock de
+    // `../../itunes` ne définit pas ITUNES_SEARCH_LIMIT — sans effet sur ce
+    // qui est prouvé ici (la propagation du genre).
+    expect(mockedItunesSearch).toHaveBeenCalledWith(
+      'Jazz',
+      undefined,
+      expect.objectContaining({ genreId: 'jazz' })
+    );
+  });
+
+  it('une saisie libre ne transmet AUCUN genre', async () => {
+    mockedItunesSearch.mockImplementation(() =>
+      after(50, [track('itunes:9', 'Song I', 'Artist I')])
+    );
+
+    const { onUpdate } = collectUpdates();
+    searchCatalogProgressive('jazz', onUpdate);
+    await jest.advanceTimersByTimeAsync(5_000);
+
+    expect(mockedItunesSearch).toHaveBeenCalledWith(
+      'jazz',
+      undefined,
+      expect.objectContaining({ genreId: undefined })
+    );
+  });
+
+  it('catégorie et saisie homonyme ne partagent PAS la même entrée de cache', async () => {
+    // Les DEUX requêtes portent le même mot ; seule l'OPTION de genre diffère.
+    // C'est exactement le cas que la clé de cache doit séparer.
+    mockedItunesSearch.mockImplementation(
+      (_query: string, _limit?: number, options?: { genreId?: string }) =>
+        after(50, [
+          options?.genreId
+            ? track('itunes:111', 'So What', 'Miles Davis')
+            : track('itunes:222', 'Jazz (Titre)', 'Autre'),
+        ])
+    );
+
+    const categoryRun = collectUpdates();
+    searchCatalogProgressive('Jazz', categoryRun.onUpdate, {
+      genre: { id: 'jazz', label: 'Jazz' },
+    });
+    await jest.advanceTimersByTimeAsync(5_000);
+
+    const freeRun = collectUpdates();
+    searchCatalogProgressive('Jazz', freeRun.onUpdate);
+    await jest.advanceTimersByTimeAsync(5_000);
+
+    // Deux contrats de requête différents ⇒ deux résultats différents. Avant
+    // V70 ils partageaient la clé de cache et se contaminaient.
+    const categoryIds = categoryRun.updates[
+      categoryRun.updates.length - 1
+    ].results.tracks.map((t) => t.id);
+    const freeIds = freeRun.updates[
+      freeRun.updates.length - 1
+    ].results.tracks.map((t) => t.id);
+
+    expect(categoryIds).toContain('itunes:111');
+    expect(freeIds).toContain('itunes:222');
+  });
+});
