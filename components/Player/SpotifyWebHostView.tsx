@@ -46,6 +46,21 @@ type WebViewWithLoadUrl = WebView & {
 };
 
 /**
+ * V91 — libellé HUMAIN d'une cause de perte, sans jamais publier d'URL ni de
+ * contenu : uniquement des causes de cycle de vie contrôlées.
+ */
+const lossCauseLabel = (cause: string | null | undefined): string | null =>
+  cause === 'load_timeout'
+    ? 'chargement interrompu'
+    : cause === 'bridge_timeout'
+      ? 'pont muet'
+      : cause === 'network_error'
+        ? 'erreur réseau'
+        : cause === 'renderer_destroyed'
+          ? 'renderer détruit'
+          : null;
+
+/**
  * Hôte de production de la lecture Spotify Web.
  *
  * Possède le document Spotify (WebView) ET le pont (backend + runtime +
@@ -336,6 +351,12 @@ export const SpotifyWebHostView = () => {
     publishSpotifyWebPublishedState(null);
   }, [enabled]);
 
+  /**
+   * V91 — libellés HONNÊTES : `loading` (page en cours), `awaiting-bridge`
+   * (page chargée, handshake attendu), `recovering`, `failed`. Avant, les
+   * deux premiers disaient tous deux « chargement » : impossible de lire
+   * depuis l'écran *où* le pont était bloqué.
+   */
   const bridgeLabel = !enabled
     ? 'inactif'
     : !runtimeSnapshot
@@ -348,7 +369,11 @@ export const SpotifyWebHostView = () => {
             ? `reconnexion ${runtimeSnapshot.reconnectAttempt}/${runtimeSnapshot.maxReconnectAttempts}`
             : runtimeSnapshot.phase === 'failed'
               ? 'échec (rechargement manuel requis)'
-              : 'chargement';
+              : runtimeSnapshot.phase === 'awaiting-bridge'
+                ? 'attente du pont'
+                : runtimeSnapshot.phase === 'idle'
+                  ? 'inactif'
+                  : 'chargement de la page';
 
   // Mission v9 — le budget de reconnexion automatique est borné (3
   // tentatives, backoff) et passe en phase `failed` : sans levier manuel,
@@ -396,6 +421,48 @@ export const SpotifyWebHostView = () => {
       !runtimeSnapshot.rendererAvailable ||
       runtimeSnapshot.phase !== 'ready');
 
+  /**
+   * V91 — temps écoulé dans la phase courante. Le battement (1 s) ne tourne
+   * QUE lorsque le bandeau est affiché et que quelque chose ne va pas ; au
+   * repos (`ready`), aucun timer n'est créé.
+   */
+  const attentionVisible =
+    displayed &&
+    runtimeSnapshot !== null &&
+    runtimeSnapshot.phase !== 'ready' &&
+    runtimeSnapshot.phase !== 'idle';
+  const phaseStartedAt = runtimeSnapshot?.phaseStartedAt ?? null;
+  const [elapsedSeconds, setElapsedSeconds] = React.useState<number | null>(
+    null
+  );
+  React.useEffect(() => {
+    if (!attentionVisible || phaseStartedAt === null) {
+      setElapsedSeconds(null);
+      return undefined;
+    }
+    const tick = () =>
+      setElapsedSeconds(
+        Math.max(0, Math.floor((Date.now() - phaseStartedAt) / 1000))
+      );
+    tick();
+    const timer = setInterval(tick, 1000);
+    return () => clearInterval(timer);
+  }, [attentionVisible, phaseStartedAt]);
+
+  /**
+   * V91 — « Pont : <état> · <secondes> s · <cause> ». Aucune donnée de page :
+   * uniquement des libellés contrôlés et un horodatage de phase.
+   */
+  const bridgeStatusText = [
+    `Pont : ${bridgeLabel}`,
+    elapsedSeconds !== null && elapsedSeconds > 0
+      ? `${elapsedSeconds} s`
+      : null,
+    lossCauseLabel(runtimeSnapshot?.lossCause),
+  ]
+    .filter((part): part is string => part !== null)
+    .join(' · ');
+
   if (!enabled) {
     return null;
   }
@@ -430,11 +497,24 @@ export const SpotifyWebHostView = () => {
             )
           }
           onLoadEnd={() => runtimeRef.current?.onLoadEnd()}
-          onLoadStart={() => {
-            // Nouveau document : la preuve de pipeline (bridge-state) se
-            // re-ouvre — l'ancienne ne vaut que pour l'ancien renderer.
-            bridgeStateSeenRef.current = false;
-            runtimeRef.current?.onLoadStart();
+          onLoadStart={(event) => {
+            // V91 — Android émet `onLoadStart` AUSSI pour les mises à jour
+            // d'historique d'une SPA (`RNCWebViewClient.doUpdateVisitedHistory`,
+            // vérifié dans la version installée) : l'événement natif porte
+            // alors `loading: false` (`!mLastLoadFailed && progress != 100`).
+            // C'est le MÊME document : le pont ne doit pas être rouvert,
+            // sinon plus aucun `ready` n'arrive pour lui (blocage V90).
+            //
+            // Le champ est un INDICE, pas une barrière : s'il manque, on
+            // retombe sur le comportement historique (nouveau document), et
+            // le watchdog du runtime interdit un blocage définitif.
+            const sameDocument = event?.nativeEvent?.loading === false;
+            if (!sameDocument) {
+              // Nouveau document : la preuve de pipeline (bridge-state) se
+              // re-ouvre — l'ancienne ne vaut que pour l'ancien renderer.
+              bridgeStateSeenRef.current = false;
+            }
+            runtimeRef.current?.onLoadStart({ sameDocument });
           }}
           onMessage={(event) => {
             const transport = transportRef.current;
@@ -503,7 +583,7 @@ export const SpotifyWebHostView = () => {
                 style={styles.overlayStatus}
                 testID="spotify-web-overlay-status"
               >
-                Pont : {bridgeLabel}
+                {bridgeStatusText}
               </Text>
             </View>
             {showCloseButton && (

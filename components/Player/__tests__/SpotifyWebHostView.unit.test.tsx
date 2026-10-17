@@ -501,7 +501,10 @@ describe('SpotifyWebHostView — V17 : traces logcat [MelodixSpotifyWeb]', () =>
   /** Props WebView câblées par la vue (sous-ensemble utile au test). */
   type WebViewHandlers = {
     onMessage: (event: { nativeEvent: { data: string } }) => void;
-    onLoadStart: () => void;
+    /** V91 — l'événement natif porte `loading` (absent = comportement historique). */
+    onLoadStart: (event?: {
+      nativeEvent: { loading?: boolean; url?: string };
+    }) => void;
     onLoadEnd: () => void;
   };
   const webViewProps = (): WebViewHandlers | null =>
@@ -587,6 +590,89 @@ describe('SpotifyWebHostView — V17 : traces logcat [MelodixSpotifyWeb]', () =>
     fakes.setBridgeMessageResult('ignored');
     props!.onMessage({ nativeEvent: { data: '{"status":"state"}' } });
     expect(traceCalls().filter((t) => t === 'bridge-state')).toHaveLength(0);
+  });
+
+  it('V91 — un onLoadStart d’historique (loading:false) est transmis comme sameDocument et ne rouvre pas la preuve', () => {
+    render(<SpotifyWebHostView />);
+    const props = webViewProps();
+    expect(props).not.toBeNull();
+
+    fakes.setBridgeMessageResult('state-updated');
+    props!.onMessage({ nativeEvent: { data: '{"status":"state"}' } });
+    expect(traceCalls().filter((t) => t === 'bridge-state')).toHaveLength(1);
+
+    // pushState Android : le même document, `loading` vaut false.
+    props!.onLoadStart({
+      nativeEvent: { loading: false, url: 'https://open.spotify.com/album/x' },
+    });
+    expect(fakes.lastRuntime?.onLoadStart).toHaveBeenCalledWith({
+      sameDocument: true,
+    });
+
+    // Même document : la preuve de pipeline reste celle du document courant.
+    props!.onMessage({ nativeEvent: { data: '{"status":"state"}' } });
+    expect(traceCalls().filter((t) => t === 'bridge-state')).toHaveLength(1);
+  });
+
+  it('V91 — un nouveau document (loading:true) rouvre la preuve de pipeline', () => {
+    render(<SpotifyWebHostView />);
+    const props = webViewProps();
+    expect(props).not.toBeNull();
+
+    fakes.setBridgeMessageResult('state-updated');
+    props!.onMessage({ nativeEvent: { data: '{"status":"state"}' } });
+    expect(traceCalls().filter((t) => t === 'bridge-state')).toHaveLength(1);
+
+    props!.onLoadStart({
+      nativeEvent: { loading: true, url: 'https://open.spotify.com/' },
+    });
+    expect(fakes.lastRuntime?.onLoadStart).toHaveBeenCalledWith({
+      sameDocument: false,
+    });
+
+    props!.onMessage({ nativeEvent: { data: '{"status":"state"}' } });
+    expect(traceCalls().filter((t) => t === 'bridge-state')).toHaveLength(2);
+  });
+
+  it('V91 — le bandeau distingue « chargement de la page » et « attente du pont »', () => {
+    fakes.emitSnapshot({ phase: 'loading', bridgeReady: false });
+    const { getByTestId, rerender } = render(<SpotifyWebHostView />);
+    fakes.emitOverlayVisible(true);
+    rerender(<SpotifyWebHostView />);
+
+    expect(
+      childrenToText(getByTestId('spotify-web-overlay-status').props.children)
+    ).toContain('chargement de la page');
+
+    act(() => {
+      fakes.emitSnapshot({ phase: 'awaiting-bridge', bridgeReady: false });
+    });
+    expect(
+      childrenToText(getByTestId('spotify-web-overlay-status').props.children)
+    ).toContain('attente du pont');
+  });
+
+  it('V91 — échec par watchdog : cause et temps écoulé affichés, bouton « Recharger » disponible', () => {
+    fakes.emitSnapshot({
+      phase: 'failed',
+      bridgeReady: false,
+      lossCause: 'load_timeout',
+      phaseStartedAt: Date.now() - 12_500,
+    });
+    const { getByTestId, rerender } = render(<SpotifyWebHostView />);
+    fakes.emitOverlayVisible(true);
+    rerender(<SpotifyWebHostView />);
+
+    const statusText = childrenToText(
+      getByTestId('spotify-web-overlay-status').props.children
+    );
+    expect(statusText).toContain('échec');
+    // Cause HUMAINE de la perte, jamais l'URL ni le contenu de la page.
+    expect(statusText).toContain('chargement interrompu');
+    // Temps écoulé dans la phase (12 s mesurées, tolérance d'exécution).
+    expect(statusText).toMatch(/1[23] s/);
+    // La porte de sortie reste accessible.
+    expect(getByTestId('spotify-web-overlay-reload')).toBeTruthy();
   });
 });
 

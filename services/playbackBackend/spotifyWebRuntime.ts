@@ -26,7 +26,25 @@ export type SpotifyWebDiagnosticCode =
   | 'session_lost'
   | 'navigation_blocked'
   | 'webview_reconnecting'
-  | 'webview_reconnect_exhausted';
+  | 'webview_reconnect_exhausted'
+  /**
+   * V91 — le document n'a pas terminé son chargement dans le budget
+   * (`DEFAULT_SPOTIFY_WEB_DOCUMENT_LOAD_TIMEOUT_MS`). Sans ce code, une page
+   * qui n'émet jamais `onLoadEnd` laissait la phase `loading` éternelle.
+   */
+  | 'load_timeout'
+  /**
+   * V91 — `onLoadStart` s'est déclenché pour le MÊME document (mise à jour
+   * d'historique d'une SPA). Le pont, la session et la lecture survivent :
+   * ce n'est PAS un nouveau document.
+   */
+  | 'webview_spa_navigation'
+  /**
+   * V91 — un rechargement de récupération n'a produit aucun document dans le
+   * budget : la tentative suivante est planifiée (ou `failed` si le budget
+   * de reconnexion est épuisé).
+   */
+  | 'webview_reconnect_stalled';
 
 export const classifySpotifyWebUrl = (rawUrl: unknown): SpotifyWebPageKind => {
   if (typeof rawUrl !== 'string') return 'blocked';
@@ -81,7 +99,9 @@ export type SpotifyWebRuntimePhase =
 export type SpotifyWebRuntimeLossCause =
   | 'renderer_destroyed'
   | 'network_error'
-  | 'bridge_timeout';
+  | 'bridge_timeout'
+  /** V91 — le document n'a jamais fini de charger (watchdog de chargement). */
+  | 'load_timeout';
 
 /**
  * 'reload' reuses the native WebView; 'remount' recreates it because the
@@ -99,6 +119,12 @@ export type SpotifyWebRuntimeSnapshot = {
   lossCause: SpotifyWebRuntimeLossCause | null;
   reconnectAttempt: number;
   maxReconnectAttempts: number;
+  /**
+   * V91 — horodatage (ms epoch) du début de la phase courante. Permet aux
+   * diagnostics d'afficher un temps écoulé sans publier ni jeton ni URL.
+   * Optionnel : les doubles de test antérieurs à V91 ne le fournissent pas.
+   */
+  phaseStartedAt?: number;
 };
 
 /**
@@ -109,7 +135,7 @@ export type SpotifyWebRuntimeBackendPort = {
   beginRuntimeSession: () => number;
   markRuntimeUnavailable: (
     session: number,
-    errorCode: 'bridge_timeout' | 'renderer_destroyed'
+    errorCode: 'bridge_timeout' | 'renderer_destroyed' | 'load_timeout'
   ) => boolean;
   receiveBridgeMessage: (raw: unknown) => SpotifyWebBridgeResult;
   updateState: (input: SpotifyWebPlaybackInput) => void;
@@ -129,6 +155,22 @@ const defaultScheduler: SpotifyWebRuntimeScheduler = {
 };
 
 export const DEFAULT_SPOTIFY_WEB_BRIDGE_READY_TIMEOUT_MS = 8_000;
+/**
+ * V91 — WATCHDOG DE CHARGEMENT.
+ *
+ * Budget donné à un document pour passer de l'ouverture de sa session au
+ * début du handshake (`onLoadStart` → `onLoadEnd`). 30 s couvrent un premier
+ * chargement Spotify sur réseau mobile lent sans jamais laisser une phase
+ * `loading` éternelle — c'était le blocage constaté en V90 : sans
+ * `onLoadEnd`, aucun délai n'était armé et la vue restait sur
+ * « chargement » indéfiniment.
+ *
+ * Les deux budgets ne se chevauchent JAMAIS : celui-ci court pendant
+ * `loading`, celui du handshake (`bridgeReadyTimeoutMs`) ne commence qu'à
+ * `onLoadEnd`. Le même budget sert de garde à un rechargement de
+ * récupération qui ne produirait aucun document.
+ */
+export const DEFAULT_SPOTIFY_WEB_DOCUMENT_LOAD_TIMEOUT_MS = 30_000;
 export const DEFAULT_SPOTIFY_WEB_AUTO_RECONNECT_MAX_ATTEMPTS = 3;
 export const DEFAULT_SPOTIFY_WEB_AUTO_RECONNECT_BASE_DELAY_MS = 1_500;
 export const DEFAULT_SPOTIFY_WEB_AUTO_RECONNECT_MAX_DELAY_MS = 15_000;
@@ -141,6 +183,12 @@ export type SpotifyWebRuntimeOptions = {
   reloadWebView?: (scope: SpotifyWebRuntimeReconnectScope) => void;
   scheduler?: SpotifyWebRuntimeScheduler;
   bridgeReadyTimeoutMs?: number;
+  /**
+   * V91 — budget MAXIMAL d'un document, du début de son chargement au début
+   * du handshake (`onLoadStart`/`mount` .. `onLoadEnd`), et budget accordé à
+   * un rechargement de récupération pour produire un nouveau document.
+   */
+  documentLoadTimeoutMs?: number;
   autoReconnectMaxAttempts?: number;
   autoReconnectBaseDelayMs?: number;
   autoReconnectMaxDelayMs?: number;
@@ -169,6 +217,8 @@ const boundedNumber = (
 export class SpotifyWebRuntime {
   readonly bridgeReadyTimeoutMs: number;
   readonly maxReconnectAttempts: number;
+  /** V91 — budget de chargement d'un document (watchdog anti-blocage). */
+  readonly documentLoadTimeoutMs: number;
 
   private readonly backend: SpotifyWebRuntimeBackendPort;
   private readonly reportListener:
@@ -187,7 +237,13 @@ export class SpotifyWebRuntime {
   private sawLogin = false;
   private backgrounded = false;
   private reconnectDeferred = false;
-  private readyTimer: unknown = null;
+  /**
+   * V91 — UN SEUL emplacement d'échéance, ré-armé à chaque changement de
+   * portée (`loading` → `awaiting-bridge` → `recovering`). Deux timers
+   * simultanés pour la même attente seraient redondants et pourraient se
+   * contredire.
+   */
+  private deadlineTimer: unknown = null;
   private reconnectTimer: unknown = null;
   private listeners = new Set<(snapshot: SpotifyWebRuntimeSnapshot) => void>();
   private snapshot: SpotifyWebRuntimeSnapshot = {
@@ -200,6 +256,7 @@ export class SpotifyWebRuntime {
     lossCause: null,
     reconnectAttempt: 0,
     maxReconnectAttempts: DEFAULT_SPOTIFY_WEB_AUTO_RECONNECT_MAX_ATTEMPTS,
+    phaseStartedAt: Date.now(),
   };
 
   constructor(options: SpotifyWebRuntimeOptions) {
@@ -216,6 +273,11 @@ export class SpotifyWebRuntime {
       options.autoReconnectMaxAttempts,
       DEFAULT_SPOTIFY_WEB_AUTO_RECONNECT_MAX_ATTEMPTS,
       0
+    );
+    this.documentLoadTimeoutMs = boundedNumber(
+      options.documentLoadTimeoutMs,
+      DEFAULT_SPOTIFY_WEB_DOCUMENT_LOAD_TIMEOUT_MS,
+      1
     );
     this.autoReconnectBaseDelayMs = boundedNumber(
       options.autoReconnectBaseDelayMs,
@@ -266,12 +328,36 @@ export class SpotifyWebRuntime {
       bridgeReady: false,
       lossCause: null,
       reconnectAttempt: 0,
+      phaseStartedAt: Date.now(),
     });
   };
 
-  /** A new document supersedes any in-flight handshake or scheduled retry. */
-  onLoadStart = (): void => {
+  /**
+   * V91 — un `onLoadStart` n'est un nouveau document QUE s'il ne s'agit pas
+   * d'une mise à jour d'historique du document courant.
+   *
+   * Android émet `onLoadStart` pour `pushState`/`replaceState`
+   * (`RNCWebViewClient.doUpdateVisitedHistory`, vérifié dans la version
+   * installée 13.8.6) : l'événement natif porte alors `loading: false`
+   * (`!mLastLoadFailed && progress != 100`). Sans cette distinction, chaque
+   * navigation interne de la SPA condamnait le pont — et aucun `ready`
+   * n'était rejoué pour ce même document (V90).
+   *
+   * Le champ n'est utilisé QUE comme un indice, jamais comme une barrière :
+   *  - `sameDocument` vrai ET pont déjà prêt → le document est le même, rien
+   *    n'est rouvert (le pont, la session et la lecture survivent) ;
+   *  - tout le reste (drapeau absent, phase non prête) → nouveau document,
+   *    avec le watchdog de chargement qui interdit un blocage définitif.
+   */
+  onLoadStart = (info?: { sameDocument?: boolean }): void => {
     if (!this.mounted) return;
+    if (info?.sameDocument === true && this.snapshot.phase === 'ready') {
+      // Même document : le `ready` déjà obtenu vaut pour celui-ci. Aucune
+      // réinjection (la sonde s'injecte à `onPageFinished`), aucune nouvelle
+      // session, aucun timer.
+      this.report('webview_spa_navigation');
+      return;
+    }
     this.beginDocumentLoad();
     this.report('webview_loading');
   };
@@ -281,8 +367,10 @@ export class SpotifyWebRuntime {
     this.report('webview_loaded');
     // Sub-frame ends and late events never re-arm the handshake deadline.
     if (this.snapshot.phase !== 'loading') return;
-    this.patch({ phase: 'awaiting-bridge' });
-    this.armReadyTimer();
+    this.patch({ phase: 'awaiting-bridge', phaseStartedAt: Date.now() });
+    // Le budget de chargement est remplacé par celui du handshake : un seul
+    // timer actif, jamais deux attentes concurrentes.
+    this.armDeadline('awaiting-bridge', this.bridgeReadyTimeoutMs);
   };
 
   onRendererGone = (): void => {
@@ -320,6 +408,7 @@ export class SpotifyWebRuntime {
     if (result === 'ready' && this.mounted) {
       // A live document that finishes the handshake late is better than a
       // reload: it cancels any pending reconnect and reopens state intake.
+      const wasReady = this.snapshot.phase === 'ready';
       this.clearTimers();
       this.reconnectDeferred = false;
       this.patch({
@@ -327,8 +416,14 @@ export class SpotifyWebRuntime {
         bridgeReady: true,
         lossCause: null,
         reconnectAttempt: 0,
+        phaseStartedAt: wasReady ? this.snapshot.phaseStartedAt : Date.now(),
       });
-      this.report('bridge_ready');
+      // V91 — un `ready` rejoué pour un document déjà prêt (sonde réinjectée
+      // après une navigation d'historique) ne redéclare pas l'événement :
+      // une ligne de diagnostic par handshake réel.
+      if (!wasReady) {
+        this.report('bridge_ready');
+      }
     } else if (result === 'rejected') {
       this.report('bridge_message_rejected');
     }
@@ -394,25 +489,73 @@ export class SpotifyWebRuntime {
       phase: 'loading',
       bridgeReady: false,
       lossCause: null,
+      phaseStartedAt: Date.now(),
     });
+    // V91 — WATCHDOG : même si `onLoadEnd` n'arrive JAMAIS (page qui pend,
+    // document interrompu, navigation silencieuse), la phase `loading` a une
+    // échéance. Sans lui, la vue restait indéfiniment sur « chargement ».
+    this.armDeadline('loading', this.documentLoadTimeoutMs);
   };
 
-  private armReadyTimer = (): void => {
-    this.clearReadyTimer();
+  /**
+   * V91 — arme l'unique échéance du document courant.
+   *
+   * Trois portées, jamais simultanées :
+   *  - `loading` : le document doit finir de charger (watchdog de chargement) ;
+   *  - `awaiting-bridge` : le handshake doit répondre (délai historique 8 s) ;
+   *  - `recovering` : le rechargement demandé doit produire un document.
+   *
+   * La session est capturée : une échéance d'une session PÉRIMÉE ne touche
+   * jamais la nouvelle (`session !== this.session` → inerte), et la portée
+   * est vérifiée : une transition déjà effectuée invalide l'échéance.
+   */
+  private armDeadline = (
+    scope: 'loading' | 'awaiting-bridge' | 'recovering',
+    timeoutMs: number
+  ): void => {
+    this.clearDeadlineTimer();
     const session = this.session;
-    this.readyTimer = this.scheduler.set(() => {
-      this.readyTimer = null;
+    this.deadlineTimer = this.scheduler.set(() => {
+      this.deadlineTimer = null;
+      // Échéance d'une ancienne session : strictement inerte.
       if (!this.mounted || session !== this.session) return;
-      if (this.snapshot.phase !== 'awaiting-bridge') return;
-      this.handleLoss('bridge_timeout');
-    }, this.bridgeReadyTimeoutMs);
+      // La phase a déjà changé : cette attente n'est plus la courante.
+      if (this.snapshot.phase !== scope) return;
+      if (scope === 'loading') {
+        this.handleLoss('load_timeout');
+        return;
+      }
+      if (scope === 'awaiting-bridge') {
+        this.handleLoss('bridge_timeout');
+        return;
+      }
+      this.handleReconnectStall();
+    }, timeoutMs);
+  };
+
+  /**
+   * V91 — un rechargement de récupération n'a produit aucun document dans le
+   * budget : la tentative suivante est planifiée (le budget borné existant
+   * finit en `failed`, donc le bouton « Recharger » est toujours atteignable).
+   */
+  private handleReconnectStall = (): void => {
+    if (!this.mounted || this.snapshot.phase !== 'recovering') return;
+    if (this.backgrounded) {
+      // En arrière-plan, Android peut geler les timers : on ne consomme pas
+      // une tentative. Le retour au premier plan reprend la récupération
+      // (même chemin que le backoff différé).
+      this.reconnectDeferred = true;
+      return;
+    }
+    this.report('webview_reconnect_stalled');
+    this.scheduleReconnect();
   };
 
   /** One document may only drive recovery once, whatever event arrives first. */
   private handleLoss = (cause: SpotifyWebRuntimeLossCause): void => {
     if (this.lossHandledForSession === this.session) return;
     this.lossHandledForSession = this.session;
-    this.clearReadyTimer();
+    this.clearDeadlineTimer();
     if (cause === 'network_error') {
       // Parity with the validated backend contract: a load failure marks the
       // state as error; the handshake gate itself is reset by the next
@@ -433,7 +576,9 @@ export class SpotifyWebRuntime {
   private scheduleReconnect = (): void => {
     const attempt = this.snapshot.reconnectAttempt + 1;
     if (attempt > this.maxReconnectAttempts) {
-      this.patch({ phase: 'failed' });
+      // État TERMINAL honnête : l'utilisateur garde la porte de sortie
+      // (bouton « Recharger », visible en `recovering` ET en `failed`).
+      this.patch({ phase: 'failed', phaseStartedAt: Date.now() });
       this.report('webview_reconnect_exhausted');
       return;
     }
@@ -441,7 +586,11 @@ export class SpotifyWebRuntime {
       this.autoReconnectBaseDelayMs * 2 ** (attempt - 1),
       this.autoReconnectMaxDelayMs
     );
-    this.patch({ phase: 'recovering', reconnectAttempt: attempt });
+    this.patch({
+      phase: 'recovering',
+      reconnectAttempt: attempt,
+      phaseStartedAt: Date.now(),
+    });
     this.report(
       'webview_reconnecting',
       `tentative ${attempt}/${this.maxReconnectAttempts}`
@@ -470,12 +619,20 @@ export class SpotifyWebRuntime {
       this.patch({ rendererAvailable: true });
     }
     this.reloadWebView?.(scope);
+    // V91 — le rechargement DEMANDÉ doit produire un document : sans cette
+    // garde, un `reload()` qui n'émet aucun événement laisserait la phase
+    // `recovering` sans fin (même classe de blocage que le `loading` éternel).
+    // Un rechargement manuel, lui, est déjà couvert par le watchdog de
+    // `beginDocumentLoad` (phase `loading`).
+    if (this.snapshot.phase === 'recovering') {
+      this.armDeadline('recovering', this.documentLoadTimeoutMs);
+    }
   };
 
-  private clearReadyTimer = (): void => {
-    if (this.readyTimer !== null) {
-      this.scheduler.clear(this.readyTimer);
-      this.readyTimer = null;
+  private clearDeadlineTimer = (): void => {
+    if (this.deadlineTimer !== null) {
+      this.scheduler.clear(this.deadlineTimer);
+      this.deadlineTimer = null;
     }
   };
 
@@ -487,7 +644,7 @@ export class SpotifyWebRuntime {
   };
 
   private clearTimers = (): void => {
-    this.clearReadyTimer();
+    this.clearDeadlineTimer();
     this.clearReconnectTimer();
   };
 

@@ -187,7 +187,7 @@ export class SpotifyWebBackend implements PlaybackBackend {
 
   markRuntimeUnavailable = (
     session: number,
-    errorCode: 'bridge_timeout' | 'renderer_destroyed'
+    errorCode: 'bridge_timeout' | 'renderer_destroyed' | 'load_timeout'
   ): boolean => {
     if (session !== this.runtimeSession) return false;
     this.bridgeReady = false;
@@ -199,10 +199,12 @@ export class SpotifyWebBackend implements PlaybackBackend {
     //    WebView. Il doit être ignoré, sinon la porte rouverte laisse passer
     //    le message `state` qui le suit immédiatement.
     //
-    //  - `bridge_timeout` : la page est peut-être seulement LENTE. Son
-    //    `ready` peut légitimement arriver pendant le backoff, et le
-    //    rattraper vaut mieux qu'un rechargement. Le runtime s'appuie
-    //    explicitement sur ce comportement.
+    //  - `bridge_timeout` / `load_timeout` : la page est peut-être seulement
+    //    LENTE. Son `ready` peut légitimement arriver pendant le backoff, et
+    //    le rattraper vaut mieux qu'un rechargement. Le runtime s'appuie
+    //    explicitement sur ce comportement. V91 : `load_timeout` est la
+    //    perte du watchdog de chargement (document jamais terminé) — même
+    //    contrat, même possibilité de rattrapage.
     this.bridgeClosedByLoss = errorCode === 'renderer_destroyed';
     this.capabilities = null;
     this.lastStateSource = null;
