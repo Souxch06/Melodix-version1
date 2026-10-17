@@ -126,15 +126,16 @@ retombent sur le catalogue Audius (tendances, favoris locaux, historique).
 
 ## Fonctionnalités
 
-| Écran                | Ce que tu y trouves                                                                                                                                                                                                                             |
-| :------------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Connexion**        | Écran sombre et minimal (accent vert), logos Melodix × Spotify, un seul bouton vert « Continuer avec Spotify » (OAuth PKCE, page officielle), états d'erreur propres + « Réessayer ». Connexion obligatoire pour accéder à l'app.               |
-| **Accueil**          | Écoutes récentes (historique local), albums et playlists du moment (fournis par le backend Melodix), les tendances Audius en repli.                                                                                                             |
-| **Recherche**        | Artistes, titres, albums et playlists (via le backend Melodix ; catalogue Audius en repli). Un titre se joue directement.                                                                                                                       |
-| **Bibliothèque**     | **Tes playlists Spotify personnelles en premier** (si connecté — pagination complète, refresh par pull-to-refresh), puis tes favoris **locaux** : playlists, albums et artistes enregistrés, filtrables par catégorie avec transitions animées. |
-| **Album / Playlist** | Pochette sur fond dégradé, liste des titres **jouables** — appuie pour écouter via Audius. Cœur pour enregistrer dans ta bibliothèque.                                                                                                          |
-| **Lecteur**          | Mini-lecteur au-dessus des onglets + plein écran : lecture/pause, précédent, suivant, aléatoire, répétition, seek, volume, file d'attente (avance automatique) et badge du fournisseur (Audius).                                                |
-| **Historique**       | Tes écoutes récentes, enregistrées localement et réutilisées pour personnaliser l'accueil.                                                                                                                                                      |
+| Écran                | Ce que tu y trouves                                                                                                                                                                                                                                                                                                        |
+| :------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Connexion**        | Écran sombre et minimal (accent vert), logos Melodix × Spotify, un seul bouton vert « Continuer avec Spotify » (OAuth PKCE, page officielle), états d'erreur propres + « Réessayer ». Connexion obligatoire pour accéder à l'app.                                                                                          |
+| **Accueil**          | Écoutes récentes (historique local), albums et playlists du moment (fournis par le backend Melodix), les tendances Audius en repli.                                                                                                                                                                                        |
+| **Recherche**        | Artistes, titres, albums et playlists (via le backend Melodix ; catalogue Audius en repli). Un titre se joue directement.                                                                                                                                                                                                  |
+| **Bibliothèque**     | **Tes playlists Spotify personnelles en premier** (si connecté — pagination complète, refresh par pull-to-refresh), puis tes favoris **locaux** : playlists, albums et artistes enregistrés, filtrables par catégorie avec transitions animées.                                                                            |
+| **Album / Playlist** | Pochette sur fond dégradé, liste des titres **jouables** — appuie pour écouter via Audius. Cœur pour enregistrer dans ta bibliothèque.                                                                                                                                                                                     |
+| **Lecteur**          | Mini-lecteur au-dessus des onglets + plein écran : lecture/pause, précédent, suivant, aléatoire, répétition, seek, volume, file d'attente (avance automatique) et badge du fournisseur (Audius).                                                                                                                           |
+| **Onglet Spotify**   | Le lecteur web officiel de Spotify, plein écran, dans une WebView (type SpotiDuck, V88) : tu te connectes et navigues DANS la page, Melodix en affiche l'état réel publié. Aucun cookie ni jeton n'est lu, aucune interface tierce n'est modifiée. La barre d'onglets et le mini-lecteur restent utilisables sous la page. |
+| **Historique**       | Tes écoutes récentes, enregistrées localement et réutilisées pour personnaliser l'accueil.                                                                                                                                                                                                                                 |
 
 Tes favoris, ta bibliothèque et ton historique sont **stockés localement sur ton appareil** (jamais sur un serveur) : l'app s'ouvre instantanément et fonctionne dégradée même hors ligne ou sans backend.
 
@@ -224,7 +225,7 @@ cd android && ./gradlew assembleRelease
 
 ```text
 Melodix/
-├── app/          # Routes Expo Router : onglets (accueil, recherche, bibliothèque), pages de détail
+├── app/          # Routes Expo Router : onglets (accueil, recherche, bibliothèque, Spotify), pages de détail
 ├── screens/      # Écrans : album, playlist…
 ├── components/   # Composants d'interface : sections de l'accueil, recherche, bibliothèque, aperçus, mini-lecteur…
 ├── navigators/   # Barre d'onglets personnalisée

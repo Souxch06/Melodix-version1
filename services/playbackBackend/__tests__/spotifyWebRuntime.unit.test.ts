@@ -3,6 +3,7 @@ import {
   classifySpotifyWebUrl,
   DEFAULT_SPOTIFY_WEB_AUTO_RECONNECT_BASE_DELAY_MS,
   DEFAULT_SPOTIFY_WEB_BRIDGE_READY_TIMEOUT_MS,
+  DEFAULT_SPOTIFY_WEB_DOCUMENT_LOAD_TIMEOUT_MS,
   diagnosticPageLabel,
   isAllowedSpotifyWebNavigation,
   SpotifyWebRuntime,
@@ -151,7 +152,15 @@ describe('SpotifyWebRuntime WebView lifecycle', () => {
     // Navigation pendant l'attente : l'ancien document ne peut plus marquer
     // le nouveau en timeout.
     runtime.onLoadStart();
-    expect(scheduler.pendingDelays).toEqual([]);
+    // V91 — le délai du HANDSHAKE (8 s) est bien annulé, mais le nouveau
+    // document ouvre son WATCHDOG DE CHARGEMENT (30 s) : c'est lui qui
+    // interdit un « chargement » éternel si `onLoadEnd` n'arrive jamais.
+    expect(scheduler.pendingDelays).toEqual([
+      DEFAULT_SPOTIFY_WEB_DOCUMENT_LOAD_TIMEOUT_MS,
+    ]);
+    expect(scheduler.pendingDelays).not.toContain(
+      DEFAULT_SPOTIFY_WEB_BRIDGE_READY_TIMEOUT_MS
+    );
     expect(runtime.getSnapshot().phase).toBe('loading');
     expect(backend.getState().status).toBe('loading');
     expect(backend.isBridgeReady()).toBe(false);
@@ -488,5 +497,249 @@ describe('SpotifyWebRuntime WebView lifecycle', () => {
     expect(diagnosticPageLabel('https://evil.example/#token=secret')).toBe(
       'navigation bloquée'
     );
+  });
+});
+
+/**
+ * V91 — RÉGRESSIONS DU BLOCAGE « CHARGEMENT DU PONT » (rapport V90).
+ *
+ * Le défaut corrigé : un `onLoadStart` sans `onLoadEnd` (navigation
+ * d'historique d'une SPA, ou document interrompu) laissait le runtime en
+ * `loading` POUR TOUJOURS, sans timer ni porte de sortie.
+ *
+ * Ces tests échouent si le watchdog est retiré ou si la protection des
+ * navigations SPA disparaît.
+ */
+describe('SpotifyWebRuntime — V91 : watchdog de chargement et navigations SPA', () => {
+  it('ready + onLoadStart SANS onLoadEnd (même document) : le pont, la session et l’état survivent', () => {
+    const { backend, loadDocument, reportCodes, runtime, scheduler } =
+      createHarness();
+    runtime.mount();
+    loadDocument();
+    expect(runtime.handleBridgeMessage(READY_MESSAGE)).toBe('ready');
+    expect(scheduler.pendingDelays).toEqual([]);
+
+    // Android émet onLoadStart pour un pushState : `loading: false`.
+    runtime.onLoadStart({ sameDocument: true });
+
+    expect(runtime.getSnapshot()).toMatchObject({
+      phase: 'ready',
+      bridgeReady: true,
+    });
+    // Aucune session neuve : le backend garde son handshake.
+    expect(backend.isBridgeReady()).toBe(true);
+    // Aucune échéance armée : il n'y a rien à attendre, le document est là.
+    expect(scheduler.pendingDelays).toEqual([]);
+    expect(reportCodes()).toContain('webview_spa_navigation');
+    // Un seul cycle de chargement : la navigation SPA n'en ouvre pas un.
+    expect(
+      reportCodes().filter((code) => code === 'webview_loading')
+    ).toHaveLength(1);
+  });
+
+  it('plusieurs événements SPA successifs ne réinitialisent jamais le pont', () => {
+    const { backend, loadDocument, reportCodes, runtime, scheduler } =
+      createHarness();
+    runtime.mount();
+    loadDocument();
+    runtime.handleBridgeMessage(READY_MESSAGE);
+
+    for (let i = 0; i < 5; i += 1) {
+      runtime.onLoadStart({ sameDocument: true });
+    }
+
+    expect(runtime.getSnapshot().phase).toBe('ready');
+    expect(runtime.getSnapshot().bridgeReady).toBe(true);
+    expect(backend.isBridgeReady()).toBe(true);
+    expect(scheduler.pendingDelays).toEqual([]);
+    expect(
+      reportCodes().filter((code) => code === 'webview_spa_navigation')
+    ).toHaveLength(5);
+  });
+
+  it('LE BLOCAGE V90 : un document qui n’émet jamais onLoadEnd est récupéré par le watchdog', () => {
+    const { backend, reconnects, reportCodes, runtime, scheduler } =
+      createHarness();
+    runtime.mount();
+
+    // Le watchdog de chargement est armé dès l'ouverture de la session.
+    expect(scheduler.pendingDelays).toEqual([
+      DEFAULT_SPOTIFY_WEB_DOCUMENT_LOAD_TIMEOUT_MS,
+    ]);
+    // Aucun onLoadEnd (et donc aucun délai de handshake) : rien ne borne
+    // l'attente sans ce watchdog.
+    scheduler.fireNext();
+
+    expect(runtime.getSnapshot()).toMatchObject({
+      phase: 'recovering',
+      bridgeReady: false,
+      lossCause: 'load_timeout',
+      reconnectAttempt: 1,
+    });
+    expect(backend.getState()).toMatchObject({
+      status: 'error',
+      errorCode: 'load_timeout',
+    });
+    // Cause EXPLICITE dans le diagnostic.
+    expect(reportCodes()).toEqual(
+      expect.arrayContaining(['load_timeout', 'webview_reconnecting'])
+    );
+    // La récupération existante prend le relais (rechargement du document).
+    expect(scheduler.pendingDelays).toEqual([
+      DEFAULT_SPOTIFY_WEB_AUTO_RECONNECT_BASE_DELAY_MS,
+    ]);
+    scheduler.fireNext();
+    expect(reconnects).toEqual(['reload']);
+  });
+
+  it('une échéance d’une ANCIENNE session ne modifie jamais la nouvelle', () => {
+    // Ordonnanceur qui conserve les tâches « annulées » : c'est la seule
+    // façon de prouver que la GARDE DE SESSION du runtime fonctionne, même
+    // si un callback périmé parvient à s'exécuter (file native retardée).
+    const scheduled: { id: number; callback: () => void }[] = [];
+    let nextId = 0;
+    const leakyScheduler = {
+      set: (callback: () => void) => {
+        const id = (nextId += 1);
+        scheduled.push({ id, callback });
+        return id;
+      },
+      clear: () => {
+        // Volontairement sans effet : simule un timer déjà en file.
+      },
+    };
+    const backend = new SpotifyWebBackend();
+    const reports: string[] = [];
+    const runtime = new SpotifyWebRuntime({
+      backend,
+      scheduler: leakyScheduler,
+      report: (code) => reports.push(code),
+    });
+
+    runtime.mount(); // session 1 + watchdog 1
+    const staleWatchdog = scheduled[0].callback;
+    runtime.onLoadStart(); // session 2 + watchdog 2
+    expect(scheduled.length).toBeGreaterThanOrEqual(2);
+
+    // L'échéance de la session 1 s'exécute APRÈS l'ouverture de la session 2.
+    staleWatchdog();
+
+    expect(runtime.getSnapshot().phase).toBe('loading');
+    expect(runtime.getSnapshot().lossCause).toBeNull();
+    expect(backend.getState().status).toBe('loading');
+    expect(reports).not.toContain('load_timeout');
+  });
+
+  it('chargement normal : le watchdog est REMPLACÉ par le délai de handshake, puis tout est nettoyé', () => {
+    const { backend, runtime, scheduler } = createHarness();
+    runtime.mount();
+    runtime.onLoadStart();
+    expect(scheduler.pendingDelays).toEqual([
+      DEFAULT_SPOTIFY_WEB_DOCUMENT_LOAD_TIMEOUT_MS,
+    ]);
+
+    runtime.onLoadEnd();
+    // Un seul timer actif : les deux budgets ne se chevauchent jamais.
+    expect(scheduler.pendingDelays).toEqual([
+      DEFAULT_SPOTIFY_WEB_BRIDGE_READY_TIMEOUT_MS,
+    ]);
+    expect(runtime.getSnapshot().phase).toBe('awaiting-bridge');
+
+    expect(runtime.handleBridgeMessage(READY_MESSAGE)).toBe('ready');
+    expect(scheduler.pendingDelays).toEqual([]);
+    expect(backend.isBridgeReady()).toBe(true);
+
+    // Démontage : plus aucune échéance ne peut s'exécuter.
+    runtime.unmount();
+    expect(scheduler.pendingDelays).toEqual([]);
+  });
+
+  it('un `ready` rejoué pour le MÊME document ne redéclare pas bridge_ready', () => {
+    const { loadDocument, reportCodes, runtime } = createHarness();
+    runtime.mount();
+    loadDocument();
+    expect(runtime.handleBridgeMessage(READY_MESSAGE)).toBe('ready');
+    expect(runtime.handleBridgeMessage(READY_MESSAGE)).toBe('ready');
+
+    expect(
+      reportCodes().filter((code) => code === 'bridge_ready')
+    ).toHaveLength(1);
+  });
+
+  it('un `sameDocument` hors phase prête ne sert JAMAIS de filtre : le document est rouvert', () => {
+    const { backend, runtime, scheduler } = createHarness();
+    runtime.mount();
+    // Le drapeau est un indice, pas une barrière : sans pont prêt, on ouvre
+    // une session neuve (comportement historique, avec watchdog).
+    runtime.onLoadStart({ sameDocument: true });
+    expect(runtime.getSnapshot().phase).toBe('loading');
+    expect(backend.getState().status).toBe('loading');
+    expect(scheduler.pendingDelays).toEqual([
+      DEFAULT_SPOTIFY_WEB_DOCUMENT_LOAD_TIMEOUT_MS,
+    ]);
+  });
+
+  it('un document réel annoncé `loading:false` à tort ne reste pas muet : son `ready` tardif rétablit le pont', () => {
+    const { backend, loadDocument, reportCodes, runtime, scheduler } =
+      createHarness();
+    runtime.mount();
+    loadDocument();
+    expect(runtime.handleBridgeMessage(READY_MESSAGE)).toBe('ready');
+
+    // Risque résiduel documenté (§5.3 du rapport) : un document RÉEL qui se
+    // présente comme une mise à jour d'historique. Le pont d'alors est
+    // conservé et AUCUNE échéance n'est armée — c'est le prix de la
+    // protection des navigations SPA, qui n'a aucun autre signal fiable.
+    runtime.onLoadStart({ sameDocument: true });
+    expect(scheduler.pendingDelays).toEqual([]);
+    expect(backend.isBridgeReady()).toBe(true);
+
+    // Ce document finit tout de même par charger et sa sonde poste `ready` :
+    // le handshake est accepté sans seconde déclaration, et la page reprend
+    // la main sur l'état publié.
+    runtime.onLoadEnd();
+    expect(runtime.handleBridgeMessage(READY_MESSAGE)).toBe('ready');
+    expect(runtime.handleBridgeMessage(PLAYING_MESSAGE)).toBe('state-updated');
+    expect(backend.getState()).toMatchObject({
+      status: 'playing',
+      title: 'Track',
+    });
+    expect(runtime.getSnapshot()).toMatchObject({
+      phase: 'ready',
+      bridgeReady: true,
+    });
+    // Toujours un seul événement de handshake : la reprise est silencieuse.
+    expect(
+      reportCodes().filter((code) => code === 'bridge_ready')
+    ).toHaveLength(1);
+  });
+
+  it('un rechargement de récupération muet finit en `failed` (porte de sortie « Recharger »)', () => {
+    const { reportCodes, runtime, scheduler } = createHarness({
+      documentLoadTimeoutMs: 40,
+      bridgeReadyTimeoutMs: 5,
+      autoReconnectBaseDelayMs: 10,
+      autoReconnectMaxDelayMs: 20,
+    });
+    runtime.mount();
+
+    let guard = 0;
+    while (runtime.getSnapshot().phase !== 'failed' && guard < 12) {
+      scheduler.fireNext();
+      guard += 1;
+    }
+
+    expect(runtime.getSnapshot().phase).toBe('failed');
+    expect(runtime.getSnapshot().reconnectAttempt).toBe(3);
+    expect(reportCodes()).toContain('webview_reconnect_exhausted');
+    expect(scheduler.pendingDelays).toEqual([]);
+
+    // Le geste utilisateur reste la porte de sortie et réarme un budget.
+    runtime.manualReload();
+    expect(runtime.getSnapshot()).toMatchObject({
+      phase: 'loading',
+      reconnectAttempt: 0,
+    });
+    expect(scheduler.pendingDelays).toEqual([40]);
   });
 });

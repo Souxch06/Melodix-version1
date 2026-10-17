@@ -355,15 +355,16 @@ jobs:
           # Les tests pilotent eux-mêmes la fixture smoke (process.env) ;
           # le build de test APK de ce run reste flagué plus bas, volontairement.
           EXPO_PUBLIC_SPOTIFY_OAUTH_SMOKE: ''
-          # V88 — MÊME neutralisation pour Jamendo, jusqu'ici oubliée. Ces deux
-          # variables sont déclarées au niveau du WORKFLOW (pour armer l'APK) :
-          # elles s'appliquaient donc aussi à cette étape. Dès qu'un
+          # V88 — Jamendo : neutralisation INDISPENSABLE à l'étape de tests.
+          # Ces deux variables sont déclarées au niveau du WORKFLOW (elles
+          # arment l'APK) et s'appliquaient donc aussi ici. Dès qu'un
           # identifiant existe dans les Variables du dépôt, la source Jamendo
-          # s'armait PENDANT les tests — et partout où elle n'est pas mockée,
-          # une vraie requête réseau partait. C'est exactement ce qui faisait
-          # échouer progressiveSearchV31/V32 en CI (source en échec ⇒ diagnostic
-          # « network » au lieu de « empty », « vide confirmé » non mémorisé)
-          # sans jamais se reproduire en local, où la variable est absente.
+          # s'armait PENDANT les tests : partout où elle n'est pas mockée, une
+          # vraie requête réseau partait, le diagnostic passait de « empty » à
+          # « network » et le « vide confirmé » n'était plus mémorisé — d'où
+          # les échecs V31/V32, invisibles en local où la variable est absente.
+          # Les deux bancs doublent désormais la source ; cette neutralisation
+          # garantit qu'aucun banc FUTUR ne dépendra du réglage du dépôt.
           JAMENDO_CLIENT_ID: ''
           EXPO_PUBLIC_JAMENDO_CLIENT_ID: ''
         run: |

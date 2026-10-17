@@ -1,6 +1,23 @@
 # Test physique Spotify Web Player — procédure courte
 
-Cette procédure valide uniquement le prototype isolé. Elle ne modifie pas le lecteur Audius → YouTube et ne demande jamais de communiquer des identifiants à Melodix ou dans un rapport.
+Cette procédure valide la surface Spotify Web de l'application : l'**onglet
+Spotify** (page Spotify réelle, depuis V88) et, séparément, le **prototype
+isolé** de diagnostic. Elle ne modifie pas le lecteur Audius → YouTube et ne
+demande jamais de communiquer des identifiants à Melodix ou dans un rapport.
+
+## V88 — ce qui a changé pour ce test
+
+Deux surfaces, à ne pas confondre :
+
+| Surface                       | Où                                                   | Ce qu'elle est                                                                                    |
+| ----------------------------- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| **Onglet Spotify** (à tester) | barre d'onglets → Spotify                            | l'hôte de PRODUCTION : une seule WebView (montée à la racine), qui affiche la page Spotify réelle |
+| **Prototype** (diagnostic)    | Réglages → Diagnostic → Prototype Spotify Web Player | écran de diagnostic isolé, avec SA PROPRE WebView ; n'est pas une surface de lecture              |
+
+L'onglet ne crée aucune WebView supplémentaire : il demande l'affichage de
+l'hôte de production et le rend quand l'utilisateur change d'onglet. La
+navigation reste donc utilisable, et le document Spotify n'est jamais détruit
+(la session et une lecture en cours survivent au changement d'onglet).
 
 ## APK à tester
 
@@ -29,7 +46,12 @@ dans le bundle`. C'est donc un **build de test**, pas une version de
 
 ## Test — 5 à 10 minutes
 
-1. Ouvrir **Réglages → Diagnostic → Prototype Spotify Web Player**.
+1. Ouvrir l'onglet **Spotify** (barre du bas). La page Spotify doit apparaître
+   plein écran, la barre d'onglets et le mini-lecteur restant visibles et
+   utilisables en dessous (V88). Pour les lignes de diagnostic `Bridge`,
+   `MediaSession`, `EME` et `Widevine`, ouvrir séparément
+   **Réglages → Diagnostic → Prototype Spotify Web Player** (V88 : l'onglet
+   n'affiche plus ces indicateurs — l'écran de diagnostic les garde tous).
 2. Vérifier que Spotify est visible et navigable, sans écran blanc. Noter les lignes `Bridge`, `MediaSession`, `EME` et `Widevine` du panneau Melodix.
 3. Se connecter directement dans la page Spotify. Ne jamais copier l'identifiant, le mot de passe, un cookie ou un token dans un rapport. Si un fournisseur externe est bloqué par l'allowlist, noter uniquement son nom de domaine et utiliser la connexion Spotify classique si possible ; ne pas désactiver l'allowlist.
 4. Ouvrir un album ou une playlist, lancer un morceau et vérifier avec les oreilles qu'un son sort réellement. Tester pause, reprise et morceau suivant.
@@ -128,6 +150,19 @@ La page répond actuellement `{accepted:false, code:'no-authorized-execution-sur
 | Durée/position publiées (positionState) | oui / non / inconnu                                                                                          |
 | Code réponse de commande                | no-authorized-execution-surface (valide) / command_accepted / expired / disconnected / transport-unavailable |
 | Audio après 30 s en arrière-plan (réel) | oui / non — à l'oreille, pas à l'écran                                                                       |
+
+### Lignes V88 — onglet Spotify (surface de lecture réelle)
+
+| Point                                                          | Valeur attendue à renseigner                                         |
+| -------------------------------------------------------------- | -------------------------------------------------------------------- |
+| Page Spotify visible dans l'onglet                             | oui / non                                                            |
+| Barre d'onglets + mini-lecteur utilisables SOUS la page        | oui / non — sans cette réservation, on ne peut plus quitter l'onglet |
+| Bandeau Melodix visible sur la page alors que le pont est prêt | non (attendu : aucun bandeau) / oui (défaut)                         |
+| Bandeau de récupération + « Recharger » après perte du pont    | oui / non                                                            |
+| Changement d'onglet pendant une lecture → audio conservé       | oui / non — le document n'est jamais détruit                         |
+| Retour sur l'onglet → même page, session intacte               | oui / non                                                            |
+| Mini-lecteur : titre/artiste remontés depuis la page           | oui / non                                                            |
+| Notification / écran verrouillé pendant la lecture Web         | oui / non / non testé                                                |
 
 ### Ce que le smoke CI démontre déjà (Android 14 x86_64, Google Actions emulator)
 

@@ -5,6 +5,7 @@ import { Tabs } from 'expo-router';
 import { MiniPlayer } from '@components';
 import { BottomTabBar } from '@navigators';
 import { useKeyboardVisible } from '@hooks';
+import { publishSpotifyWebTabBarHeight } from '@services';
 
 /**
  * Onglets — V29 : AUCUNE porte d'entrée Spotify.
@@ -46,6 +47,26 @@ export default function Layout() {
    */
   const keyboardVisible = useKeyboardVisible();
 
+  /**
+   * V88 — MESURE PUBLIÉE DU SLOT D'ONGLETS.
+   *
+   * Quand l'onglet Spotify affiche la page Spotify réelle, cette page doit
+   * laisser LIBRE l'espace de la navigation : sinon la barre d'onglets
+   * disparaît sous la WebView et l'utilisateur ne peut plus quitter l'onglet.
+   *
+   * Cette hauteur n'est pas devinable (le mini-lecteur au-dessus de la barre
+   * n'existe que si une piste est chargée) : elle est MESURÉE ici, sur le
+   * conteneur qui empile MiniPlayer + BottomTabBar, et publiée sur le bus de
+   * surface lu par l'hôte WebView. Un seul auteur pour cette notion — le
+   * layout qui la mesure.
+   */
+  const publishTabBarHeight = React.useCallback(
+    (event: { nativeEvent: { layout: { height: number } } }) => {
+      publishSpotifyWebTabBarHeight(event.nativeEvent.layout.height);
+    },
+    []
+  );
+
   // V29 — le seul état transitoire est la restauration du contexte, déjà
   // géré écran par écran par SpotifyDataPlan ('restoring' = chargement
   // local au plan du compte, aucune donnée affichée à tort). Ici : jamais
@@ -54,7 +75,7 @@ export default function Layout() {
     <Tabs
       tabBar={(props) =>
         keyboardVisible ? null : (
-          <View>
+          <View onLayout={publishTabBarHeight} testID="tabs-bottom-slot">
             {/* Playback bar (Audius audio), renders nothing when idle. */}
             <MiniPlayer />
             <BottomTabBar {...props} />

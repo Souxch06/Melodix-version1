@@ -122,13 +122,34 @@ export const SpotifyWebPrototypeScreen = () => {
   }, [runtime]);
 
   const snapshot = runtimeSnapshot;
+  // V91 — l'état du pont dit désormais OÙ il en est (chargement de la page
+  // vs attente du handshake) et QUELLE perte a été constatée. Toujours des
+  // libellés contrôlés : jamais d'URL, de contenu ou de donnée de session.
   const bridgeLabel = !snapshot.rendererAvailable
     ? 'renderer détruit'
     : snapshot.phase === 'ready'
       ? 'prêt'
-      : snapshot.lossCause === 'bridge_timeout'
-        ? 'timeout'
-        : 'attente';
+      : snapshot.lossCause === 'load_timeout'
+        ? 'chargement interrompu'
+        : snapshot.lossCause === 'bridge_timeout'
+          ? 'timeout'
+          : snapshot.phase === 'awaiting-bridge'
+            ? 'attente du handshake'
+            : snapshot.phase === 'recovering'
+              ? 'récupération'
+              : snapshot.phase === 'failed'
+                ? 'échec (rechargement requis)'
+                : 'chargement de la page';
+
+  /**
+   * V91 — temps écoulé dans la phase courante, calculé à l'affichage. Un
+   * diagnostic n'a pas besoin de battre la seconde : chaque transition du
+   * runtime re-rend déjà l'écran.
+   */
+  const phaseElapsedLabel =
+    typeof snapshot.phaseStartedAt === 'number'
+      ? `${Math.max(0, Math.floor((Date.now() - snapshot.phaseStartedAt) / 1000))} s`
+      : '—';
 
   const requestCommand = React.useCallback(
     async (command: 'play' | 'pause') => {
@@ -185,6 +206,21 @@ export const SpotifyWebPrototypeScreen = () => {
         <Text style={styles.statusText} testID="spotify-web-runtime-status">
           Runtime: {snapshot.phase} · reconnexion {snapshot.reconnectAttempt}/
           {snapshot.maxReconnectAttempts}
+        </Text>
+        {/* V91 — temps écoulé + cause HUMAINE de la dernière perte : jamais
+         * le code brut (déjà journalisé dans le panneau d'événements), jamais
+         * d'URL ni de contenu. */}
+        <Text style={styles.statusText} testID="spotify-web-runtime-detail">
+          Depuis : {phaseElapsedLabel} · dernière perte :{' '}
+          {snapshot.lossCause === 'load_timeout'
+            ? 'chargement interrompu'
+            : snapshot.lossCause === 'bridge_timeout'
+              ? 'timeout du pont'
+              : snapshot.lossCause === 'network_error'
+                ? 'erreur réseau'
+                : snapshot.lossCause === 'renderer_destroyed'
+                  ? 'renderer détruit'
+                  : '—'}
         </Text>
         <Text style={styles.statusText}>
           Lecture: {backendState.status} · session: indéterminée
@@ -249,9 +285,15 @@ export const SpotifyWebPrototypeScreen = () => {
             )
           }
           onLoadEnd={runtime.onLoadEnd}
-          onLoadStart={() => {
-            setRuntimeCapabilities(null);
-            runtime.onLoadStart();
+          onLoadStart={(event) => {
+            // V91 — même règle que l'hôte de production : une mise à jour
+            // d'historique (`loading: false`) n'ouvre pas un nouveau
+            // document, donc n'efface pas les capacités déjà mesurées.
+            const sameDocument = event?.nativeEvent?.loading === false;
+            if (!sameDocument) {
+              setRuntimeCapabilities(null);
+            }
+            runtime.onLoadStart({ sameDocument });
           }}
           onMessage={(event) => {
             // V88 — marqueur de la sonde PRÉCOCE : prouve que le pont natif

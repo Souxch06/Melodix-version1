@@ -164,7 +164,7 @@ describe('V89 — la chaîne injectée doit être syntaxiquement valide', () => 
   });
 
   it('exécutée dans un document factice, la sonde principale poste bien ready', () => {
-    const posted: Array<Record<string, unknown>> = [];
+    const posted: Record<string, unknown>[] = [];
     const listeners: string[] = [];
     const doc: Record<string, unknown> = {
       ReactNativeWebView: {
