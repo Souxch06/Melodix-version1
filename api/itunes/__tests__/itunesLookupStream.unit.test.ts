@@ -130,9 +130,19 @@ describe('V70 (Bug 4) — cache des extraits : latence évitée au changement de
     const warm = await getItunesPreviewUrl('4000000003');
 
     expect(warm).toBe('https://audio.example/p.m4a');
-    // Le premier passage paie la latence simulée : borne INFÉRIEURE, robuste
-    // (une machine lente ne peut que l'augmenter).
-    expect(coldElapsed).toBeGreaterThanOrEqual(NETWORK_LATENCY_MS);
+    // Le premier passage paie la latence simulée : borne INFÉRIEURE.
+    //
+    // Tolérance d'HORLOGE (5 ms), pas de tolérance sur le comportement :
+    // `setTimeout(40)` peut se déclencher dans la milliseconde précédente et
+    // `Date.now()` n'a qu'une résolution de 1 ms. Deux runs CI consécutifs
+    // ont mesuré 38 puis 39 ms (39016764502, 39017091785) alors que la
+    // requête simulée avait bien payé sa latence. La borne garde son sens :
+    // un second appel servi par le cache reste à ~0 ms, et le compteur
+    // d'appels ci-dessous prouve l'absence de requête mieux qu'une durée.
+    const CLOCK_TOLERANCE_MS = 5;
+    expect(coldElapsed).toBeGreaterThanOrEqual(
+      NETWORK_LATENCY_MS - CLOCK_TOLERANCE_MS
+    );
     // La seconde lecture ne fait AUCUNE requête. C'est le gain réel visé par
     // V70, et c'est mesuré ici par le NOMBRE D'APPELS au fetch simulé.
     //

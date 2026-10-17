@@ -318,3 +318,24 @@ tenté par un push documentaire ; si l'instabilité se reproduit, la seule
 correction recevable est une **tolérance d'horloge** explicite (par exemple
 `NETWORK_LATENCY_MS - 5`), sans retirer l'assertion ni le compteur d'appels
 qui, lui, prouve réellement l'absence de requête.
+
+### 8.6 Deuxième passage CI (run `39017091785`) et correction d'horloge
+
+Le même test est retombé, avec `Received: 38` pour `Expected: >= 40`. Deux
+échecs consécutifs (38 et 39 ms mesurés pour un `setTimeout(40)`) rendent
+l'assertion **structurellement instable** sur le runner, indépendamment de
+Spotify Web.
+
+Correction appliquée, **sans retirer l'assertion** :
+
+```ts
+const CLOCK_TOLERANCE_MS = 5;
+expect(coldElapsed).toBeGreaterThanOrEqual(
+  NETWORK_LATENCY_MS - CLOCK_TOLERANCE_MS
+);
+```
+
+Le test conserve son intention (le premier passage paie la latence ; le
+second, servi par le cache, reste à ~0 ms) et son assertion décisive — le
+compteur `fetchMock` à 1 appel. Seule la précision du planificateur cesse
+d'être mesurée. Suite ciblée : **11/11**.
