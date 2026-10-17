@@ -289,6 +289,7 @@ allowlisted users list`). Ce n'est **pas** un bug de Melodix et aucun code
 | ------------- | --------- | --------------------------------------------------------------------------------------------------- |
 | `39025218827` | `f2de2f5` | **32/32 vert** — `bridge_ready` + `bridge-state` acceptés, APK `Melodix-v4.5.0-test.37-f2de2f5.apk` |
 | `39027380599` | `9d42485` | **échec étape 21** — voir ci-dessous, sans lien avec le code                                        |
+| `39028422512` | `efe423b` | **32/32 vert** après relance — APK `Melodix-v4.5.0-test.37-efe423b.apk` (47 118 550 o)              |
 
 ### 8.1 L'échec de l'étape 21 n'est pas applicatif
 
@@ -319,8 +320,15 @@ résultat.
 
 ### 8.2 Ce qui reste à voir sur téléphone
 
-Aucun APK de `9d42485` (V92b) n'existe encore — l'échec est survenu avant
-l'archivage de l'artefact. En attendant un run vert, l'APK `f2de2f5` contient
-déjà les correctifs d'écran blanc (UA bureau, Service Worker, fond noir,
-lecture sans geste, popups) ; il ne contient pas la pastille
-« Connexion e-mail ».
+L'APK à installer est **`Melodix-v4.5.0-test.37-efe423b.apk`** (run
+`39028422512`) : il contient les correctifs d'écran blanc **et** la pastille
+« Connexion e-mail ». Ce qui n'est toujours pas prouvé, faute d'appareil :
+que la page s'affiche réellement, qu'une connexion dans la page aboutisse, et
+qu'un morceau soit audible.
+
+Rappel des deux voies, pour éviter de confondre les symptômes :
+
+| Voie                            | Dépend de                                | 403 possible ?                              |
+| ------------------------------- | ---------------------------------------- | ------------------------------------------- |
+| Réglages → OAuth officiel       | dashboard Spotify (liste d'utilisateurs) | **oui**, et rien dans le code ne le corrige |
+| Onglet Spotify → connexion page | le compte et l'appareil                  | non : l'API Web n'est jamais appelée        |
