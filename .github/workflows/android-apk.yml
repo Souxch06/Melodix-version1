@@ -355,17 +355,16 @@ jobs:
           # Les tests pilotent eux-mêmes la fixture smoke (process.env) ;
           # le build de test APK de ce run reste flagué plus bas, volontairement.
           EXPO_PUBLIC_SPOTIFY_OAUTH_SMOKE: ''
-          # V88 — Jamendo : même règle, cause RÉELLE de l'échec de l'étape 11.
-          # Ces deux variables sont posées au niveau du JOB (elles arment
-          # l'APK) et fuyaient donc dans jest. Un banc qui ne double pas la
-          # source Jamendo la voyait alors ACTIVE : l'adaptateur réel partait
-          # sur le réseau, la course n'était plus « toutes sources saines » et
-          # deux assertions tombaient (« Expected: "empty" / Received:
-          # "network" », « Expected number of calls: 1 / Received: 2 ») —
-          # sans qu'aucune ligne du dépôt ne change. Les deux bancs doublent
-          # désormais la source, et la neutralisation ici garantit qu'aucun
-          # banc FUTUR ne dépendra à nouveau du réglage du dépôt : le jeu de
-          # sources d'un test est une décision du test.
+          # V88 — Jamendo : neutralisation INDISPENSABLE à l'étape de tests.
+          # Ces deux variables sont déclarées au niveau du WORKFLOW (elles
+          # arment l'APK) et s'appliquaient donc aussi ici. Dès qu'un
+          # identifiant existe dans les Variables du dépôt, la source Jamendo
+          # s'armait PENDANT les tests : partout où elle n'est pas mockée, une
+          # vraie requête réseau partait, le diagnostic passait de « empty » à
+          # « network » et le « vide confirmé » n'était plus mémorisé — d'où
+          # les échecs V31/V32, invisibles en local où la variable est absente.
+          # Les deux bancs doublent désormais la source ; cette neutralisation
+          # garantit qu'aucun banc FUTUR ne dépendra du réglage du dépôt.
           JAMENDO_CLIENT_ID: ''
           EXPO_PUBLIC_JAMENDO_CLIENT_ID: ''
         run: |
@@ -377,17 +376,43 @@ jobs:
             # On remonte donc les noms des tests en échec comme ::error:: :
             # sans cela, un échec de l'étape 11 est illisible de l'extérieur
             # et ne peut être diagnostiqué qu'en devinant.
-            echo "::error title=Étape 11 — tests en échec::$(grep -cE '^  ● ' jest.log 2>/dev/null || echo 0) ligne(s) de failure, détail ci-dessous"
-            grep -E '^  ● ' jest.log 2>/dev/null | grep -v 'Console' | sort -u | head -40 | while IFS= read -r line; do
-              echo "::error title=Test en échec::${line}"
-            done
-            grep -E '^(FAIL|Tests:|Test Suites:)' jest.log 2>/dev/null | sort -u | head -20 | while IFS= read -r line; do
+            echo "::error title=Étape 11 — tests en échec::un bloc par test ci-dessous"
+            # V88 — UN bloc PAR test (assertion, valeurs attendues/reçues,
+            # extrait de source et ligne), au lieu de deux greps séparés
+            # « nom du test » et « valeur ». Séparés puis dédoublonnés, ces
+            # deux listes ne permettaient pas de savoir QUELLE assertion d'un
+            # test contredisait QUELLE valeur : avec plusieurs échecs, on
+            # pouvait attribuer à un test la valeur d'un autre.
+            # GitHub plafonne les annotations d'erreur d'une étape, d'où le
+            # plafond à 8 blocs — au-delà, le résumé Jest reste disponible.
+            awk '
+              function esc(s) {
+                gsub(/%/, "%25", s);
+                gsub(/\r/, "%0D", s);
+                gsub(/\n/, "%0A", s);
+                return s;
+              }
+              function flushblock() {
+                if (hdr == "") return;
+                printf "::error title=Échec Jest::%s\n", esc(hdr) esc(buf);
+                hdr = "";
+                buf = "";
+              }
+              /^  ● / && $0 !~ /Console/ {
+                flushblock();
+                blocks += 1;
+                keep = (blocks <= 8) ? 1 : 0;
+                hdr = (keep ? substr($0, 3) : "");
+                buf = "";
+                lines = 0;
+                next;
+              }
+              keep && /^      at / { buf = buf $0 "\n"; keep = 0; next }
+              keep && lines < 28 { buf = buf $0 "\n"; lines += 1; next }
+              END { flushblock() }
+            ' jest.log
+            grep -E '^(FAIL|Tests:|Test Suites:)' jest.log 2>/dev/null | sort -u | head -6 | while IFS= read -r line; do
               echo "::error title=Résumé Jest::${line}"
-            done
-            # Valeurs attendues/reçues et cause d'expiration : sans elles, un
-            # nom de test ne dit pas POURQUOI il échoue.
-            grep -E '^\s+(Expected|Received|Number of calls|thrown:)' jest.log 2>/dev/null | sed 's/^[[:space:]]*//' | sort -u | head -30 | while IFS= read -r line; do
-              echo "::error title=Détail assertion::${line}"
             done
             exit 1
           fi

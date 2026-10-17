@@ -11,6 +11,7 @@ import { backendSearchCatalog } from '../../backend';
 import { searchSpotifyCatalogQuick } from '../../spotify/search';
 import { searchItunesTracks } from '../../itunes';
 import { searchYouTubeTracks } from '../../youtube';
+import { isJamendoConfigured } from '../../jamendo';
 import {
   resetNetworkStateForTests,
   setNetworkStateForTests,
@@ -59,29 +60,21 @@ jest.mock('../../itunes', () => ({
   ITUNES_ARTIST_LIMIT: 50,
 }));
 
-/**
- * V88 — source Jamendo NEUTRALISÉE, comme les autres.
- *
- * Défaut réel corrigé : ce banc ne doublait que cinq sources sur six. Sans
- * identifiant Jamendo, `isJamendoConfigured()` est faux et la source est
- * `skipped` — le banc passait donc partout en local. Sur le runner CI, la
- * variable de dépôt `MELODIX_JAMENDO_CLIENT_ID` est injectée DANS TOUT LE JOB
- * (`EXPO_PUBLIC_JAMENDO_CLIENT_ID`) : la source devenait active, l'adaptateur
- * RÉEL partait sur le réseau (non doublé, non budgété par le test) et
- * échouait ou traînait. Conséquence : la course n'était plus « toutes sources
- * saines » — le « vide confirmé » n'était plus mis en cache et le second
- * appel Audius repartait (« Expected number of calls: 1 / Received: 2 »).
- *
- * Le jeu de sources d'un banc est une DÉCISION DU BANC, jamais celle de
- * l'environnement du runner : la source est donc déclarée inactive ici,
- * exactement comme lorsqu'aucun identifiant n'est configuré.
- */
+// V88 — Jamendo est une source à part entière du moteur. Sans ce mock, le
+// module réel est chargé et `isJamendoConfigured()` lit l'environnement : avec
+// un identifiant présent (Variables du dépôt injectées en CI), la source
+// s'armait, émettait une VRAIE requête réseau — interdite dans la suite par
+// défaut — et son échec faisait basculer le diagnostic moteur en « network »
+// au lieu de « empty », tout en empêchant la mémorisation du « vide confirmé ».
 jest.mock('../../jamendo', () => ({
-  searchJamendoTracks: jest.fn().mockResolvedValue([]),
-  isJamendoConfigured: jest.fn().mockReturnValue(false),
+  isJamendoConfigured: jest.fn(),
+  searchJamendoTracks: jest.fn(),
   JAMENDO_SEARCH_LIMIT: 50,
 }));
 
+const mockedJamendoConfigured = isJamendoConfigured as jest.MockedFunction<
+  typeof isJamendoConfigured
+>;
 const mockedSessionActive = isSpotifySessionActive as jest.MockedFunction<
   typeof isSpotifySessionActive
 >;
@@ -149,6 +142,7 @@ beforeEach(() => {
 
   mockedSessionActive.mockResolvedValue(false);
   mockedBackendConfigured.mockReturnValue(false);
+  mockedJamendoConfigured.mockReturnValue(false);
   mockedAudiusSearch.mockImplementation(() => after(100, []));
   mockedAudiusMap.mockImplementation((t) => t as never);
   mockedBackendSearch.mockImplementation(() => after(100, emptyCatalog()));

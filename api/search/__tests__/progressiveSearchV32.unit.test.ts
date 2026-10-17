@@ -12,6 +12,7 @@ import { backendSearchCatalog } from '../../backend';
 import { searchSpotifyCatalogQuick } from '../../spotify/search';
 import { searchItunesTracks } from '../../itunes';
 import { searchYouTubeTracks } from '../../youtube';
+import { isJamendoConfigured } from '../../jamendo';
 import {
   resetNetworkStateForTests,
   setNetworkStateForTests,
@@ -63,22 +64,21 @@ jest.mock('../../itunes', () => ({
   ITUNES_ARTIST_LIMIT: 50,
 }));
 
-/**
- * V88 — source Jamendo NEUTRALISÉE, comme les autres (voir le même bloc dans
- * `progressiveSearchV31.unit.test.ts` pour la cause complète).
- *
- * Sur le runner CI, `EXPO_PUBLIC_JAMENDO_CLIENT_ID` est injectée dans tout le
- * job : la source Jamendo devenait ACTIVE, l'adaptateur réel partait sur le
- * réseau et échouait. Le banc « toutes sources saines mais vides » mesurait
- * alors une PANNE (« Expected: "empty" / Received: "network" ») au lieu du
- * vide confirmé. Le jeu de sources appartient au banc, pas au runner.
- */
+// V88 — Jamendo est une source à part entière du moteur. Sans ce mock, le
+// module réel est chargé et `isJamendoConfigured()` lit l'environnement : avec
+// un identifiant présent (Variables du dépôt injectées en CI), la source
+// s'armait, émettait une VRAIE requête réseau — interdite dans la suite par
+// défaut — et son échec faisait basculer le diagnostic moteur en « network »
+// au lieu de « empty », tout en empêchant la mémorisation du « vide confirmé ».
 jest.mock('../../jamendo', () => ({
-  searchJamendoTracks: jest.fn().mockResolvedValue([]),
-  isJamendoConfigured: jest.fn().mockReturnValue(false),
+  isJamendoConfigured: jest.fn(),
+  searchJamendoTracks: jest.fn(),
   JAMENDO_SEARCH_LIMIT: 50,
 }));
 
+const mockedJamendoConfigured = isJamendoConfigured as jest.MockedFunction<
+  typeof isJamendoConfigured
+>;
 const mockedSessionActive = isSpotifySessionActive as jest.MockedFunction<
   typeof isSpotifySessionActive
 >;
@@ -147,6 +147,7 @@ beforeEach(() => {
 
   mockedSessionActive.mockResolvedValue(false);
   mockedBackendConfigured.mockReturnValue(false);
+  mockedJamendoConfigured.mockReturnValue(false);
 
   mockedAudiusSearch.mockImplementation(() => after(100, []));
   mockedAudiusMap.mockImplementation((t) => t as never);

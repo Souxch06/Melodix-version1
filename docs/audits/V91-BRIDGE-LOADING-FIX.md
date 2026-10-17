@@ -230,3 +230,66 @@ cause et le temps écoulé.
 **Prochaine action recommandée** : produire un build de test (commit + CI,
 hors périmètre) puis vérifier sur téléphone les trois signatures du §6.3 —
 en particulier l'absence de `webview_loading` après un `webview_spa_navigation`.
+
+---
+
+## 8. Intégration de la branche de base (mise à jour post-merge)
+
+Après la publication du correctif, la PR #11 est devenue **non mergeable** :
+la branche de base `arena/5ef0ee6a-melodix` avait reçu, entre-temps, cinq
+commits parallèles (V88/V89), dont un correctif de fond sur la sonde injectée.
+
+### 8.1 Ce que la base apportait — et qui manquait ici
+
+| Commit                          | Apport                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `febba95`                       | **Cause réelle du `bridge_timeout`** : dans la sonde injectée, `TRACK_PATH` contenait `/^\/track\/…/` À L'INTÉRIEUR d'un littéral de gabarit. Dans un gabarit, `\/` se réduit à `/` : le script injecté contenait `const TRACK_PATH = /^/track/…/`, **une erreur de syntaxe**. Il mourait au parse, **avant** `post({type:'ready'})` — le handshake ne pouvait donc jamais aboutir. Correctif : doubler les barres (`\\\\/`). |
+| `8c15573`                       | Sonde **précoce** (`injectedJavaScriptBeforeContentLoaded`) + diagnostic `probe_installed`, pour distinguer « pont absent » de « injection tardive en échec ».                                                                                                                                                                                                                                                                |
+| `95ddf3e`, `3ce6c89`, `7d7b4af` | Neutralisation Jamendo identique à la nôtre, annotations Jest appariées (un bloc par test), remontée du tampon de crash du smoke.                                                                                                                                                                                                                                                                                             |
+
+**Conséquence pour V91** : notre watchdog et notre garde SPA corrigent bien le
+blocage _de la machine à états_ (`loading` éternel, pont condamné par une
+navigation d'historique). Mais sans l'échappement de `febba95`, l'APK de cette
+branche n'aurait **jamais** terminé le handshake : il aurait affiché
+« échec (rechargement manuel requis) » au lieu de « chargement ». Les deux
+correctifs sont complémentaires et désormais réunis.
+
+### 8.2 Conflits et résolution
+
+Trois fichiers conflitaient, tous autour de la neutralisation Jamendo
+(deux implémentations parallèles du même correctif) :
+
+| Fichier                                                  | Résolution                                                                                                                                                   |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `.github/workflows/android-apk.yml`                      | Variables `JAMENDO_*: ''` conservées ; commentaire fusionné expliquant les deux raisons ; la machinerie d'annotations de la base (plus récente) est retenue. |
+| `api/search/__tests__/progressiveSearchV31.unit.test.ts` | Version de la base : `jest.mock` + handle `mockedJamendoConfigured`, neutralisé dans `beforeEach` — plus fort que notre `mockReturnValue(false)` figé.       |
+| `api/search/__tests__/progressiveSearchV32.unit.test.ts` | Idem.                                                                                                                                                        |
+
+Aucun autre fichier ne conflitait : les apports V91 (watchdog, garde SPA,
+libellés) et ceux de la base (sonde précoce, échappement) se sont fusionnés
+automatiquement et coexistent dans le runtime et l'hôte.
+
+Un avertissement ESLint apparu dans la base (`Array<T>` dans
+`spotifyWebEarlyProbe.unit.test.ts:167`) a été corrigé en `T[]` : style
+seulement, aucun comportement de test modifié.
+
+### 8.3 Validation après fusion
+
+| Commande                                          | Résultat                                                                              |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `npx tsc --noEmit`                                | 0 erreur                                                                              |
+| `npx jest spotifyWeb --runInBand`                 | **27 suites / 358 tests — 0 échec** (dont `spotifyWebEarlyProbe` et les 12 tests V91) |
+| `npx jest --runInBand`                            | **219 suites, 2910 tests — 0 échec** (14 ignorés)                                     |
+| `npm run lint`                                    | 0 erreur, 1 avertissement **préexistant**                                             |
+| `npm run prettier:check`                          | conforme                                                                              |
+| `js-yaml` sur le workflow, `bash -n` sur le smoke | valides                                                                               |
+
+### 8.4 État réel du diagnostic après fusion
+
+- `bridge_timeout` → **cause corrigée** dans la base (échappement de la
+  regex), désormais présente dans cette branche.
+- `loading` éternel → **cause corrigée en V91** (watchdog 30 s).
+- Pont détruit par une navigation d'historique → **cause corrigée en V91**
+  (`sameDocument`).
+- Reste non vérifié sur appareil : le handshake réel, la connexion et la
+  lecture Spotify dans la WebView.

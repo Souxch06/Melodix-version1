@@ -11,6 +11,8 @@ import {
   SpotifyWebBackend,
   SpotifyWebRuntime,
   SPOTIFY_WEB_MEDIA_SESSION_PROBE,
+  SPOTIFY_WEB_PROBE_INSTALLED_SCRIPT,
+  isProbeInstalledMessage,
   type PlaybackBackendState,
   type SpotifyWebDiagnosticCode,
   type SpotifyWebRuntimeCapabilities,
@@ -268,6 +270,9 @@ export const SpotifyWebPrototypeScreen = () => {
           cacheEnabled
           domStorageEnabled
           injectedJavaScript={SPOTIFY_WEB_MEDIA_SESSION_PROBE}
+          injectedJavaScriptBeforeContentLoaded={
+            SPOTIFY_WEB_PROBE_INSTALLED_SCRIPT
+          }
           javaScriptEnabled
           key={`spotify-webview-${webViewGeneration}`}
           mediaPlaybackRequiresUserAction
@@ -291,6 +296,12 @@ export const SpotifyWebPrototypeScreen = () => {
             runtime.onLoadStart({ sameDocument });
           }}
           onMessage={(event) => {
+            // V88 — marqueur de la sonde PRÉCOCE : prouve que le pont natif
+            // existe dans ce document. Ne fait pas aboutir le handshake.
+            if (isProbeInstalledMessage(event.nativeEvent.data)) {
+              runtime.onProbeInstalled();
+              return;
+            }
             const result = runtime.handleBridgeMessage(event.nativeEvent.data);
             if (result === 'capabilities-updated') {
               setRuntimeCapabilities(

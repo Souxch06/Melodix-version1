@@ -25,10 +25,37 @@ if [ -z "${EXPECTED_VERSION_CODE:-}" ]; then
 fi
 [ -n "$EXPECTED_VERSION_CODE" ] || EXPECTED_VERSION_CODE=45003
 
+emit_block() {
+  # V88 — une seule annotation par bloc, sauts de ligne encodés en %0A : les
+  # commandes de workflow GitHub tiennent sur une ligne et le nombre
+  # d'annotations d'une étape est plafonné.
+  body=$(cat | tr -d '\r' | head -30)
+  [ -n "$body" ] || return 0
+  encoded=$(printf '%s' "$body" | awk '{ gsub(/%/, "%25"); printf "%s%%0A", $0 }')
+  printf '::error title=%s::%s\n' "$1" "$encoded"
+}
+
 fail() {
   # Les commandes de workflow GitHub doivent tenir sur une ligne.
   detail=$(printf '%s' "$1" | tr '\r\n' '  ' | sed 's/%/%25/g')
   echo "::error title=Test installation Android::$detail"
+  # V88 — « processus détruit » ne dit pas POURQUOI il est mort, et les
+  # journaux de job GitHub ne sont pas téléchargeables depuis tous les
+  # environnements d'analyse — les annotations, si. On remonte donc le tampon
+  # de crash de l'émulateur (FATAL EXCEPTION, tombstone native, ANR) puis les
+  # dernières lignes de l'app. Sans effet si adb n'est pas encore prêt ou si
+  # les tampons sont vides.
+  if command -v adb >/dev/null 2>&1; then
+    # `-A 15` : la ligne de signature seule ne dit rien — c'est la pile qui
+    # suit (type d'exception, processus, frames) qui nomme la cause.
+    adb logcat -d -b crash 2>/dev/null |
+      grep -E -A 15 'FATAL|AndroidRuntime|tombstone|ANR in|signal [0-9]' |
+      emit_block 'Crash émulateur'
+    adb logcat -d 2>/dev/null |
+      grep -E "$PACKAGE|ReactNativeJS|libc|DEBUG" |
+      tail -30 |
+      emit_block 'Logcat avant échec'
+  fi
   exit 1
 }
 
@@ -158,15 +185,22 @@ while [ "$_hdone" -eq 0 ]; do
   sleep 5
   _htries=$((_htries + 1))
   capture_web_host_lines
-  if grep -Eq 'bridge_ready|bridge_timeout|network_error|http_error|web_player_inaccessible|navigation_blocked|renderer_destroyed|webview_reconnect_exhausted' "$WEB_HOST_LOGCAT_FILE"; then
+  if grep -Eq 'bridge_ready|probe_installed|bridge_timeout|network_error|http_error|web_player_inaccessible|navigation_blocked|renderer_destroyed|webview_reconnect_exhausted' "$WEB_HOST_LOGCAT_FILE"; then
     _hdone=1
   fi
 done
 if grep -Fq 'bridge_ready' "$WEB_HOST_LOGCAT_FILE"; then
   echo "::notice title=Handshake hôte production::bridge_ready — le pont page ↔ app est établi sur l'hôte de production"
 elif grep -Eq 'bridge_timeout|network_error|http_error|web_player_inaccessible|navigation_blocked|renderer_destroyed|webview_reconnect_exhausted' "$WEB_HOST_LOGCAT_FILE"; then
-  _hcodes=$(grep -Eo 'bridge_timeout|network_error|http_error|web_player_inaccessible|navigation_blocked|renderer_destroyed|webview_reconnect_exhausted' "$WEB_HOST_LOGCAT_FILE" | sort -u | tr '\n' ',' | sed 's/,$//')
+  _hcodes=$(grep -Eo 'probe_installed|bridge_timeout|network_error|http_error|web_player_inaccessible|navigation_blocked|renderer_destroyed|webview_reconnect_exhausted' "$WEB_HOST_LOGCAT_FILE" | sort -u | tr '\n' ',' | sed 's/,$//')
   echo "::warning title=Handshake hôte production::handshake non prêt (codes: ${_hcodes:-inconnu}) — aucune capacité de lecture revendiquée (comportement honnête sans compte Spotify)"
+  # V88 — la sonde PRÉCOCE tranche entre les deux causes possibles d'un
+  # bridge_timeout : pont natif absent, ou injection tardive en échec.
+  if printf '%s' "$_hcodes" | grep -q 'probe_installed'; then
+    echo "::notice title=Sonde précoce (V88)::probe_installed REÇU — le pont natif existe dans le document et l'injection avant contenu a eu lieu ; la panne du handshake est donc dans l'injection TARDIVE"
+  else
+    echo "::notice title=Sonde précoce (V88)::probe_installed ABSENT — le pont natif n'a rien posté depuis le document ; la panne est en amont de l'injection"
+  fi
 else
   _observed=$(grep -F '[MelodixSpotifyWeb]' "$WEB_HOST_LOGCAT_FILE" | grep -Eo '\] [a-z0-9_-]+' | tr -d ']' | sort -u | tr '\n' ',' | sed 's/^, //;s/,$//')
   fail "aucun résultat explicite du handshake de l'hôte de production en logcat (ni bridge_ready ni code de diagnostic) — codes observés: ${_observed:-aucun}"
