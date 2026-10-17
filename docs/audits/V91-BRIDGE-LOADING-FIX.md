@@ -423,6 +423,15 @@ Côté affichage, `load_timeout` a un libellé humain dédié dans l'hôte
 (`SpotifyWebPrototypeScreen.tsx:132` et `:215`) : aucune cause brute n'est
 exposée à l'utilisateur.
 
+### 8.10 Cinquième passage (run `39021329251`, commit `b31b58c`) — VERT
+
+Le test du risque résiduel (§4.1, test 9) est couvert par un run complet :
+**32 étapes, 0 échec**, `bridge_ready` et **`bridge-state` accepté** de
+nouveau. Artefact : `Melodix-v4.5.0-test.37-b31b58c.apk`, **47 117 059
+octets**. Installation et lancement réussis sur Android 14 x86_64.
+
+C'est ce commit qui contient **tout le code et tous les tests** de V91.
+
 ---
 
 ## 9. État final de la branche
@@ -437,3 +446,7 @@ exposée à l'utilisateur.
 
 Aucun fichier natif (Kotlin) n'a été modifié : le correctif est entièrement
 dans la machine à états TypeScript, l'hôte WebView et le diagnostic.
+
+Les commits postérieurs à `b31b58c` sont **purement documentaires** : ils
+n'ajoutent aucun code, aucune assertion, aucun comportement. Le code validé
+reste donc celui de `b31b58c`, quel que soit le SHA de tête de la branche.
