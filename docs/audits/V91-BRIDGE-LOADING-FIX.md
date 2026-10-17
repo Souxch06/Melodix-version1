@@ -185,8 +185,11 @@ Mutations temporaires (fichier restauré immédiatement, vérifié par `grep`) :
 4. **`failed` n'apparaît qu'après ~100 s** dans le pire cas (3 × 30 s +
    backoffs) ; en revanche le bouton « Recharger » est disponible dès la
    **première** expiration (30 s, ou 8 s si la page a fini de charger).
-5. **Pas d'APK construit ni de CI déclenchée** : la mission interdit
-   commit/push, et aucun changement natif n'a été fait (Kotlin intact).
+5. **APK construit, mais aucune observation sur téléphone.** La mission V91
+   interdisait commit/push : ce point a été levé ensuite (§8), l'APK
+   `Melodix-v4.5.0-test.37-f878b05.apk` a été produit par la CI et son
+   installation/lancement a réussi sur l'émulateur Android 14 x86_64. Ce
+   n'est pas un appareil réel : le handshake y est prouvé, pas la lecture.
 6. Le libellé exact « Chargement du pont… » n'existe pas dans le dépôt ; le
    libellé réel observé est `Pont : chargement` (bandeau de l'hôte). Le
    diagnostic distingue maintenant `loading` et `awaiting-bridge`.
@@ -195,9 +198,10 @@ Mutations temporaires (fichier restauré immédiatement, vérifié par `grep`) :
 
 ## 6. Vérifier sur le téléphone
 
-1. Installer l'APK **contenant V91** (le SHA court est dans le nom du
-   fichier ; en l'absence de build, il faut d'abord committer/pousser — hors
-   périmètre de cette mission).
+1. Installer l'APK **contenant V91** :
+   `Melodix-v4.5.0-test.37-f878b05.apk` (47 117 074 octets, run
+   `39018655536`). Le SHA court du commit est dans le nom du fichier : si
+   l'APK installé ne porte pas `f878b05`, il ne contient pas ce correctif.
 2. Ouvrir l'onglet Spotify, se connecter **dans la page**, lancer un morceau,
    puis naviguer (album → accueil → recherche) : le son doit continuer et le
    bandeau ne doit **pas** apparaître.
@@ -227,9 +231,12 @@ récupération), et une navigation interne de la SPA ne détruit plus le pont
 `failed` → « Recharger »), et le diagnostic expose désormais l'état exact, la
 cause et le temps écoulé.
 
-**Prochaine action recommandée** : produire un build de test (commit + CI,
-hors périmètre) puis vérifier sur téléphone les trois signatures du §6.3 —
-en particulier l'absence de `webview_loading` après un `webview_spa_navigation`.
+**Prochaine action recommandée** : installer l'APK `f878b05` (§6.1) et
+vérifier sur téléphone les trois signatures du §6.3 — en particulier
+l'absence de `webview_loading` après un `webview_spa_navigation`. Le build,
+le montage de l'hôte et le handshake (`bridge_ready`) ne sont **plus** à
+démontrer : ils sont verts en CI (§8.7 à §8.8). Ce qui reste inconnu est ce
+que fait la page avec un compte réel — connexion et lecture.
 
 ---
 
@@ -353,10 +360,75 @@ d'être mesurée. Suite ciblée : **11/11**.
 | `PLAYBACK SPOTIFY WEB RÉEL NON TESTABLE IN CI`          | la lecture réelle reste hors de portée de la CI                                                                                                                                                              |
 
 **Artefact** : `Melodix-v4.5.0-test.37-2251e03.apk`, **47 117 084 octets**,
-id `12095876831`, non expiré. C'est l'APK à installer pour le test physique.
+id `12095876831`, non expiré. Ce run est supplanté par le suivant (§8.8).
 
 Conclusion : la cause racine du `bridge_timeout` (sonde qui ne compilait pas,
 `febba95`) est **prouvée corrigée en CI**, et le blocage `loading` éternel
 (V91) est borné par le watchdog. Il reste à confirmer **sur téléphone** que
 la page se charge, que la connexion Spotify fonctionne et qu'un morceau est
 réellement audible.
+
+### 8.8 Quatrième passage CI (run `39018655536`, commit `f878b05`) — VERT, `bridge-state` accepté
+
+Ce run porte le commit **`f878b05`**, parent du présent document (la suite du
+dépôt ne contient que de la documentation). **32 étapes, 0 échec.**
+
+| Annotation                                                                                            | Signification                                                                               |
+| ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `Hôte Spotify Web (production) : host-mounted confirmé`                                               | la WebView de production est montée à la racine                                             |
+| `Handshake hôte production : bridge_ready`                                                            | le pont page ↔ app est établi                                                              |
+| **`Bridge hôte production : bridge-state — un état publié par la page a été accepté par le backend`** | **le pipeline page → app a transporté et validé un état réel**, au-delà du simple handshake |
+| `Capacité DRM WebView : Widevine inconnu`                                                             | la sonde EME reste non concluante sur l'émulateur                                           |
+| `PLAYBACK SPOTIFY WEB RÉEL NON TESTABLE IN CI`                                                        | la lecture réelle reste hors de portée de la CI                                             |
+
+**Artefact** : `Melodix-v4.5.0-test.37-f878b05.apk`, **47 117 074 octets**,
+run `39018655536`, installation et lancement réussis sur Android 14 x86_64.
+
+À noter, sans le surestimer : le run précédent (`2251e03`) rapportait
+« aucun état de page accepté », celui-ci « un état publié par la page a été
+accepté ». Même code applicatif. La page ne publie donc pas toujours d'état
+au démarrage à froid ; **quand elle le fait, l'app l'accepte**. C'est une
+preuve de tuyauterie, pas une preuve de lecture.
+
+PR #11 : `headRefOid = f878b05`, **MERGEABLE / CLEAN**.
+
+### 8.9 Clôture — la cause `load_timeout` traverse toute la chaîne d'état
+
+Point laissé en suspens dans la version initiale de ce rapport (« normalisation
+`errorCode` non vérifiée à la main »). Vérifié par lecture, ligne par ligne :
+
+1. `spotifyWebRuntime.handleLoss('load_timeout')` →
+   `backend.markRuntimeUnavailable(session, 'load_timeout')` ;
+2. `SpotifyWebBackend.ts:216` → `updateState({ status: 'error', errorCode })` ;
+3. `SpotifyWebBackend.ts:234` → `this.state = normalizeSpotifyWebState(input)` ;
+4. `spotifyWebState.ts:111-114` →
+   `errorCode: status === 'error' ? (optionalText(input.errorCode, 64) ?? 'unknown') : null` ;
+5. `optionalText` (l.21-25) **trime et tronque à 64 caractères, sans liste
+   blanche** : `'load_timeout'` (12 caractères) traverse **inchangé**.
+
+Ce n'est pas seulement une lecture : le test runtime du blocage V90
+(`spotifyWebRuntime.unit.test.ts`, « un document qui n'émet jamais onLoadEnd
+est récupéré par le watchdog ») asserte `backend.getState()` →
+`{ status: 'error', errorCode: 'load_timeout' }`, aux côtés de
+`runtime.getSnapshot().lossCause === 'load_timeout'` et des codes de
+diagnostic `['load_timeout', 'webview_reconnecting']`.
+
+Côté affichage, `load_timeout` a un libellé humain dédié dans l'hôte
+(`SpotifyWebHostView.tsx:55`) et dans l'écran de diagnostic
+(`SpotifyWebPrototypeScreen.tsx:132` et `:215`) : aucune cause brute n'est
+exposée à l'utilisateur.
+
+---
+
+## 9. État final de la branche
+
+| Élément                     | Valeur                                                                                              |
+| --------------------------- | --------------------------------------------------------------------------------------------------- |
+| Branche                     | `arena/6043b7af-melodix`                                                                            |
+| Commit de code validé en CI | `f878b05` (APK `Melodix-v4.5.0-test.37-f878b05.apk`)                                                |
+| Tests locaux                | extrait Spotify Web **27 suites / 358 tests** ; suite complète **219 suites / 2910 tests**, 0 échec |
+| `tsc` / `lint` / `prettier` | 0 erreur / 0 erreur + 1 avertissement préexistant / conforme                                        |
+| PR #11                      | ouverte, mergeable, état `CLEAN`                                                                    |
+
+Aucun fichier natif (Kotlin) n'a été modifié : le correctif est entièrement
+dans la machine à états TypeScript, l'hôte WebView et le diagnostic.
