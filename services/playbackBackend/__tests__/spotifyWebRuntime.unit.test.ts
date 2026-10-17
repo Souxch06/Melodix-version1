@@ -679,6 +679,41 @@ describe('SpotifyWebRuntime — V91 : watchdog de chargement et navigations SPA'
     ]);
   });
 
+  it('un document réel annoncé `loading:false` à tort ne reste pas muet : son `ready` tardif rétablit le pont', () => {
+    const { backend, loadDocument, reportCodes, runtime, scheduler } =
+      createHarness();
+    runtime.mount();
+    loadDocument();
+    expect(runtime.handleBridgeMessage(READY_MESSAGE)).toBe('ready');
+
+    // Risque résiduel documenté (§5.3 du rapport) : un document RÉEL qui se
+    // présente comme une mise à jour d'historique. Le pont d'alors est
+    // conservé et AUCUNE échéance n'est armée — c'est le prix de la
+    // protection des navigations SPA, qui n'a aucun autre signal fiable.
+    runtime.onLoadStart({ sameDocument: true });
+    expect(scheduler.pendingDelays).toEqual([]);
+    expect(backend.isBridgeReady()).toBe(true);
+
+    // Ce document finit tout de même par charger et sa sonde poste `ready` :
+    // le handshake est accepté sans seconde déclaration, et la page reprend
+    // la main sur l'état publié.
+    runtime.onLoadEnd();
+    expect(runtime.handleBridgeMessage(READY_MESSAGE)).toBe('ready');
+    expect(runtime.handleBridgeMessage(PLAYING_MESSAGE)).toBe('state-updated');
+    expect(backend.getState()).toMatchObject({
+      status: 'playing',
+      title: 'Track',
+    });
+    expect(runtime.getSnapshot()).toMatchObject({
+      phase: 'ready',
+      bridgeReady: true,
+    });
+    // Toujours un seul événement de handshake : la reprise est silencieuse.
+    expect(
+      reportCodes().filter((code) => code === 'bridge_ready')
+    ).toHaveLength(1);
+  });
+
   it('un rechargement de récupération muet finit en `failed` (porte de sortie « Recharger »)', () => {
     const { reportCodes, runtime, scheduler } = createHarness({
       documentLoadTimeoutMs: 40,

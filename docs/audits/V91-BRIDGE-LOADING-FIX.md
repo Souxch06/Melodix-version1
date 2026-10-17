@@ -104,7 +104,7 @@ handshake`, `récupération`, `échec (rechargement requis)` et les causes
 ### 4.1 Runtime — `services/playbackBackend/__tests__/spotifyWebRuntime.unit.test.ts`
 
 Nouveau bloc `describe('SpotifyWebRuntime — V91 : watchdog de chargement et
-navigations SPA')` (l.513), **8 tests** :
+navigations SPA')` (l.513), **9 tests** :
 
 | #   | Test                                                       | Ce qu'il prouve                                                                                                                                                       |
 | --- | ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -116,6 +116,7 @@ navigations SPA')` (l.513), **8 tests** :
 | 6   | `un ready rejoué pour le MÊME document`                    | Une seule ligne `bridge_ready`.                                                                                                                                       |
 | 7   | `un sameDocument hors phase prête`                         | Le drapeau n'est **jamais** un filtre : sans pont prêt, session neuve + watchdog.                                                                                     |
 | 8   | `un rechargement de récupération muet finit en failed`     | 3 tentatives → `failed`, `webview_reconnect_exhausted`, aucun timer ; `manualReload()` repart en `loading`.                                                           |
+| 9   | `un document réel annoncé loading:false à tort`            | Le `ready` tardif du nouveau document est accepté, l'état reprend la main, et `bridge_ready` n'est pas redéclaré — la fausse classification se répare d'elle-même.    |
 
 ### 4.2 Hôte — `components/Player/__tests__/SpotifyWebHostView.unit.test.tsx`
 
@@ -153,10 +154,10 @@ Mutations temporaires (fichier restauré immédiatement, vérifié par `grep`) :
 
 | Commande exacte                                                                                           | Résultat                                                                                                     |
 | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `npx jest --runTestsByPath services/playbackBackend/__tests__/spotifyWebRuntime.unit.test.ts --runInBand` | **23/23** (15 existants + 8 nouveaux)                                                                        |
+| `npx jest --runTestsByPath services/playbackBackend/__tests__/spotifyWebRuntime.unit.test.ts --runInBand` | **24/24** (15 existants + 9 nouveaux)                                                                        |
 | `npx jest --runTestsByPath components/Player/__tests__/SpotifyWebHostView.unit.test.tsx --runInBand`      | **29/29** (25 existants + 4 nouveaux)                                                                        |
-| `npx jest spotifyWeb --runInBand`                                                                         | **26 suites / 345 tests — 0 échec**                                                                          |
-| `npx jest --runInBand` (suite complète)                                                                   | **218 suites passées, 14 ignorées ; 2897 tests passés, 14 ignorés — 0 échec** (98,6 s)                       |
+| `npx jest spotifyWeb --runInBand`                                                                         | **27 suites / 359 tests — 0 échec**                                                                          |
+| `npx jest --runInBand` (suite complète)                                                                   | **219 suites passées, 14 ignorées ; 2911 tests passés, 14 ignorés — 0 échec**                                |
 | `npx tsc --noEmit`                                                                                        | **0 erreur**                                                                                                 |
 | `npx eslint <6 fichiers>`                                                                                 | **0 erreur**                                                                                                 |
 | `npm run lint`                                                                                            | **0 erreur**, 1 avertissement **préexistant** (`app/(tabs)/__tests__/layoutSessionRestore.unit.test.tsx:56`) |
@@ -181,7 +182,11 @@ Mutations temporaires (fichier restauré immédiatement, vérifié par `grep`) :
 3. **Risque résiduel** : un vrai nouveau document annoncé avec
    `loading:false` conserverait un pont « prêt » le temps du chargement ; le
    nouveau document réinjecte la sonde à `onPageFinished`, et toute erreur
-   passe par `onError`. Ce cas n'est pas couvert par un test dédié.
+   passe par `onError`. Ce cas est désormais couvert par un test dédié
+   (§4.1, test 9) : le `ready` tardif est accepté, l'état reprend la main et
+   `bridge_ready` n'est pas redéclaré. La **fenêtre** entre la fausse
+   classification et ce `ready` reste, elle, sans surveillance — une commande
+   émise à cet instant serait envoyée à un document qui n'écoute pas encore.
 4. **`failed` n'apparaît qu'après ~100 s** dans le pire cas (3 × 30 s +
    backoffs) ; en revanche le bouton « Recharger » est disponible dès la
    **première** expiration (30 s, ou 8 s si la page a fini de charger).
