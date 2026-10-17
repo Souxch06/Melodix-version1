@@ -293,3 +293,28 @@ seulement, aucun comportement de test modifié.
   (`sameDocument`).
 - Reste non vérifié sur appareil : le handshake réel, la connexion et la
   lecture Spotify dans la WebView.
+
+### 8.5 Premier passage CI après fusion (run `39016764502`)
+
+La PR est redevenue **MERGEABLE** et le workflow APK s'est déclenché. Il
+s'arrête à l'étape **11 (Tests JavaScript / React Native)** sur un test
+**sans rapport avec Spotify Web** :
+
+```
+FAIL api/itunes/__tests__/itunesLookupStream.unit.test.ts
+● V70 (Bug 4) — cache des extraits › aucune requête réseau sur un morceau déjà résolu
+  expect(received).toBeGreaterThanOrEqual(expected)
+  Expected: >= 40   Received: 39
+```
+
+`coldElapsed` mesure `Date.now()` autour d'un `setTimeout(40)`. Les timers
+Node peuvent se déclencher dans la milliseconde précédente et `Date.now()` a
+une granularité de 1 ms : la borne basse `>= 40` est donc **intrinsèquement
+instable**. Ce test provient de la base commune (`99926e4`) et n'a pas été
+touché par V91 ; il était déjà passé sur les runs précédents (même code).
+
+Aucun test n'a été modifié ni désactivé pour ce run. Un nouveau passage est
+tenté par un push documentaire ; si l'instabilité se reproduit, la seule
+correction recevable est une **tolérance d'horloge** explicite (par exemple
+`NETWORK_LATENCY_MS - 5`), sans retirer l'assertion ni le compteur d'appels
+qui, lui, prouve réellement l'absence de requête.
