@@ -339,3 +339,24 @@ Le test conserve son intention (le premier passage paie la latence ; le
 second, servi par le cache, reste à ~0 ms) et son assertion décisive — le
 compteur `fetchMock` à 1 appel. Seule la précision du planificateur cesse
 d'être mesurée. Suite ciblée : **11/11**.
+
+### 8.7 Troisième passage CI (run `39017469060`, commit `2251e03`) — VERT
+
+**32 étapes, 0 échec.** Preuves lues dans les annotations du check-run :
+
+| Annotation                                              | Signification                                                                                                                                                                                                |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `Hôte Spotify Web (production) : host-mounted confirmé` | la WebView de production est montée à la racine                                                                                                                                                              |
+| **`Handshake hôte production : bridge_ready`**          | **le pont page ↔ app est établi sur l'hôte de production** — c'est exactement ce que le run V88 (`38967261650`) ne parvenait pas à obtenir (`bridge_timeout`). La sonde injectée va désormais jusqu'au bout |
+| `Bridge hôte production : aucun état de page accepté`   | attendu : sans compte Spotify, la page ne publie aucun état — aucun faux `playing`                                                                                                                           |
+| `Capacité DRM WebView : Widevine inconnu`               | inchangé : la sonde EME n'est pas concluante sur l'émulateur, sans incidence sur le handshake                                                                                                                |
+| `PLAYBACK SPOTIFY WEB RÉEL NON TESTABLE IN CI`          | la lecture réelle reste hors de portée de la CI                                                                                                                                                              |
+
+**Artefact** : `Melodix-v4.5.0-test.37-2251e03.apk`, **47 117 084 octets**,
+id `12095876831`, non expiré. C'est l'APK à installer pour le test physique.
+
+Conclusion : la cause racine du `bridge_timeout` (sonde qui ne compilait pas,
+`febba95`) est **prouvée corrigée en CI**, et le blocage `loading` éternel
+(V91) est borné par le watchdog. Il reste à confirmer **sur téléphone** que
+la page se charge, que la connexion Spotify fonctionne et qu'un morceau est
+réellement audible.
