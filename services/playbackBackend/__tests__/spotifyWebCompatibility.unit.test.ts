@@ -19,6 +19,12 @@ import {
   SPOTIFY_WEB_DESKTOP_COMPATIBILITY_SCRIPT,
   SPOTIFY_WEB_DESKTOP_USER_AGENT,
 } from '../spotifyWebCompatibility';
+import {
+  requestSpotifyWebLogin,
+  SPOTIFY_WEB_LOGIN_URL,
+  subscribeSpotifyWebLogin,
+} from '../spotifyWebLoginEntry';
+import { isAllowedSpotifyWebNavigation } from '../spotifyWebRuntime';
 
 describe('V92 — compatibilité WebView du lecteur Spotify', () => {
   it('l’User-Agent est EXACTEMENT celui de SpotiDuck v1.2.2', () => {
@@ -83,5 +89,38 @@ describe('V92 — compatibilité WebView du lecteur Spotify', () => {
     expect(script).not.toMatch(/spclient|pathfinder|api\/token/i);
     // Pas de neutralisation de l'anti-bot.
     expect(script).not.toMatch(/webdriver/);
+  });
+});
+
+describe('V92b — entrée de connexion dans la page', () => {
+  it('l’URL de connexion est celle de Spotify, avec le formulaire e-mail', () => {
+    expect(SPOTIFY_WEB_LOGIN_URL).toContain('https://accounts.spotify.com/');
+    expect(SPOTIFY_WEB_LOGIN_URL).toContain('method=password');
+    expect(SPOTIFY_WEB_LOGIN_URL).toContain('allow_password=1');
+    // Le retour après connexion pointe sur le lecteur.
+    expect(SPOTIFY_WEB_LOGIN_URL).toContain(
+      'continue=https%3A%2F%2Fopen.spotify.com%2F'
+    );
+    // Aucun identifiant ni jeton dans l'URL (note : `allow_password=1` est
+    // un DRAPEAU d'affichage du formulaire, pas un mot de passe).
+    expect(SPOTIFY_WEB_LOGIN_URL).not.toMatch(/token|sp_dc|sp_key|Bearer/i);
+  });
+
+  it('la demande de connexion notifie les abonnés, et se désabonne proprement', () => {
+    const seen: number[] = [];
+    const unsubscribe = subscribeSpotifyWebLogin(() => seen.push(1));
+
+    requestSpotifyWebLogin();
+    expect(seen).toHaveLength(1);
+
+    unsubscribe();
+    requestSpotifyWebLogin();
+    // Après désabonnement, plus aucune notification : un hôte démonté ne
+    // peut pas être réveillé par un bouton qu'il ne rend plus.
+    expect(seen).toHaveLength(1);
+  });
+
+  it('l’URL de connexion est ACCEPTÉE par la liste blanche de navigation', () => {
+    expect(isAllowedSpotifyWebNavigation(SPOTIFY_WEB_LOGIN_URL)).toBe(true);
   });
 });

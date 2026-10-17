@@ -34,6 +34,9 @@ const fakes = (
       unregister: jest.Mock;
       manualReload: jest.Mock;
       trace: jest.Mock;
+      /** V92b — bus de connexion dans la page. */
+      loginRequest: jest.Mock;
+      emitLogin: () => void;
       activation: { active: boolean; blockers: string[] };
       overlayVisible: boolean;
       isOverlayVisible: () => boolean;
@@ -87,6 +90,10 @@ jest.mock('@services', () => {
   const mockUnregister = jest.fn();
   const mockManualReload = jest.fn();
   const mockTrace = jest.fn();
+  // V92b — bus de connexion : la vue s'y abonne ; le test émet comme le
+  // ferait le bouton « Connexion e-mail » d'une autre surface.
+  const mockLoginRequest = jest.fn();
+  const loginListeners: (() => void)[] = [];
   const snapshotListeners: ((s: Record<string, unknown>) => void)[] = [];
   const overlayListeners: ((visible: boolean) => void)[] = [];
   // V88 — bus de surface de l'onglet Spotify (bus distinct de la visibilité
@@ -245,6 +252,17 @@ jest.mock('@services', () => {
     // spotifyWebCompatibility.unit.test.ts).
     SPOTIFY_WEB_DESKTOP_USER_AGENT: 'test-desktop-user-agent',
     SPOTIFY_WEB_DESKTOP_COMPATIBILITY_SCRIPT: '/* compat */',
+    // V92b — entrée de connexion dans la page.
+    SPOTIFY_WEB_LOGIN_URL:
+      'https://accounts.spotify.com/login?method=password&allow_password=1',
+    requestSpotifyWebLogin: mockLoginRequest,
+    subscribeSpotifyWebLogin: (listener: () => void) => {
+      loginListeners.push(listener);
+      return () => {
+        const i = loginListeners.indexOf(listener);
+        if (i >= 0) loginListeners.splice(i, 1);
+      };
+    },
     isProbeInstalledMessage: () => false,
     SpotifyWebBackend: MockSpotifyWebBackend,
     SpotifyWebRuntime: MockSpotifyWebRuntime,
@@ -275,6 +293,8 @@ jest.mock('@services', () => {
     // Accès tests aux doubles (jamais consommé par la production).
     __testFakes: {
       publish: mockPublish,
+      loginRequest: mockLoginRequest,
+      emitLogin: () => loginListeners.forEach((l) => l()),
       register: mockRegister,
       unregister: mockUnregister,
       manualReload: mockManualReload,
@@ -1076,5 +1096,90 @@ describe('SpotifyWebHostView — V92 : réglages de compatibilité du lecteur', 
 
     // La prop est absente : react-native-webview applique son défaut (true).
     expect(props).not.toHaveProperty('setSupportMultipleWindows');
+  });
+});
+
+/**
+ * V92b — CONNEXION « DANS LA PAGE » (parité SpotiDuck).
+ *
+ * Les boutons de connexion sociale ne fonctionnent pas dans une WebView :
+ * la liste blanche de l'hôte n'autorise que `*.spotify.com`, et Google
+ * refuse les WebView embarquées. L'utilisateur doit donc pouvoir ouvrir le
+ * formulaire e-mail / mot de passe officiel de Spotify, dans la MÊME
+ * WebView — sans quitter l'application et sans perdre la session.
+ */
+describe('SpotifyWebHostView — V92b : connexion dans la page', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    fakes.activation.active = true;
+    fakes.activation.blockers = [];
+    fakes.emitSnapshot({ page: 'accounts.spotify.com' });
+    mockPreferencesVisible = true;
+    fakes.requestOverlayVisible(false);
+    fakes.emitOverlayVisible(false);
+    fakes.emitSurface({ shown: false, reservedBottom: 0 });
+  });
+
+  it('sur la page de connexion, l’onglet propose « Connexion e-mail »', () => {
+    const { queryByTestId } = render(<SpotifyWebHostView />);
+
+    // Hors onglet : aucun bouton.
+    expect(queryByTestId('spotify-web-login-assist')).toBeNull();
+
+    act(() => fakes.emitSurface({ shown: true, reservedBottom: 150 }));
+
+    expect(queryByTestId('spotify-web-login-assist')).toBeTruthy();
+  });
+
+  it('le geste demande la page de connexion (aucune saisie, aucun clic dans la page)', () => {
+    const { getByTestId } = render(<SpotifyWebHostView />);
+    act(() => fakes.emitSurface({ shown: true, reservedBottom: 150 }));
+
+    fireEvent.press(getByTestId('spotify-web-login-assist'));
+
+    expect(fakes.loginRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it('la demande de connexion charge l’URL de connexion DANS la WebView', () => {
+    render(<SpotifyWebHostView />);
+
+    expect(
+      (
+        jest.requireMock('react-native-webview') as {
+          __getLastWebViewProps: () => Record<string, unknown> | null;
+        }
+      ).__getLastWebViewProps()?.source
+    ).toEqual({ uri: 'https://open.spotify.com' });
+
+    act(() => fakes.emitLogin());
+
+    expect(
+      (
+        jest.requireMock('react-native-webview') as {
+          __getLastWebViewProps: () => Record<string, unknown> | null;
+        }
+      ).__getLastWebViewProps()?.source
+    ).toEqual({
+      uri: 'https://accounts.spotify.com/login?method=password&allow_password=1',
+    });
+  });
+
+  it('pont prêt sur le lecteur : AUCUN bouton Melodix ne recouvre Spotify', () => {
+    fakes.emitSnapshot({ page: 'open.spotify.com', phase: 'ready' });
+    const { queryByTestId } = render(<SpotifyWebHostView />);
+
+    act(() => fakes.emitSurface({ shown: true, reservedBottom: 150 }));
+
+    expect(queryByTestId('spotify-web-login-assist')).toBeNull();
+  });
+
+  it('pont en difficulté sur l’onglet : la porte de sortie est offerte', () => {
+    fakes.emitSnapshot({ page: 'open.spotify.com', phase: 'failed' });
+    const { getByTestId } = render(<SpotifyWebHostView />);
+
+    act(() => fakes.emitSurface({ shown: true, reservedBottom: 150 }));
+
+    expect(getByTestId('spotify-web-login-assist')).toBeTruthy();
+    expect(getByTestId('spotify-web-overlay-reload')).toBeTruthy();
   });
 });

@@ -54,6 +54,12 @@ export {
   SPOTIFY_WEB_DESKTOP_USER_AGENT,
   isValidCompatibilityScript,
 } from './spotifyWebCompatibility';
+export {
+  requestSpotifyWebLogin,
+  resetSpotifyWebLoginForTesting,
+  SPOTIFY_WEB_LOGIN_URL,
+  subscribeSpotifyWebLogin,
+} from './spotifyWebLoginEntry';
 export type {
   SpotifyWebBackendOptions,
   SpotifyWebBridgeResult,

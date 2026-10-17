@@ -82,6 +82,39 @@ ce sont deux architectures distinctes.
 > documentait déjà cette cause depuis V27/V75. La CI l'a confirmée mot pour
 > mot : `User not registered in the allowlisted users list`.
 
+### 2.1 Confirmation sur l'appareil (rapport de diagnostic du 17/10/2026 13:01)
+
+Rapport fourni par le mainteneur, build `4.5.0-test.37` (45037), Android API 36 :
+
+| Élément du rapport                                             | Lecture                                                               |
+| -------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `Session Spotify : enregistrée (token + refresh)`              | l'échange PKCE a réussi : Client ID, `redirect_uri` et code sont bons |
+| `Scopes accordés : … (tous les scopes demandés sont accordés)` | l'autorisation utilisateur est complète                               |
+| `GET https://api.spotify.com/v1/me → 403`                      | le refus intervient **après** l'autorisation                          |
+| `Forme de la réponse : non JSON (pas de message exploitable)`  | Spotify refuse au niveau de l'application, sans corps exploitable     |
+| `En-têtes : Server: envoy; Via: HTTP/2 edgeproxy, 1.1 google`  | réponse d'un edge Spotify, pas d'un intermédiaire local               |
+| `Tentatives : 3 (persistant)`                                  | ce n'est pas une panne transitoire                                    |
+| `Rafraîchissement du token : non déclenché`                    | correct : seul un 401 déclenche un refresh                            |
+
+**Conclusion, désormais établie sur l'appareil** : la connexion OAuth va au
+bout ; c'est **Spotify** qui refuse l'application. Le message exact a été
+observé en CI sur le **même** Client ID et le **même** endpoint :
+`User not registered in the allowlisted users list`.
+
+**Ce qui ne peut pas être corrigé dans le code** : la liste d'utilisateurs
+autorisés et le mode de l'application vivent dans le dashboard Spotify.
+
+**Deux issues, aucune dans Melodix :**
+
+1. `developer.spotify.com` → application Melodix → **Settings → User
+   Management** → ajouter l'adresse du compte Spotify utilisé, puis se
+   déconnecter et se reconnecter dans Melodix ;
+2. **ne pas dépendre de l'OAuth** : utiliser l'onglet Spotify et se connecter
+   **dans la page** — c'est le modèle de SpotiDuck, et le 403 de l'API Web n'a
+   alors **aucun** effet sur cet onglet.
+
+Le second chemin est celui que V92b rend utilisable (§3.6).
+
 ---
 
 ## 3. Pourquoi l'onglet est blanc — et ce qui est corrigé
@@ -150,6 +183,28 @@ rendu n'est plus un flash blanc muet.
 SpotiDuck appelle bien `setMediaPlaybackRequiresUserGesture(false)` et ne
 désactive pas les fenêtres multiples.
 
+### 3.6 La connexion dans la page n'avait aucune entrée utilisable
+
+La page de connexion de Spotify propose d'abord « Continuer avec Google /
+Facebook / Apple ». Dans la WebView de Melodix, ces trois parcours sont
+**condamnés** :
+
+- la liste blanche de l'hôte n'autorise que `*.spotify.com` : une redirection
+  vers `accounts.google.com` est refusée (`onShouldStartLoadWithRequest`) ;
+- Google refuse par principe les connexions depuis une WebView embarquée
+  (« this browser or app may not be secure »).
+
+L'utilisateur arrivait donc sur un écran de connexion sans moyen d'entrer ses
+identifiants. SpotiDuck contourne cela avec `classic_login.js` (un lien injecté
+vers `?allow_password=1`).
+
+→ **Reproduit sans injection de lien** : un bouton « Connexion e-mail »
+apparaît dans l'onglet **uniquement** lorsque la page est celle de la connexion
+(`accounts.spotify.com`) ou lorsque le pont est en difficulté. Il charge dans
+la **même** WebView l'URL de connexion officielle avec
+`method=password&allow_password=1` (celle de SpotiDuck, sans locale figée).
+Aucune saisie automatique, aucun clic dans la page, aucun cookie lu.
+
 ---
 
 ## 4. Ce qui est repris, et ce qui ne l'est pas
@@ -183,7 +238,8 @@ compte qui bloque ses publicités ou qui se déclare navigateur de bureau.
 | `components/Player/SpotifyWebHostView.tsx`                                | `userAgent`, injection du script de compatibilité, `mediaPlaybackRequiresUserAction={false}`, retrait de `setSupportMultipleWindows={false}`, fond du conteneur blanc → noir |
 | `services/playbackBackend/index.ts`                                       | exports                                                                                                                                                                      |
 | `services/playbackBackend/__tests__/spotifyWebCompatibility.unit.test.ts` | **nouveau** — 6 tests (UA exact, script valide, SW, surface, idempotence, interdits)                                                                                         |
-| `components/Player/__tests__/SpotifyWebHostView.unit.test.tsx`            | 4 tests de câblage (UA, injection, geste média, fenêtres multiples)                                                                                                          |
+| `components/Player/__tests__/SpotifyWebHostView.unit.test.tsx`            | 4 tests de câblage (UA, injection, geste média, fenêtres multiples) + 5 tests de connexion dans la page                                                                      |
+| `services/playbackBackend/spotifyWebLoginEntry.ts`                        | **nouveau** — URL de connexion officielle + bus de demande (aucune saisie, aucun cookie)                                                                                     |
 
 ---
 

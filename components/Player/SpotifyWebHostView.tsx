@@ -17,8 +17,11 @@ import {
   requestSpotifyWebHostVisible,
   SPOTIFY_WEB_DESKTOP_COMPATIBILITY_SCRIPT,
   SPOTIFY_WEB_DESKTOP_USER_AGENT,
+  SPOTIFY_WEB_LOGIN_URL,
   SPOTIFY_WEB_MEDIA_SESSION_PROBE,
   SPOTIFY_WEB_PROBE_INSTALLED_SCRIPT,
+  requestSpotifyWebLogin,
+  subscribeSpotifyWebLogin,
   SpotifyWebBackend,
   SpotifyWebRuntime,
   SpotifyWebTrackTransport,
@@ -106,6 +109,13 @@ export const SpotifyWebHostView = () => {
     React.useState<SpotifyWebRuntimeSnapshot | null>(null);
   const [webViewGeneration, setWebViewGeneration] = React.useState(0);
 
+  /**
+   * V92b — URL chargée par la WebView. Elle ne change que sur un geste
+   * explicite (« Connexion e-mail », voir `spotifyWebLoginEntry`) : la
+   * navigation interne de la SPA Spotify n'écrit jamais ici.
+   */
+  const [webViewUri, setWebViewUri] = React.useState<string>(SPOTIFY_WEB_URL);
+
   const webViewRef = React.useRef<WebView | null>(null);
   const backendRef = React.useRef<SpotifyWebBackend | null>(null);
   const runtimeRef = React.useRef<SpotifyWebRuntime | null>(null);
@@ -125,6 +135,18 @@ export const SpotifyWebHostView = () => {
       subscribeSpotifyWebPlaybackActivation(() => {
         setActivationActive(resolveSpotifyWebPlaybackActivation().active);
       }),
+    []
+  );
+
+  /**
+   * V92b — « Connexion e-mail » : le bouton de l'onglet demande la page de
+   * connexion classique de Spotify (formulaire e-mail / mot de passe), que
+   * la WebView sait afficher. Les parcours sociaux (Google, Apple,
+   * Facebook) sont refusés par la liste blanche `*.spotify.com` et par
+   * Google lui-même dans une WebView embarquée.
+   */
+  React.useEffect(
+    () => subscribeSpotifyWebLogin(() => setWebViewUri(SPOTIFY_WEB_LOGIN_URL)),
     []
   );
 
@@ -426,6 +448,21 @@ export const SpotifyWebHostView = () => {
       runtimeSnapshot.phase !== 'ready');
 
   /**
+   * V92b — le bouton « Connexion e-mail » n'apparaît que là où il sert :
+   *  · la page EST la page de connexion de Spotify (les boutons sociaux y
+   *    sont refusés dans une WebView : Google bloque les WebView
+   *    embarquées, et la liste blanche de l'hôte n'autorise que
+   *    `*.spotify.com`) ;
+   *  · ou le pont est en difficulté sur l'onglet (porte de sortie offerte
+   *    en même temps que « Recharger »).
+   * Ailleurs — page Spotify normale, pont prêt — aucun bouton Melodix ne
+   * recouvre l'interface de Spotify.
+   */
+  const loginAssistVisible =
+    tabShown &&
+    (runtimeSnapshot?.page === 'accounts.spotify.com' || tabNeedsAttention);
+
+  /**
    * V91 — temps écoulé dans la phase courante. Le battement (1 s) ne tourne
    * QUE lorsque le bandeau est affiché et que quelque chose ne va pas ; au
    * repos (`ready`), aucun timer n'est créé.
@@ -566,7 +603,7 @@ export const SpotifyWebHostView = () => {
           originWhitelist={['https://*.spotify.com/*', 'https://spotify.com/*']}
           ref={webViewRef}
           sharedCookiesEnabled
-          source={{ uri: SPOTIFY_WEB_URL }}
+          source={{ uri: webViewUri }}
           userAgent={SPOTIFY_WEB_DESKTOP_USER_AGENT}
           startInLoadingState
           thirdPartyCookiesEnabled
@@ -648,6 +685,22 @@ export const SpotifyWebHostView = () => {
           )}
         </View>
       )}
+
+      {displayed && loginAssistVisible && (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Ouvrir la connexion e-mail Spotify"
+          onPress={() => requestSpotifyWebLogin()}
+          style={[
+            styles.loginAssist,
+            { bottom: reservedBottom + insets.bottom + 12 },
+          ]}
+          testID="spotify-web-login-assist"
+        >
+          <Ionicons color={COLORS.WHITE} name="mail-outline" size={16} />
+          <Text style={styles.loginAssistLabel}>Connexion e-mail</Text>
+        </Pressable>
+      )}
     </>
   );
 };
@@ -696,6 +749,26 @@ const styles = StyleSheet.create({
     color: COLORS.LIGHT_GREY,
     fontSize: 12,
     textAlign: 'center',
+  },
+  // V92b — pastille discrète, posée au-dessus de la barre d'onglets.
+  loginAssist: {
+    alignItems: 'center',
+    alignSelf: 'center',
+    backgroundColor: COLORS.NAV,
+    borderColor: COLORS.GREY,
+    borderRadius: 18,
+    borderWidth: 1,
+    flexDirection: 'row',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    position: 'absolute',
+    zIndex: 1002,
+  },
+  loginAssistLabel: {
+    color: COLORS.WHITE,
+    fontFamily: 'SF-Regular',
+    fontSize: 13,
+    marginLeft: 6,
   },
   overlayStatus: { color: COLORS.TINT, fontSize: 11, marginTop: 2 },
   overlayTitle: { color: COLORS.WHITE, fontSize: 17, fontWeight: '600' },
