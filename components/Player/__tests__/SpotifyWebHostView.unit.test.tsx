@@ -240,6 +240,11 @@ jest.mock('@services', () => {
     // donc tous atteindre le transport. La reconnaissance réelle du marqueur
     // est couverte par spotifyWebEarlyProbe.unit.test.ts.
     SPOTIFY_WEB_PROBE_INSTALLED_SCRIPT: '',
+    // V92 — compatibilité bureau : valeurs distinctives pour prouver que la
+    // vue les câble (le contenu réel est testé dans
+    // spotifyWebCompatibility.unit.test.ts).
+    SPOTIFY_WEB_DESKTOP_USER_AGENT: 'test-desktop-user-agent',
+    SPOTIFY_WEB_DESKTOP_COMPATIBILITY_SCRIPT: '/* compat */',
     isProbeInstalledMessage: () => false,
     SpotifyWebBackend: MockSpotifyWebBackend,
     SpotifyWebRuntime: MockSpotifyWebRuntime,
@@ -1009,5 +1014,67 @@ describe('SpotifyWebHostView — V88 : surface affichée par l’onglet Spotify'
 
     act(() => fakes.emitSurface({ shown: false, reservedBottom: 0 }));
     expect(fakes.isOverlayVisible()).toBe(false);
+  });
+});
+
+/**
+ * V92 — PARITÉ DE COMPATIBILITÉ AVEC SPOTIDUCK (WebView Android).
+ *
+ * Ces assertions verrouillent les quatre réglages qui décident si Spotify
+ * sert le lecteur ou une page vide :
+ *  - un User-Agent de bureau (sans lui : page mobile ou écran blanc) ;
+ *  - un script injecté AVANT le contenu (Service Worker refusé, surface
+ *    cohérente) ;
+ *  - `mediaPlaybackRequiresUserAction={false}` (sinon la lecture exige un
+ *    geste sur l'élément média que Spotify ne fournit pas) ;
+ *  - les fenêtres multiples laissées à leur défaut (les popups d'OAuth
+ *    doivent pouvoir s'ouvrir).
+ */
+describe('SpotifyWebHostView — V92 : réglages de compatibilité du lecteur', () => {
+  it('la WebView déclare l’User-Agent de bureau de SpotiDuck', () => {
+    render(<SpotifyWebHostView />);
+    const props = (
+      jest.requireMock('react-native-webview') as {
+        __getLastWebViewProps: () => Record<string, unknown> | null;
+      }
+    ).__getLastWebViewProps();
+
+    expect(props?.userAgent).toBe('test-desktop-user-agent');
+    expect(props?.source).toEqual({ uri: 'https://open.spotify.com' });
+  });
+
+  it('le script de compatibilité est injecté AVANT le contenu, avec la sonde précoce', () => {
+    render(<SpotifyWebHostView />);
+    const props = (
+      jest.requireMock('react-native-webview') as {
+        __getLastWebViewProps: () => Record<string, unknown> | null;
+      }
+    ).__getLastWebViewProps();
+
+    const injected = String(props?.injectedJavaScriptBeforeContentLoaded);
+    expect(injected).toContain('/* compat */');
+  });
+
+  it('la lecture média n’exige pas de geste utilisateur', () => {
+    render(<SpotifyWebHostView />);
+    const props = (
+      jest.requireMock('react-native-webview') as {
+        __getLastWebViewProps: () => Record<string, unknown> | null;
+      }
+    ).__getLastWebViewProps();
+
+    expect(props?.mediaPlaybackRequiresUserAction).toBe(false);
+  });
+
+  it('les fenêtres multiples ne sont PAS désactivées (popups de connexion)', () => {
+    render(<SpotifyWebHostView />);
+    const props = (
+      jest.requireMock('react-native-webview') as {
+        __getLastWebViewProps: () => Record<string, unknown> | null;
+      }
+    ).__getLastWebViewProps();
+
+    // La prop est absente : react-native-webview applique son défaut (true).
+    expect(props).not.toHaveProperty('setSupportMultipleWindows');
   });
 });

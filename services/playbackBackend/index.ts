@@ -49,6 +49,11 @@ export {
 export { SPOTIFY_WEB_MEDIA_SESSION_PROBE } from './spotifyWebMediaSessionProbe';
 export { SPOTIFY_WEB_PROBE_INSTALLED_SCRIPT } from './spotifyWebMediaSessionProbe';
 export { isProbeInstalledMessage } from './spotifyWebMediaSessionProbe';
+export {
+  SPOTIFY_WEB_DESKTOP_COMPATIBILITY_SCRIPT,
+  SPOTIFY_WEB_DESKTOP_USER_AGENT,
+  isValidCompatibilityScript,
+} from './spotifyWebCompatibility';
 export type {
   SpotifyWebBackendOptions,
   SpotifyWebBridgeResult,

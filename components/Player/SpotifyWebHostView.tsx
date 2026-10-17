@@ -15,6 +15,8 @@ import {
   registerSpotifyWebPlaybackHost,
   resolveSpotifyWebPlaybackActivation,
   requestSpotifyWebHostVisible,
+  SPOTIFY_WEB_DESKTOP_COMPATIBILITY_SCRIPT,
+  SPOTIFY_WEB_DESKTOP_USER_AGENT,
   SPOTIFY_WEB_MEDIA_SESSION_PROBE,
   SPOTIFY_WEB_PROBE_INSTALLED_SCRIPT,
   SpotifyWebBackend,
@@ -488,11 +490,12 @@ export const SpotifyWebHostView = () => {
           domStorageEnabled
           injectedJavaScript={SPOTIFY_WEB_MEDIA_SESSION_PROBE}
           injectedJavaScriptBeforeContentLoaded={
+            SPOTIFY_WEB_DESKTOP_COMPATIBILITY_SCRIPT +
             SPOTIFY_WEB_PROBE_INSTALLED_SCRIPT
           }
           javaScriptEnabled
           key={`spotify-web-host-${webViewGeneration}`}
-          mediaPlaybackRequiresUserAction
+          mediaPlaybackRequiresUserAction={false}
           mixedContentMode="never"
           onError={() => runtimeRef.current?.onNetworkError()}
           onHttpError={(event) =>
@@ -562,9 +565,9 @@ export const SpotifyWebHostView = () => {
           }
           originWhitelist={['https://*.spotify.com/*', 'https://spotify.com/*']}
           ref={webViewRef}
-          setSupportMultipleWindows={false}
           sharedCookiesEnabled
           source={{ uri: SPOTIFY_WEB_URL }}
+          userAgent={SPOTIFY_WEB_DESKTOP_USER_AGENT}
           startInLoadingState
           thirdPartyCookiesEnabled
           testID="spotify-web-host-webview"
@@ -697,7 +700,7 @@ const styles = StyleSheet.create({
   overlayStatus: { color: COLORS.TINT, fontSize: 11, marginTop: 2 },
   overlayTitle: { color: COLORS.WHITE, fontSize: 17, fontWeight: '600' },
   webContainer: {
-    backgroundColor: COLORS.WHITE,
+    backgroundColor: COLORS.BLACK,
     bottom: 0,
     left: 0,
     position: 'absolute',
