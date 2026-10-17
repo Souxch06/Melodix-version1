@@ -280,3 +280,47 @@ allowlisted users list`). Ce n'est **pas** un bug de Melodix et aucun code
 - **Parité SpotiDuck** : les mécanismes qui font fonctionner le lecteur sont
   repris **à l'identique** ; ceux qui contournent la monétisation ou
   automatisent un tiers sont refusés et testés comme tels.
+
+---
+
+## 8. Passages CI
+
+| Run           | Commit    | Issue                                                                                               |
+| ------------- | --------- | --------------------------------------------------------------------------------------------------- |
+| `39025218827` | `f2de2f5` | **32/32 vert** — `bridge_ready` + `bridge-state` acceptés, APK `Melodix-v4.5.0-test.37-f2de2f5.apk` |
+| `39027380599` | `9d42485` | **échec étape 21** — voir ci-dessous, sans lien avec le code                                        |
+
+### 8.1 L'échec de l'étape 21 n'est pas applicatif
+
+L'étape « Installer et lancer réellement l'APK sur Android 14 » s'arrête sur
+`processus détruit après cold start OAuth` (le `pidof` final est vide). Le
+logcat joint par le workflow donne la cause **exacte** :
+
+```
+ActivityManager: Killing 5711:com.souxch06.melodix/u0a192 (adj 0):
+  depends on provider com.google.android.gms/.fonts.provider.FontsProvider
+  in dying proc com.google.android.gms.persistent (adj -10000)
+```
+
+Ce n'est ni un crash de l'application, ni une régression : **le processus
+Google Play Services de l'émulateur est mort**, et Android a tué l'application
+qui dépendait de son fournisseur de polices. Juste avant, la séquence utile
+était complète et correcte :
+
+```
+webview_loaded → spotify_loaded → bridge_ready → bridge-state
+webview_loading → probe_installed          (second document, sonde précoce OK)
+```
+
+Le même jour, le run `39025218827` (code identique à une fonctionnalité près)
+terminait **32/32**. La seule correction recevable est un nouveau passage ;
+masquer la mort du processus dans le script de fumée serait mentir sur un
+résultat.
+
+### 8.2 Ce qui reste à voir sur téléphone
+
+Aucun APK de `9d42485` (V92b) n'existe encore — l'échec est survenu avant
+l'archivage de l'artefact. En attendant un run vert, l'APK `f2de2f5` contient
+déjà les correctifs d'écran blanc (UA bureau, Service Worker, fond noir,
+lecture sans geste, popups) ; il ne contient pas la pastille
+« Connexion e-mail ».
